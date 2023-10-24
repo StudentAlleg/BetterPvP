@@ -1,13 +1,13 @@
-Repository containing all of BetterPvP's plugins for 1.20.1.
+Repository containing all of BetterPvP's plugins for 1.20.2.
 
 ## Dependencies:
 - Java 17
 - PaperSpigot
-- A MySQL server
+- A MySQL server (8.0 is highest officially supported)
 - [MythicMobs](https://www.spigotmc.org/resources/mythicmobs.5702)
 - [ProtocolLib](https://www.spigotmc.org/resources/protocollib.1997)
 - [LibsDisguises](https://www.spigotmc.org/resources/libs-disguises-free.81)
-
+All Minecraft dependecies require 1.20.2
 
 ## Development Setup
 1. Clone this repository and open it with your IDE of choice:
