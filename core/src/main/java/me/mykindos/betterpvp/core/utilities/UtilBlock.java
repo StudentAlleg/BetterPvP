@@ -1,6 +1,7 @@
 package me.mykindos.betterpvp.core.utilities;
 
 import me.mykindos.betterpvp.core.framework.CoreNamespaceKeys;
+import net.kyori.adventure.text.Component;
 import org.bukkit.Chunk;
 import org.bukkit.Location;
 import org.bukkit.Material;
@@ -504,5 +505,10 @@ public class UtilBlock {
         final int y = block.getY();
         final int z = block.getZ() % 16;
         return y & 0xFFFF | (x & 0xFF) << 16 | (z & 0xFF) << 24;
+    }
+
+    public static Component getCoordsComponent(Block block) {
+        Location location = block.getLocation();
+        return UtilMessage.deserialize("X: <yellow>%s</yellow> Y: <yellow>%s</yellow> Z: <yellow>%s</yellow>", location.getBlockX(), location.getBlockY(), location.getBlockZ());
     }
 }
