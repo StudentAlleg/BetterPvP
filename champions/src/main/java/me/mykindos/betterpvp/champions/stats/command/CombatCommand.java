@@ -17,6 +17,7 @@ import org.bukkit.OfflinePlayer;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
@@ -68,8 +69,15 @@ public class CombatCommand extends Command {
                 filter = roleManager.getObject(target.getUniqueId()).map(ChampionsFilter::fromRole).orElse(ChampionsFilter.NONE);
                 loaded = championsRepository.getDataAsync(target).thenApply(roleStats -> roleStats.getCombatData(filter));
             } else {
-                filter = ChampionsFilter.valueOf(args[0].toUpperCase());
-                if (filter == ChampionsFilter.GLOBAL) {
+                String filterName = args[0];
+                if (filterName.equals("GLOBAL")) {
+                    filter = ChampionsFilter.getGlobal();
+                } else if (filterName.equals("NONE")) {
+                    filter = ChampionsFilter.getNone();
+                } else {
+                    filter = ChampionsFilter.fromRole(roleManager.getRole(filterName).orElse(null));
+                }
+                if (ChampionsFilter.isGlobal(filter)) {
                     // For some reason needs to be cast to CombatData even though it's a subtype?
                     loaded = globalRepository.getDataAsync(target).thenApply(global -> global);
                 } else {
@@ -104,7 +112,9 @@ public class CombatCommand extends Command {
     @Override
     public List<String> processTabComplete(CommandSender sender, String[] args) {
         if (args.length == 1) {
-            return Arrays.stream(ChampionsFilter.values()).map(filter -> filter.name().toLowerCase()).toList();
+            List<String> validFilters = new ArrayList<>(List.of(ChampionsFilter.uniqueNames()));
+            roleManager.getRoles().forEach(role -> validFilters.add(role.getName()));
+            return validFilters;
         } else if (args.length == 2) {
             return Bukkit.getOnlinePlayers().stream().map(Player::getName).toList();
         }

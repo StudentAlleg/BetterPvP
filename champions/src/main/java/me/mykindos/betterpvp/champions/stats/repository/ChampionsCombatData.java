@@ -60,15 +60,15 @@ public class ChampionsCombatData extends CombatData {
 
             Statement killStatement = new Statement(killStmt,
                     new UuidStatementValue(killId),
-                    new StringStatementValue(championsKill.getKillerRole() == null ? "" : championsKill.getKillerRole().toString()),
-                    new StringStatementValue(championsKill.getVictimRole() == null ? "" : championsKill.getVictimRole().toString()));
+                    new StringStatementValue(championsKill.getKillerRole() == null ? "" : championsKill.getKillerRole().getName()),
+                    new StringStatementValue(championsKill.getVictimRole() == null ? "" : championsKill.getVictimRole().getName()));
             killStatements.add(killStatement);
 
             contributions.entrySet().removeIf(entry -> entry.getKey().getContributor() == kill.getKiller());
             contributions.forEach((contribution, cRole) -> {
                 Statement assistStatement = new Statement(assistStmt,
                         new UuidStatementValue(contribution.getId()),
-                        new StringStatementValue(cRole == null ? "" : cRole.toString()));
+                        new StringStatementValue(cRole == null ? "" : cRole.getName()));
                 contributionStatements.add(assistStatement);
             });
         }
@@ -82,7 +82,7 @@ public class ChampionsCombatData extends CombatData {
         String ratingStmt = "INSERT INTO " + databasePrefix + "combat_stats (Gamer, Class, Rating, Killstreak, HighestKillstreak) VALUES (?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE Rating = VALUES(Rating), Killstreak = VALUES(Killstreak), HighestKillstreak = VALUES(HighestKillstreak);";
         Statement victimRating = new Statement(ratingStmt,
                 new UuidStatementValue(getHolder()),
-                new StringStatementValue(role == null ? "" : role.toString()),
+                new StringStatementValue(role == null ? "" : role.getName()),
                 new IntegerStatementValue(getRating()),
                 new IntegerStatementValue(getKillStreak()),
                 new IntegerStatementValue(getHighestKillStreak()));

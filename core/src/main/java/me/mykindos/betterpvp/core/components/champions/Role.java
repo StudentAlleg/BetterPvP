@@ -9,13 +9,13 @@ import me.mykindos.betterpvp.core.framework.BPvPPlugin;
 import net.kyori.adventure.text.format.TextColor;
 import org.bukkit.Material;
 import org.bukkit.Sound;
-import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
-import org.reflections.Reflections;
 
-import java.lang.reflect.Modifier;
-import java.util.*;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Objects;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 @Data

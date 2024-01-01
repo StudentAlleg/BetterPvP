@@ -31,6 +31,7 @@ import java.util.concurrent.CompletableFuture;
 @Slf4j
 public final class ChampionsCombatLeaderboard extends PlayerLeaderboard<CombatData> implements Sorted, Filtered {
 
+
     private final ChampionsStatsRepository repository;
     private final GlobalCombatLeaderboard globalLeaderboard;
 
@@ -51,7 +52,7 @@ public final class ChampionsCombatLeaderboard extends PlayerLeaderboard<CombatDa
     @Override
     public SortedSet<LeaderboardEntry<UUID, CombatData>> getTopTen(SearchOptions options) {
         final ChampionsFilter filter = (ChampionsFilter) Objects.requireNonNull(options.getFilter());
-        if (filter == ChampionsFilter.GLOBAL) {
+        if (ChampionsFilter.isGlobal(filter)) {
             final CombatSort sortType = (CombatSort) Objects.requireNonNull(options.getSort());
             final SearchOptions globalOptions = SearchOptions.builder().sort(sortType).build();
             return globalLeaderboard.getTopTen(globalOptions);
@@ -62,7 +63,7 @@ public final class ChampionsCombatLeaderboard extends PlayerLeaderboard<CombatDa
     @Override
     public CompletableFuture<CombatData> getEntryData(SearchOptions searchOptions, UUID entry) {
         final ChampionsFilter filter = (ChampionsFilter) Objects.requireNonNull(searchOptions.getFilter());
-        if (filter == ChampionsFilter.GLOBAL) {
+        if (ChampionsFilter.isGlobal(filter)) {
             final CombatSort sortType = (CombatSort) Objects.requireNonNull(searchOptions.getSort());
             final SearchOptions globalOptions = SearchOptions.builder().sort(sortType).build();
             return globalLeaderboard.getEntryData(globalOptions, entry);
@@ -73,7 +74,7 @@ public final class ChampionsCombatLeaderboard extends PlayerLeaderboard<CombatDa
     @NotNull
     @Override
     public FilterType @NotNull [] acceptedFilters() {
-        return ChampionsFilter.values();
+        for (Role role : roleM);
     }
 
     @Override
@@ -104,7 +105,7 @@ public final class ChampionsCombatLeaderboard extends PlayerLeaderboard<CombatDa
     @Override
     protected CombatData fetch(@NotNull SearchOptions options, @NotNull Database database, @NotNull String tablePrefix, @NotNull UUID entry) {
         final ChampionsFilter filter = (ChampionsFilter) Objects.requireNonNull(options.getFilter());
-        if (filter == ChampionsFilter.GLOBAL) {
+        if (ChampionsFilter.isGlobal(filter)) {
             final CombatSort sortType = (CombatSort) Objects.requireNonNull(options.getSort());
             final SearchOptions globalOptions = SearchOptions.builder().sort(sortType).build();
             return globalLeaderboard.getEntryData(globalOptions, entry).join();
@@ -118,7 +119,7 @@ public final class ChampionsCombatLeaderboard extends PlayerLeaderboard<CombatDa
         final ChampionsFilter filter = (ChampionsFilter) Objects.requireNonNull(options.getFilter());
         final Map<UUID, CombatData> map = new HashMap<>();
         final CombatSort sortType = (CombatSort) Objects.requireNonNull(options.getSort());
-        if (filter == ChampionsFilter.GLOBAL) {
+        if (ChampionsFilter.isGlobal(filter)) {
             final SearchOptions globalOptions = SearchOptions.builder().sort(sortType).build();
             final SortedSet<LeaderboardEntry<UUID, CombatData>> topTen = globalLeaderboard.getTopTen(globalOptions);
             topTen.forEach(entry -> map.put(entry.getKey(), entry.getValue()));

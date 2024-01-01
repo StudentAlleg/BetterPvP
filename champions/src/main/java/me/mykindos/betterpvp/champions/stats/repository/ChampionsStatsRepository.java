@@ -13,9 +13,9 @@ import me.mykindos.betterpvp.core.database.query.values.UuidStatementValue;
 import me.mykindos.betterpvp.core.stats.repository.StatsRepository;
 
 import java.sql.SQLException;
-import java.util.EnumMap;
 import java.util.Map;
 import java.util.UUID;
+import java.util.WeakHashMap;
 import java.util.concurrent.CompletableFuture;
 
 @Singleton
@@ -34,7 +34,7 @@ public class ChampionsStatsRepository extends StatsRepository<RoleStatistics> {
     @Override
     public CompletableFuture<RoleStatistics> fetchDataAsync(UUID player) {
         return CompletableFuture.supplyAsync(() -> {
-            final Map<ChampionsFilter, ChampionsCombatData> combatDataMap = new EnumMap<>(ChampionsFilter.class);
+            final Map<ChampionsFilter, ChampionsCombatData> combatDataMap = new WeakHashMap<>();
             final RoleStatistics roleStatistics = new RoleStatistics(combatDataMap, roleManager, player);
             final UuidStatementValue uuid = new UuidStatementValue(player);
             Statement statement = new Statement("CALL GetChampionsData(?)", uuid);
@@ -42,7 +42,7 @@ public class ChampionsStatsRepository extends StatsRepository<RoleStatistics> {
                 try {
                     while (result.next()) {
                         final String className = result.getString(1);
-                        final Role role = className.isEmpty() ? null : Role.valueOf(className);
+                        final Role role = className.isEmpty() ? null : roleManager.getRole(className).orElse(null);
                         ChampionsFilter filter = ChampionsFilter.fromRole(role);
                         final ChampionsCombatData data = new ChampionsCombatData(player, roleManager, role);
                         data.setKills(result.getInt(2));
