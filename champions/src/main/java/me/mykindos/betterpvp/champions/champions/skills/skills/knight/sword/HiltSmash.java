@@ -26,13 +26,16 @@ import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.bukkit.event.entity.EntityDamageEvent.DamageCause;
 import org.bukkit.event.player.PlayerInteractEntityEvent;
+import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.inventory.EquipmentSlot;
 
-import java.util.Set;
+import java.util.WeakHashMap;
 
 @Singleton
 @BPvPListener
 public class HiltSmash extends Skill implements CooldownSkill, Listener {
+
+    private WeakHashMap<Player, Boolean> rightClicked = new WeakHashMap<>();
 
     @Inject
     public HiltSmash(Champions champions, ChampionsManager championsManager) {
@@ -61,33 +64,59 @@ public class HiltSmash extends Skill implements CooldownSkill, Listener {
     public String getDefaultClassString() {
         return "knight";
     }
+
     @Override
     public SkillType getType() {
         return SkillType.SWORD;
     }
 
     @EventHandler
-    public void onInteract(PlayerInteractEntityEvent event) {
+    public void onEntityInteract(PlayerInteractEntityEvent event) {
         if (event.getHand() == EquipmentSlot.OFF_HAND) return;
-        Player player = event.getPlayer();
+        rightClicked.put(event.getPlayer(), true);
+        if (event.getRightClicked() instanceof LivingEntity entity) {
+            onInteract(event.getPlayer(), entity);
+        } else {
+            onInteract(event.getPlayer(), null);
+        }
+        event.setCancelled(true);
+    }
+
+    @EventHandler
+    public void onInteract(PlayerInteractEvent event) {
+        if (event.getHand() == EquipmentSlot.OFF_HAND || !event.getAction().isRightClick()) return;
+        if (!rightClicked.getOrDefault(event.getPlayer(), false)) { // This means onInteract wasn't called through onEntityInteract
+            onInteract(event.getPlayer(), null);
+        }
+        rightClicked.remove(event.getPlayer()); // Reset the flag for next interactions
+    }
+
+    @Override
+    public void invalidatePlayer(Player player) {
+        rightClicked.remove(player);
+    }
+
+    private void onInteract(Player player, LivingEntity ent) {
         if (!UtilPlayer.isHoldingItem(player, SkillWeapons.SWORDS)) return;
 
-
         int level = getLevel(player);
-        if (level > 0) {
+        if (level <= 0) {
+            return; // Skill not active
+        }
 
-            if (event.getRightClicked() instanceof LivingEntity ent) {
+        // Cooldown's applied in the event monitor
+        final PlayerUseSkillEvent event = UtilServer.callEvent(new PlayerUseSkillEvent(player, this, level));
+        if (event.isCancelled()) {
+            return; // Skill was cancelled
+        }
 
-                PlayerUseSkillEvent playerUseSkillEvent = UtilServer.callEvent(new PlayerUseSkillEvent(player, this, level));
-                if (playerUseSkillEvent.isCancelled()) return;
-                if (UtilMath.offset(player, ent) <= 3.0) {
-                    if (ent instanceof Player damagee) {
-                        UtilMessage.simpleMessage(damagee, "Champions", "<yellow>%s<gray> hit you with <green>%s<gray>.",
-                                player.getName(), getName() + " " + level);
-
-                        championsManager.getEffects().addEffect(damagee, EffectType.SHOCK, (level * 1000L) / 2);
-                        championsManager.getEffects().addEffect(damagee, EffectType.SILENCE, (((level * 1000L) / 2)));
-                    }
+        if (ent != null) {
+            if (UtilMath.offset(player, ent) <= 3.0) {
+                if (ent instanceof Player damagee) {
+                    UtilMessage.simpleMessage(damagee, "Champions", "<yellow>%s<gray> hit you with <green>%s<gray>.", player.getName(), getName() + " " + level);
+                    championsManager.getEffects().addEffect(damagee, EffectType.SHOCK, (level * 1000L) / 2);
+                    championsManager.getEffects().addEffect(damagee, EffectType.SILENCE, (((level * 1000L) / 2)));
+                }
 
                     UtilMessage.simpleMessage(player, "Champions", "You hit <yellow>%s<gray> with <green>%s<gray>.",
                             ent.getName(), getName() + " " + level);
@@ -100,9 +129,11 @@ public class HiltSmash extends Skill implements CooldownSkill, Listener {
                     UtilMessage.simpleMessage(player, "Champions", "You failed <green>%s", getName());
                     player.getWorld().playSound(player.getLocation(), Sound.BLOCK_ANVIL_LAND, 1F, 0.1F);
                 }
-            }
+        } else {
+            UtilMessage.simpleMessage(player, "Champions", "You failed <green>%s", getName());
+            player.getWorld().playSound(player.getLocation(), Sound.BLOCK_ANVIL_LAND, 1F, 0.1F);
         }
-
+        player.swingMainHand();
     }
 
     @Override
