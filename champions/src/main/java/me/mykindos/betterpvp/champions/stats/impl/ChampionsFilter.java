@@ -18,23 +18,6 @@ public class ChampionsFilter implements FilterType {
         return new ChampionsFilter(role == null ? "No Role" : role.getName(), role);
     }
 
-    public static ChampionsFilter getNone() {
-        return new ChampionsFilter("NONE", null);
-    }
-
-    public static ChampionsFilter getGlobal() {
-        return new ChampionsFilter("GLOBAL", null);
-    }
-
-    public static Boolean isGlobal(ChampionsFilter filter) {
-        ChampionsFilter global = getGlobal();
-        return filter.getName().equals(global.getName()) && filter.getRole() == global.getRole();
-    }
-
-    public static String[] uniqueNames() {
-        return new String[]{"GLOBAL", "NONE", "No Role"};
-    }
-
     @Override
     public boolean accepts(Object entry) {
         return getName() != "GLOBAL" && entry instanceof ChampionsCombatData data && data.getRole() == role;

@@ -35,11 +35,14 @@ public final class ChampionsCombatLeaderboard extends PlayerLeaderboard<CombatDa
     private final ChampionsStatsRepository repository;
     private final GlobalCombatLeaderboard globalLeaderboard;
 
+    private final ChampionsFilterManager championsFilterManager;
+
     @Inject
-    public ChampionsCombatLeaderboard(Core core, ChampionsStatsRepository repository, GlobalCombatLeaderboard globalLeaderboard) {
+    public ChampionsCombatLeaderboard(Core core, ChampionsStatsRepository repository, GlobalCombatLeaderboard globalLeaderboard, ChampionsFilterManager championsFilterManager) {
         super(core);
         this.repository = repository;
         this.globalLeaderboard = globalLeaderboard;
+        this.championsFilterManager = championsFilterManager;
         globalLeaderboard.setViewable(false); // Disable to prevent conflicts
         init();
     }
@@ -52,7 +55,7 @@ public final class ChampionsCombatLeaderboard extends PlayerLeaderboard<CombatDa
     @Override
     public SortedSet<LeaderboardEntry<UUID, CombatData>> getTopTen(SearchOptions options) {
         final ChampionsFilter filter = (ChampionsFilter) Objects.requireNonNull(options.getFilter());
-        if (ChampionsFilter.isGlobal(filter)) {
+        if (championsFilterManager.isGlobal(filter)) {
             final CombatSort sortType = (CombatSort) Objects.requireNonNull(options.getSort());
             final SearchOptions globalOptions = SearchOptions.builder().sort(sortType).build();
             return globalLeaderboard.getTopTen(globalOptions);
@@ -63,7 +66,7 @@ public final class ChampionsCombatLeaderboard extends PlayerLeaderboard<CombatDa
     @Override
     public CompletableFuture<CombatData> getEntryData(SearchOptions searchOptions, UUID entry) {
         final ChampionsFilter filter = (ChampionsFilter) Objects.requireNonNull(searchOptions.getFilter());
-        if (ChampionsFilter.isGlobal(filter)) {
+        if (championsFilterManager.isGlobal(filter)) {
             final CombatSort sortType = (CombatSort) Objects.requireNonNull(searchOptions.getSort());
             final SearchOptions globalOptions = SearchOptions.builder().sort(sortType).build();
             return globalLeaderboard.getEntryData(globalOptions, entry);
@@ -74,7 +77,7 @@ public final class ChampionsCombatLeaderboard extends PlayerLeaderboard<CombatDa
     @NotNull
     @Override
     public FilterType @NotNull [] acceptedFilters() {
-        for (Role role : roleM);
+        return championsFilterManager.getObjects().values().toArray(FilterType[]::new);
     }
 
     @Override
@@ -105,7 +108,7 @@ public final class ChampionsCombatLeaderboard extends PlayerLeaderboard<CombatDa
     @Override
     protected CombatData fetch(@NotNull SearchOptions options, @NotNull Database database, @NotNull String tablePrefix, @NotNull UUID entry) {
         final ChampionsFilter filter = (ChampionsFilter) Objects.requireNonNull(options.getFilter());
-        if (ChampionsFilter.isGlobal(filter)) {
+        if (championsFilterManager.isGlobal(filter)) {
             final CombatSort sortType = (CombatSort) Objects.requireNonNull(options.getSort());
             final SearchOptions globalOptions = SearchOptions.builder().sort(sortType).build();
             return globalLeaderboard.getEntryData(globalOptions, entry).join();
@@ -119,7 +122,7 @@ public final class ChampionsCombatLeaderboard extends PlayerLeaderboard<CombatDa
         final ChampionsFilter filter = (ChampionsFilter) Objects.requireNonNull(options.getFilter());
         final Map<UUID, CombatData> map = new HashMap<>();
         final CombatSort sortType = (CombatSort) Objects.requireNonNull(options.getSort());
-        if (ChampionsFilter.isGlobal(filter)) {
+        if (championsFilterManager.isGlobal(filter)) {
             final SearchOptions globalOptions = SearchOptions.builder().sort(sortType).build();
             final SortedSet<LeaderboardEntry<UUID, CombatData>> topTen = globalLeaderboard.getTopTen(globalOptions);
             topTen.forEach(entry -> map.put(entry.getKey(), entry.getValue()));

@@ -5,6 +5,7 @@ import com.google.inject.Singleton;
 import lombok.extern.slf4j.Slf4j;
 import me.mykindos.betterpvp.champions.champions.roles.RoleManager;
 import me.mykindos.betterpvp.champions.stats.impl.ChampionsFilter;
+import me.mykindos.betterpvp.champions.stats.impl.ChampionsFilterManager;
 import me.mykindos.betterpvp.champions.stats.repository.ChampionsStatsRepository;
 import me.mykindos.betterpvp.core.client.Client;
 import me.mykindos.betterpvp.core.combat.stats.impl.GlobalCombatStatsRepository;
@@ -17,9 +18,8 @@ import org.bukkit.OfflinePlayer;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 
-import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
+import java.util.NoSuchElementException;
 import java.util.concurrent.CompletableFuture;
 
 @Singleton
@@ -34,6 +34,9 @@ public class CombatCommand extends Command {
 
     @Inject
     private RoleManager roleManager;
+
+    @Inject
+    private ChampionsFilterManager championsFilterManager;
 
     @Override
     public String getName() {
@@ -66,25 +69,18 @@ public class CombatCommand extends Command {
 
         try {
             if (args.length == 0) {
-                filter = roleManager.getObject(target.getUniqueId()).map(ChampionsFilter::fromRole).orElse(ChampionsFilter.NONE);
+                filter = roleManager.getObject(target.getUniqueId()).map(championsFilterManager::getFromRole).orElse(championsFilterManager.getObject("NONE").orElseThrow());
                 loaded = championsRepository.getDataAsync(target).thenApply(roleStats -> roleStats.getCombatData(filter));
             } else {
-                String filterName = args[0];
-                if (filterName.equals("GLOBAL")) {
-                    filter = ChampionsFilter.getGlobal();
-                } else if (filterName.equals("NONE")) {
-                    filter = ChampionsFilter.getNone();
-                } else {
-                    filter = ChampionsFilter.fromRole(roleManager.getRole(filterName).orElse(null));
-                }
-                if (ChampionsFilter.isGlobal(filter)) {
+                filter = championsFilterManager.getObject(args[0]).orElseThrow();
+                if (championsFilterManager.isGlobal(filter)) {
                     // For some reason needs to be cast to CombatData even though it's a subtype?
                     loaded = globalRepository.getDataAsync(target).thenApply(global -> global);
                 } else {
                     loaded = championsRepository.getDataAsync(target).thenApply(roleStats -> roleStats.getCombatData(filter));
                 }
             }
-        } catch (IllegalArgumentException exception) {
+        } catch (NoSuchElementException exception) {
             UtilMessage.message(player, "Combat", "Invalid role.");
             return;
         }
@@ -112,9 +108,7 @@ public class CombatCommand extends Command {
     @Override
     public List<String> processTabComplete(CommandSender sender, String[] args) {
         if (args.length == 1) {
-            List<String> validFilters = new ArrayList<>(List.of(ChampionsFilter.uniqueNames()));
-            roleManager.getRoles().forEach(role -> validFilters.add(role.getName()));
-            return validFilters;
+            return championsFilterManager.getObjects().keySet().stream().toList();
         } else if (args.length == 2) {
             return Bukkit.getOnlinePlayers().stream().map(Player::getName).toList();
         }
