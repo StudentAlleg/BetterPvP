@@ -10,7 +10,6 @@ import me.mykindos.betterpvp.champions.champions.skills.Skill;
 import me.mykindos.betterpvp.champions.champions.skills.skills.assassin.data.RecallData;
 import me.mykindos.betterpvp.champions.champions.skills.types.CooldownSkill;
 import me.mykindos.betterpvp.champions.champions.skills.types.ToggleSkill;
-import me.mykindos.betterpvp.core.components.champions.Role;
 import me.mykindos.betterpvp.core.components.champions.SkillType;
 import me.mykindos.betterpvp.core.framework.updater.UpdateEvent;
 import me.mykindos.betterpvp.core.listener.BPvPListener;
@@ -22,11 +21,7 @@ import org.bukkit.Sound;
 import org.bukkit.entity.Player;
 import org.bukkit.event.Listener;
 
-import java.util.Iterator;
-import java.util.LinkedList;
-import java.util.ListIterator;
-import java.util.Map;
-import java.util.WeakHashMap;
+import java.util.*;
 
 @Singleton
 @BPvPListener
@@ -90,11 +85,6 @@ public class Recall extends Skill implements ToggleSkill, CooldownSkill, Listene
 
             recallData.push(player.getLocation());
         }
-    }
-
-    @Override
-    public Role getClassType() {
-        return Role.ASSASSIN;
     }
 
     @Override

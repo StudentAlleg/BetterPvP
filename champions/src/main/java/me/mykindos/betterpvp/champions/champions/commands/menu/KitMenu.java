@@ -2,6 +2,7 @@ package me.mykindos.betterpvp.champions.champions.commands.menu;
 
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
+import me.mykindos.betterpvp.champions.champions.roles.RoleManager;
 import me.mykindos.betterpvp.core.components.champions.Role;
 import me.mykindos.betterpvp.core.menu.Windowed;
 import me.mykindos.betterpvp.core.utilities.model.item.ItemView;
@@ -16,12 +17,12 @@ import xyz.xenondevs.invui.gui.AbstractGui;
 public class KitMenu extends AbstractGui implements Windowed {
 
     @Inject
-    public KitMenu() {
+    public KitMenu(RoleManager roleManager) {
         super(9, 4);
 
-        int[] start = new int[]{0, 1, 3, 5, 7, 8};
+        int[] start = new int[]{0, 1, 2, 3, 5, 6, 7, 8};
         int count = 0;
-        for (Role role : Role.values()) {
+        for (Role role : roleManager.getRoles()) {
             Component name = Component.text(role.getName(), NamedTextColor.GREEN);
             setItem(start[count], new KitButton(getItem(role.getHelmet(), name), role));
             setItem(start[count] + 9, new KitButton(getItem(role.getChestplate(), name), role));
