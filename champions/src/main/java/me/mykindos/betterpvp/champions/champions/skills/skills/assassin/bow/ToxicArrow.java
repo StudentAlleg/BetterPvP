@@ -17,8 +17,6 @@ import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.event.block.Action;
 
-import java.util.Set;
-
 @Singleton
 @BPvPListener
 public class ToxicArrow extends PrepareArrowSkill {
@@ -50,13 +48,13 @@ public class ToxicArrow extends PrepareArrowSkill {
     }
 
     @Override
-    public SkillType getType() {
-        return SkillType.BOW;
+    public Role getClassType() {
+        return Role.ASSASSIN;
     }
 
     @Override
-    public String getDefaultClassString() {
-        return "assassin";
+    public SkillType getType() {
+        return SkillType.BOW;
     }
 
     @Override

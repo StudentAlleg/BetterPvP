@@ -20,9 +20,9 @@ import java.util.Set;
 
 @Slf4j
 @Singleton
+@Getter
 public class RoleManager extends Manager<Role> {
 
-    @Getter
     private final RoleRepository repository;
 
     private final Champions champions;
