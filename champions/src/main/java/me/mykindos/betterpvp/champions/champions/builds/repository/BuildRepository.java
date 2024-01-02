@@ -10,7 +10,6 @@ import me.mykindos.betterpvp.champions.champions.skills.Skill;
 import me.mykindos.betterpvp.champions.champions.skills.SkillManager;
 import me.mykindos.betterpvp.core.components.champions.Role;
 import me.mykindos.betterpvp.core.components.champions.SkillType;
-import me.mykindos.betterpvp.core.config.Config;
 import me.mykindos.betterpvp.core.database.Database;
 import me.mykindos.betterpvp.core.database.query.Statement;
 import me.mykindos.betterpvp.core.database.query.values.BooleanStatementValue;
@@ -28,10 +27,6 @@ import java.util.Optional;
 @Singleton
 public class BuildRepository implements IRepository<RoleBuild> {
 
-    @Inject
-    @Config(path = "champions.database.prefix", defaultValue = "champions_")
-    private String tablePrefix;
-
     private final Database database;
     private final SkillManager skillManager;
 
@@ -46,12 +41,11 @@ public class BuildRepository implements IRepository<RoleBuild> {
 
     @Override
     public List<RoleBuild> getAll() {
-
         return null;
     }
 
     public void loadBuilds(GamerBuilds builds) {
-        String query = "SELECT * FROM " + tablePrefix + "builds WHERE Gamer = ?";
+        String query = "SELECT * FROM champions_builds WHERE Gamer = ?";
         CachedRowSet result = database.executeQuery(new Statement(query, new StringStatementValue(builds.getUuid())));
         try {
             while (result.next()) {
@@ -142,7 +136,7 @@ public class BuildRepository implements IRepository<RoleBuild> {
 
     @Override
     public void save(RoleBuild build) {
-        String query = "INSERT IGNORE INTO " + tablePrefix + "builds VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+        String query = "INSERT IGNORE INTO champions_builds VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
 
         var swordStatement = new SkillStatementValue(build.getSwordSkill());
         var axeStatement = new SkillStatementValue(build.getAxeSkill());
@@ -159,7 +153,7 @@ public class BuildRepository implements IRepository<RoleBuild> {
     }
 
     public void update(RoleBuild build) {
-        String query = "INSERT INTO " + tablePrefix + "builds VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+        String query = "INSERT INTO champions_builds VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
                 + "ON DUPLICATE KEY UPDATE Sword = ?, Axe = ?, Bow = ?, PassiveA = ?, PassiveB = ?, Global = ?, Active = ?";
 
         var swordStatement = new SkillStatementValue(build.getSwordSkill());

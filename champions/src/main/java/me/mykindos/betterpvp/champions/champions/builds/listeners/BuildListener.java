@@ -10,7 +10,7 @@ import me.mykindos.betterpvp.champions.champions.builds.menus.events.ApplyBuildE
 import me.mykindos.betterpvp.champions.champions.builds.menus.events.DeleteBuildEvent;
 import me.mykindos.betterpvp.champions.champions.roles.RoleManager;
 import me.mykindos.betterpvp.champions.champions.skills.SkillManager;
-import me.mykindos.betterpvp.core.client.events.ClientLoginEvent;
+import me.mykindos.betterpvp.core.client.events.ClientJoinEvent;
 import me.mykindos.betterpvp.core.listener.BPvPListener;
 import me.mykindos.betterpvp.core.utilities.UtilServer;
 import org.bukkit.Material;
@@ -43,7 +43,7 @@ public class BuildListener implements Listener {
     private RoleManager roleManager;
 
     @EventHandler
-    public void onClientJoin(ClientLoginEvent event) {
+    public void onClientJoin(ClientJoinEvent event) {
         UtilServer.runTaskAsync(champions, () -> {
             GamerBuilds builds = buildManager.loadBuildsForPlayer(event.getClient().getUuid());
             UtilServer.runTask(champions, () -> {

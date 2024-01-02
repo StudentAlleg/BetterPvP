@@ -31,8 +31,6 @@ public abstract class BPvPPlugin extends JavaPlugin {
 
     public abstract Injector getInjector();
 
-    public abstract String getDatabasePrefix();
-
     @Override
     @NotNull
     public ExtendedYamlConfiguration getConfig() {

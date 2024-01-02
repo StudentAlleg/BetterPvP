@@ -112,7 +112,7 @@ public final class ChampionsCombatLeaderboard extends PlayerLeaderboard<CombatDa
     }
 
     @Override
-    protected CombatData fetch(@NotNull SearchOptions options, @NotNull Database database, @NotNull String tablePrefix, @NotNull UUID entry) {
+    protected CombatData fetch(@NotNull SearchOptions options, @NotNull Database database, @NotNull UUID entry) {
         final ChampionsFilter filter = (ChampionsFilter) Objects.requireNonNull(options.getFilter());
         if (championsFilterManager.isGlobal(filter)) {
             final CombatSort sortType = (CombatSort) Objects.requireNonNull(options.getSort());
@@ -124,7 +124,7 @@ public final class ChampionsCombatLeaderboard extends PlayerLeaderboard<CombatDa
     }
 
     @Override
-    protected Map<UUID, CombatData> fetchAll(@NotNull SearchOptions options, @NotNull Database database, @NotNull String tablePrefix) {
+    protected Map<UUID, CombatData> fetchAll(@NotNull SearchOptions options, @NotNull Database database) {
         final ChampionsFilter filter = (ChampionsFilter) Objects.requireNonNull(options.getFilter());
         final Map<UUID, CombatData> map = new HashMap<>();
         final CombatSort sortType = (CombatSort) Objects.requireNonNull(options.getSort());

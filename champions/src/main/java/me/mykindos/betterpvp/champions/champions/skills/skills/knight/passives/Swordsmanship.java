@@ -8,6 +8,7 @@ import me.mykindos.betterpvp.champions.champions.ChampionsManager;
 import me.mykindos.betterpvp.champions.champions.skills.Skill;
 import me.mykindos.betterpvp.champions.champions.skills.data.SkillWeapons;
 import me.mykindos.betterpvp.champions.champions.skills.types.PassiveSkill;
+import me.mykindos.betterpvp.core.client.gamer.Gamer;
 import me.mykindos.betterpvp.core.combat.events.CustomDamageEvent;
 import me.mykindos.betterpvp.core.components.champions.Role;
 import me.mykindos.betterpvp.core.components.champions.SkillType;
@@ -59,14 +60,17 @@ public class Swordsmanship extends Skill implements PassiveSkill {
                 "This only applies to swords"
         };
     }
+
     @Override
     public String getDefaultClassString() {
         return "knight";
     }
+
     @Override
     public SkillType getType() {
         return SkillType.PASSIVE_B;
     }
+
 
     @EventHandler(priority = EventPriority.HIGH)
     public void onDamage(CustomDamageEvent event) {
@@ -91,18 +95,16 @@ public class Swordsmanship extends Skill implements PassiveSkill {
             int level = getLevel(cur);
             if (level > 0) {
                 if (charges.containsKey(cur)) {
-                    championsManager.getGamers().getObject(cur.getUniqueId().toString()).ifPresent(gamer -> {
-                        if (UtilTime.elapsed(gamer.getLastDamaged(), (long) timeOutOfCombat * 1000)) {
-                            if (!championsManager.getCooldowns().use(cur, getName(), timeBetweenCharges, false)) return;
-                            int charge = charges.get(cur);
-                            if (charge < level) {
-                                charge = Math.min(level, charge + 1);
-                                UtilMessage.simpleMessage(cur, "Champions", "Swordsmanship charge: <yellow>%d", charge);
-                                charges.put(cur, charge);
-                            }
+                    Gamer gamer = championsManager.getClientManager().search().online(cur).getGamer();
+                    if (UtilTime.elapsed(gamer.getLastDamaged(), (long) timeOutOfCombat * 1000)) {
+                        if (!championsManager.getCooldowns().use(cur, getName(), timeBetweenCharges, false)) return;
+                        int charge = charges.get(cur);
+                        if (charge < level) {
+                            charge = Math.min(level, charge + 1);
+                            UtilMessage.simpleMessage(cur, "Champions", "Swordsmanship charge: <yellow>%d", charge);
+                            charges.put(cur, charge);
                         }
-                    });
-
+                    }
                 } else {
                     charges.put(cur, 0);
                 }
