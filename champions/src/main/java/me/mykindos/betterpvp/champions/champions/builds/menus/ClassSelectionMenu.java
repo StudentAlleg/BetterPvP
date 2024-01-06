@@ -2,6 +2,7 @@ package me.mykindos.betterpvp.champions.champions.builds.menus;
 
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
+import me.mykindos.betterpvp.champions.Champions;
 import me.mykindos.betterpvp.champions.champions.builds.BuildManager;
 import me.mykindos.betterpvp.champions.champions.builds.menus.buttons.ClassSelectionButton;
 import me.mykindos.betterpvp.champions.champions.roles.RoleManager;
@@ -19,7 +20,7 @@ import java.util.Iterator;
 public class ClassSelectionMenu extends AbstractGui implements Windowed {
 
     @Inject
-    public ClassSelectionMenu(BuildManager buildManager, SkillManager skillManager, RoleManager roleManager) {
+    public ClassSelectionMenu(BuildManager buildManager, SkillManager skillManager, RoleManager roleManager, Champions champions) {
         super(9, 3);
 
         int[] slots = new int[] {9, 10, 11, 12, 13, 14, 15, 16, 17};
@@ -33,6 +34,7 @@ public class ClassSelectionMenu extends AbstractGui implements Windowed {
         }
 
         setBackground(Menu.BACKGROUND_ITEM);
+
     }
 
     @NotNull

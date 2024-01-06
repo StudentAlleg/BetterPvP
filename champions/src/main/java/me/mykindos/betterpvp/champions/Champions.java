@@ -11,6 +11,7 @@ import me.mykindos.betterpvp.champions.champions.skills.injector.SkillInjectorMo
 import me.mykindos.betterpvp.champions.commands.ChampionsCommandLoader;
 import me.mykindos.betterpvp.champions.injector.ChampionsInjectorModule;
 import me.mykindos.betterpvp.champions.listeners.ChampionsListenerLoader;
+import me.mykindos.betterpvp.champions.stats.impl.ChampionsFilterManager;
 import me.mykindos.betterpvp.core.Core;
 import me.mykindos.betterpvp.core.config.Config;
 import me.mykindos.betterpvp.core.config.ConfigInjectorModule;
@@ -73,6 +74,9 @@ public class Champions extends BPvPPlugin {
 
             var roleManager = injector.getInstance(RoleManager.class);
             roleManager.loadRoles();
+
+            var championsFilterManager = injector.getInstance(ChampionsFilterManager.class);
+            championsFilterManager.reload();
 
             var itemHandler = injector.getInstance(ItemHandler.class);
             itemHandler.loadItemData("Champions");

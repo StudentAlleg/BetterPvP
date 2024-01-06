@@ -20,6 +20,6 @@ public class ChampionsFilter implements FilterType {
 
     @Override
     public boolean accepts(Object entry) {
-        return getName() != "GLOBAL" && entry instanceof ChampionsCombatData data && data.getRole() == role;
+        return !getName().equals("GLOBAL") && entry instanceof ChampionsCombatData data && data.getRole() == role;
     }
 }
