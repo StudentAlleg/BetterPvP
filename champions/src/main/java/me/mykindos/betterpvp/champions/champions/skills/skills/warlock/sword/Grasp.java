@@ -24,7 +24,7 @@ import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.Sound;
 import org.bukkit.block.Block;
-import org.bukkit.craftbukkit.v1_20_R2.CraftWorld;
+import org.bukkit.craftbukkit.v1_20_R3.CraftWorld;
 import org.bukkit.entity.ArmorStand;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
@@ -46,6 +46,14 @@ public class Grasp extends Skill implements InteractSkill, CooldownSkill, Listen
     private final WeakHashMap<Player, ArrayList<LivingEntity>> cooldownJump = new WeakHashMap<>();
     private final HashMap<ArmorStand, Long> stands = new HashMap<>();
 
+    private double baseDistance;
+
+    private double distanceIncreasePerLevel;
+
+    private double baseDamage;
+
+    private double damageIncreasePerLevel;
+
     @Inject
     public Grasp(Champions champions, ChampionsManager championsManager) {
         super(champions, championsManager);
@@ -63,13 +71,22 @@ public class Grasp extends Skill implements InteractSkill, CooldownSkill, Listen
                 "Right click with a Sword to activate",
                 "",
                 "Create a wall of skulls that closes in on",
-                "you from <val>" + (10 + ((level * 10) / 2)) +"</val> blocks away, dragging along",
-                "all enemies and dealing <val>" + (1 + (level - 1)) +"</val> damage",
+                "you from <val>" + getDistance(level) +"</val> blocks away, dragging along",
+                "all enemies and dealing <val>" + getDamage(level) +"</val> damage",
                 "",
                 "Cooldown: <val>" + getCooldown(level)
 
         };
     }
+
+    public double getDistance(int level) {
+        return baseDistance + level * distanceIncreasePerLevel;
+    }
+
+    public double getDamage(int level) {
+        return baseDamage + level * damageIncreasePerLevel;
+    }
+
     @Override
     public String getDefaultClassString() {
         return "warlock";
@@ -94,7 +111,7 @@ public class Grasp extends Skill implements InteractSkill, CooldownSkill, Listen
 
             if (!cooldownJump.get(player).contains(target)) {
 
-                UtilDamage.doCustomDamage(new CustomDamageEvent(target, player, null, EntityDamageEvent.DamageCause.CUSTOM, level, false, getName()));
+                UtilDamage.doCustomDamage(new CustomDamageEvent(target, player, null, EntityDamageEvent.DamageCause.CUSTOM, getDamage(level), false, getName()));
                 cooldownJump.get(player).add(target);
                 UtilVelocity.velocity(target, UtilVelocity.getTrajectory(target.getLocation(), targetLocation), 1.0, false, 0, 0.5, 1, true);
             }
@@ -116,7 +133,6 @@ public class Grasp extends Skill implements InteractSkill, CooldownSkill, Listen
     }
 
 
-
     @Override
     public SkillType getType() {
         return SkillType.SWORD;
@@ -124,7 +140,7 @@ public class Grasp extends Skill implements InteractSkill, CooldownSkill, Listen
 
     @Override
     public void activate(Player player, int level) {
-        Block block = player.getTargetBlock(null, (10 + (level * 10) / 2));
+        Block block = player.getTargetBlock(null, (int) getDistance(level));
         Location startPos = player.getLocation();
 
         final Vector v = player.getLocation().toVector().subtract(block.getLocation().toVector()).normalize().multiply(0.2);
@@ -208,19 +224,27 @@ public class Grasp extends Skill implements InteractSkill, CooldownSkill, Listen
 
     @Override
     public double getCooldown(int level) {
-        return cooldown - (level * 1.5);
+        return cooldown - (level * cooldownDecreasePerLevel);
     }
 
 
     @Override
     public boolean canUse(Player player) {
         int level = getLevel(player);
-        Block block = player.getTargetBlock(null, (20 + (level * 10) / 2));
+        Block block = player.getTargetBlock(null, (int) getDistance(level));
         if (block.getLocation().distance(player.getLocation()) < 3) {
             UtilMessage.simpleMessage(player, "Champions", "You cannot use <alt>" + getName() + "</alt> this close.");
             return false;
         }
 
         return true;
+    }
+    @Override
+    public void loadSkillConfig() {
+        baseDistance = getConfig("baseDistance", 10.0, Double.class);
+        distanceIncreasePerLevel = getConfig("distanceIncreasePerLevel", 5.0, Double.class);
+
+        baseDamage = getConfig("baseDamage", 0.0, Double.class);
+        damageIncreasePerLevel = getConfig("damageIncreasePerLevel", 1.0, Double.class);
     }
 }

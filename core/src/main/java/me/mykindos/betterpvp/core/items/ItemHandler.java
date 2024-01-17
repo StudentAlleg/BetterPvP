@@ -2,19 +2,19 @@ package me.mykindos.betterpvp.core.items;
 
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
+import lombok.extern.slf4j.Slf4j;
 import me.mykindos.betterpvp.core.Core;
 import me.mykindos.betterpvp.core.config.Config;
 import me.mykindos.betterpvp.core.framework.CoreNamespaceKeys;
 import me.mykindos.betterpvp.core.framework.events.items.ItemUpdateLoreEvent;
 import me.mykindos.betterpvp.core.framework.events.items.ItemUpdateNameEvent;
-import me.mykindos.betterpvp.core.items.enchants.GlowEnchant;
 import me.mykindos.betterpvp.core.utilities.UtilFormat;
 import me.mykindos.betterpvp.core.utilities.UtilItem;
 import me.mykindos.betterpvp.core.utilities.UtilServer;
-import me.mykindos.betterpvp.core.weapons.WeaponManager;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import net.kyori.adventure.text.format.TextDecoration;
+import org.bukkit.Bukkit;
 import org.bukkit.Material;
 import org.bukkit.enchantments.Enchantment;
 import org.bukkit.inventory.ItemFlag;
@@ -23,21 +23,19 @@ import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.persistence.PersistentDataContainer;
 import org.bukkit.persistence.PersistentDataType;
 
-import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
+import java.util.Set;
 
+@Slf4j
 @Singleton
 public class ItemHandler {
 
-    private final WeaponManager weaponManager;
     private final ItemRepository itemRepository;
-    private final HashMap<String, BPVPItem> itemMap = new HashMap<>();
-    private final Enchantment glowEnchantment;
 
+    private final HashMap<String, BPVPItem> itemMap = new HashMap<>();
 
     @Inject
     @Config(path = "items.hideAttributes", defaultValue = "true")
@@ -48,18 +46,13 @@ public class ItemHandler {
     private boolean hideEnchants;
 
     @Inject
-    public ItemHandler(Core core, WeaponManager weaponManager, ItemRepository itemRepository) {
-        this.weaponManager = weaponManager;
+    public ItemHandler(Core core, ItemRepository itemRepository) {
         this.itemRepository = itemRepository;
-
-
-        glowEnchantment = new GlowEnchant(CoreNamespaceKeys.GLOW_ENCHANTMENT_KEY);
-        registerEnchantment(glowEnchantment);
     }
 
     public void loadItemData(String module) {
         List<BPVPItem> items = itemRepository.getItemsForModule(module);
-        items.forEach(item -> itemMap.put(item.getMaterial().name() + item.getCustomModelData(), item));
+        items.forEach(item -> itemMap.put(item.getIdentifier(), item));
     }
 
     /**
@@ -71,10 +64,15 @@ public class ItemHandler {
      * @return An ItemStack with an updated name
      */
     public ItemStack updateNames(ItemStack itemStack) {
-
         Material material = itemStack.getType();
+        if (material == Material.AIR) {
+            return itemStack;
+        }
+
         ItemMeta itemMeta = itemStack.getItemMeta();
-        int modelData = itemMeta.hasCustomModelData() ? itemMeta.getCustomModelData() : 0;
+        if (itemMeta == null) {
+            itemMeta = Bukkit.getItemFactory().getItemMeta(material);
+        }
 
         if (hideAttributes) {
             itemMeta.addItemFlags(ItemFlag.HIDE_ATTRIBUTES);
@@ -85,23 +83,25 @@ public class ItemHandler {
             itemMeta.addItemFlags(ItemFlag.HIDE_ENCHANTS);
         }
 
-        BPVPItem item = itemMap.get(material.name() + modelData);
+        BPVPItem item = getItem(itemStack);
         if (item != null) {
+            item.itemify(itemStack);
+
             var nameUpdateEvent = UtilServer.callEvent(new ItemUpdateNameEvent(itemStack, itemMeta, item.getName()));
             itemMeta.displayName(nameUpdateEvent.getItemName().decoration(TextDecoration.ITALIC, false));
 
             var loreUpdateEvent = UtilServer.callEvent(new ItemUpdateLoreEvent(itemStack, itemMeta, new ArrayList<>(item.getLore())));
-            itemMeta.lore(UtilItem.removeItalic(loreUpdateEvent.getItemLore()));
 
             PersistentDataContainer dataContainer = itemMeta.getPersistentDataContainer();
-            if(item.isGiveUUID()) {
-                if (!dataContainer.has(CoreNamespaceKeys.UUID_KEY)) {
-                    dataContainer.set(CoreNamespaceKeys.UUID_KEY, PersistentDataType.STRING, UUID.randomUUID().toString());
-                }
+
+            if (dataContainer.has(CoreNamespaceKeys.DURABILITY_KEY)) {
+                item.applyLore(itemMeta, loreUpdateEvent.getItemLore(), dataContainer.getOrDefault(CoreNamespaceKeys.DURABILITY_KEY, PersistentDataType.INTEGER, item.getMaxDurability()));
+            } else {
+                item.applyLore(itemMeta, loreUpdateEvent.getItemLore());
             }
 
             if (item.isGlowing() || dataContainer.has(CoreNamespaceKeys.GLOW_KEY)) {
-                itemMeta.addEnchant(glowEnchantment, 1, true);
+                UtilItem.addGlow(itemMeta);
             } else {
                 for (Map.Entry<Enchantment, Integer> entry : itemStack.getEnchantments().entrySet()) {
                     itemStack.removeEnchantment(entry.getKey());
@@ -115,18 +115,34 @@ public class ItemHandler {
         }
 
         itemStack.setItemMeta(itemMeta);
-
         return itemStack;
     }
 
-    private void registerEnchantment(Enchantment enchantment) {
-        try {
-            Field accept = Enchantment.class.getDeclaredField("acceptingNew");
-            accept.setAccessible(true);
-            accept.set(null, true);
-            Enchantment.registerEnchantment(enchantment);
-        } catch (Exception ex) {
-            ex.printStackTrace();
+    public Set<String> getItemIdentifiers() {
+        return itemMap.keySet();
+    }
+
+    public BPVPItem getItem(String identifier) {
+        return itemMap.get(identifier);
+    }
+
+    public BPVPItem getItem(ItemStack itemStack) {
+        if(itemStack.getItemMeta() == null) return null;
+
+        //try quick way
+        PersistentDataContainer dataContainer = itemStack.getItemMeta().getPersistentDataContainer();
+        if (dataContainer.has(CoreNamespaceKeys.CUSTOM_ITEM_KEY)) {
+            return getItem(dataContainer.get(CoreNamespaceKeys.CUSTOM_ITEM_KEY, PersistentDataType.STRING));
         }
+        //do expensive lookup
+        for (BPVPItem item : itemMap.values()) {
+            if (item.matches(itemStack)) return item;
+        }
+
+        return null;
+    }
+
+    public void replaceItem(String identifier, BPVPItem newItem) {
+        itemMap.replace(identifier, newItem);
     }
 }

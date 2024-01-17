@@ -1,5 +1,6 @@
 package me.mykindos.betterpvp.core.utilities;
 
+import com.google.common.base.Preconditions;
 import me.mykindos.betterpvp.core.framework.customtypes.CustomArmourStand;
 import me.mykindos.betterpvp.core.framework.customtypes.KeyValue;
 import me.mykindos.betterpvp.core.utilities.events.EntityProperty;
@@ -7,15 +8,36 @@ import me.mykindos.betterpvp.core.utilities.events.FetchNearbyEntityEvent;
 import org.bukkit.Location;
 import org.bukkit.attribute.Attribute;
 import org.bukkit.attribute.AttributeInstance;
-import org.bukkit.craftbukkit.v1_20_R2.CraftWorld;
+import org.bukkit.craftbukkit.v1_20_R3.CraftWorld;
 import org.bukkit.entity.ArmorStand;
+import org.bukkit.entity.Entity;
 import org.bukkit.entity.LivingEntity;
+import org.bukkit.util.RayTraceResult;
+import org.bukkit.util.Vector;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
+import java.util.function.Predicate;
 
 public class UtilEntity {
+
+    public static Optional<RayTraceResult> interpolateCollision(@NotNull Location lastLocation, @NotNull Location destination, float raySize, @Nullable Predicate<Entity> entityFilter) {
+        Preconditions.checkNotNull(lastLocation, "Last location cannot be null");
+        Preconditions.checkNotNull(destination, "Destination cannot be null");
+        Preconditions.checkArgument(destination.getWorld() == lastLocation.getWorld(), "Locations must be in the same world");
+
+        final Vector directionRaw = destination.toVector().subtract(lastLocation.toVector());
+        final double distance = directionRaw.length();
+        final Vector direction = distance < 1e-6 ? lastLocation.getDirection() : directionRaw.normalize();
+        return Optional.ofNullable(lastLocation.getWorld().rayTraceEntities(lastLocation,
+                direction,
+                distance,
+                raySize,
+                entityFilter));
+    }
 
     public static List<KeyValue<LivingEntity, EntityProperty>> getNearbyEntities(LivingEntity source, double radius) {
         return getNearbyEntities(source, source.getLocation(), radius, EntityProperty.ALL);
@@ -31,6 +53,7 @@ public class UtilEntity {
         List<KeyValue<LivingEntity, EntityProperty>> livingEntities = new ArrayList<>();
         source.getWorld().getLivingEntities().stream()
                 .filter(livingEntity -> {
+                    if(!source.getWorld().getName().equalsIgnoreCase(livingEntity.getWorld().getName())) return false;
                     if (livingEntity.equals(source)) return false;
                     if (livingEntity.getLocation().distance(location) > radius) return false;
                     return !(livingEntity instanceof ArmorStand);
@@ -63,5 +86,4 @@ public class UtilEntity {
         armorStand.setCollidable(false); // We don't want them to collide with anything
         return armorStand;
     }
-
 }

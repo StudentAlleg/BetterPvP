@@ -41,6 +41,10 @@ public class SilencingStrikes extends Skill implements PassiveSkill, Listener {
     private int hitsNeeded;
     private double timeSpan;
 
+    private double baseDuration;
+
+    private double durationIncreasePerLevel;
+
     @Override
     public String getName() {
         return "Silencing Strikes";
@@ -51,8 +55,12 @@ public class SilencingStrikes extends Skill implements PassiveSkill, Listener {
 
         return new String[]{
                 "Hit a player <stat>" + hitsNeeded + "</stat> consecutive times without letting",
-                "<stat>" + timeSpan + "</stat> seconds pass to <effect>Silence</effect> them for <val>" + (level) + "</val> seconds"
+                "<stat>" + timeSpan + "</stat> seconds pass to <effect>Silence</effect> them for <val>" + getDuration(level) + "</val> seconds"
         };
+    }
+
+    public double getDuration(int level) {
+        return baseDuration + (level * durationIncreasePerLevel);
     }
 
     @Override
@@ -79,11 +87,7 @@ public class SilencingStrikes extends Skill implements PassiveSkill, Listener {
             silenceData.setLastHit(System.currentTimeMillis());
             event.addReason(getName());
             if (silenceData.getCount() == hitsNeeded) {
-                championsManager.getEffects().addEffect(damagee, EffectType.SILENCE, (long) ((level * 1000L) * 0.75));
-                //if (championsManager.getEffects().hasEffect(damagee, EffectType.IMMUNETOEFFECTS)) {
-                //    UtilMessage.message(damager, getClassType().getName(), "%s is immune to your silence!",
-                //            ChatColor.GREEN + damagee.getName() + ChatColor.GRAY);
-                //}
+                championsManager.getEffects().addEffect(damagee, EffectType.SILENCE, (long) ((getDuration(level) * 1000L) * 0.75));
                 data.remove(silenceData);
             }
         }
@@ -93,7 +97,7 @@ public class SilencingStrikes extends Skill implements PassiveSkill, Listener {
 
     @UpdateEvent
     public void onUpdate() {
-        data.removeIf(silenceData -> UtilTime.elapsed(silenceData.getLastHit(), (long) timeSpan * 1000));
+        data.removeIf(silenceData -> UtilTime.elapsed(silenceData.getLastHit(), (long) (timeSpan * 1000L)));
     }
 
     public SilencingStrikesData getSilencingStrikesData(Player damager, Player damagee) {
@@ -109,5 +113,7 @@ public class SilencingStrikes extends Skill implements PassiveSkill, Listener {
     public void loadSkillConfig(){
         hitsNeeded = getConfig("hitsNeeded", 3, Integer.class);
         timeSpan = getConfig("timeSpan", 0.8, Double.class);
+        baseDuration = getConfig("baseDuration", 0.0, Double.class);
+        durationIncreasePerLevel = getConfig("durationIncreasePerLevel", 1.0, Double.class);
     }
 }

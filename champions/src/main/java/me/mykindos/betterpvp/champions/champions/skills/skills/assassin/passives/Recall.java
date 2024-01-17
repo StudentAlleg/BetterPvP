@@ -33,6 +33,8 @@ public class Recall extends Skill implements ToggleSkill, CooldownSkill, Listene
     private double percentHealthRecovered;
     private double duration;
 
+    private double durationIncreasePerLevel;
+
     @Inject
     public Recall(Champions champions, ChampionsManager championsManager) {
         super(champions, championsManager);
@@ -44,7 +46,7 @@ public class Recall extends Skill implements ToggleSkill, CooldownSkill, Listene
     }
 
     public double getDuration(int level) {
-        return duration + (level - 1);
+        return duration + ((level - 1) * durationIncreasePerLevel);
     }
 
     @Override
@@ -94,7 +96,7 @@ public class Recall extends Skill implements ToggleSkill, CooldownSkill, Listene
 
     @Override
     public double getCooldown(int level) {
-        return cooldown - ((level - 1d) * 2);
+        return cooldown - ((level - 1d) * cooldownDecreasePerLevel);
     }
 
     @Override
@@ -151,5 +153,6 @@ public class Recall extends Skill implements ToggleSkill, CooldownSkill, Listene
     public void loadSkillConfig(){
         percentHealthRecovered = getConfig("percentHealthRecovered", 0.25, Double.class);
         duration = getConfig("duration", 2.5, Double.class);
+        durationIncreasePerLevel = getConfig("durationIncreasePerLevel", 1.0, Double.class);
     }
 }

@@ -25,6 +25,7 @@ import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.entity.PlayerDeathEvent;
 import org.bukkit.event.player.PlayerMoveEvent;
 import org.bukkit.event.player.PlayerRespawnEvent;
+import org.bukkit.event.player.PlayerToggleSprintEvent;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
 
@@ -65,16 +66,18 @@ public class EffectListener implements Listener {
                 effectManager.removeEffect(target, effect.getEffectType());
             }
             if (effect.getEffectType() == EffectType.STRENGTH) {
-                target.addPotionEffect(new PotionEffect(PotionEffectType.INCREASE_DAMAGE, (int) ((effect.getRawLength() / 1000) * 20), effect.getLevel() - 1));
+                target.addPotionEffect(new PotionEffect(PotionEffectType.INCREASE_DAMAGE, (int) ((effect.getRawLength() / 1000d) * 20), effect.getLevel() - 1));
             } else if (effect.getEffectType() == EffectType.SILENCE) {
-                target.getWorld().playSound(target.getLocation(), Sound.ENTITY_ZOMBIE_VILLAGER_CURE, 1F, 1.5F);
-                UtilMessage.simpleMessage(target, "Silence", "You have been silenced for <alt>%s</alt> seconds.", effect.getRawLength() / 1000);
+                target.getWorld().playSound(target.getLocation(), Sound.ENTITY_BAT_AMBIENT, 2.0F, 1.0F);
+                UtilMessage.simpleMessage(target, "Silence", "You have been silenced for <alt>%s</alt> seconds.", effect.getRawLength() / 1000d);
             } else if (effect.getEffectType() == EffectType.VULNERABILITY) {
-                target.addPotionEffect(new PotionEffect(PotionEffectType.WITHER, (int) ((effect.getRawLength() / 1000) * 20), 0));
+                target.addPotionEffect(new PotionEffect(PotionEffectType.WITHER, (int) ((effect.getRawLength() / 1000d) * 20), 0));
             } else if (effect.getEffectType() == EffectType.LEVITATION) {
-                target.addPotionEffect(new PotionEffect(PotionEffectType.LEVITATION, (int) ((effect.getRawLength() / 1000) * 20), effect.getLevel()));
+                target.addPotionEffect(new PotionEffect(PotionEffectType.LEVITATION, (int) ((effect.getRawLength() / 1000d) * 20), effect.getLevel()));
             } else if(effect.getEffectType() == EffectType.POISON) {
-                target.addPotionEffect(new PotionEffect(PotionEffectType.POISON, (int) ((effect.getRawLength() / 1000) * 20), effect.getLevel()));
+                target.addPotionEffect(new PotionEffect(PotionEffectType.POISON, (int) ((effect.getRawLength() / 1000d) * 20), effect.getLevel()));
+            } else if (effect.getEffectType() == EffectType.NO_JUMP) {
+                target.addPotionEffect(new PotionEffect(PotionEffectType.JUMP, (int) ((effect.getRawLength() / 1000d) * 20), 128, false, false, false));
             }
 
             effects.add(effect);
@@ -245,12 +248,14 @@ public class EffectListener implements Listener {
     }
 
     @EventHandler
-    public void onInvisibilityRemoved(EffectExpireEvent event) {
+    public void onEffectRemove(EffectExpireEvent event) {
         if (event.getTarget() instanceof Player player) {
             if (event.getEffect().getEffectType() == EffectType.INVISIBILITY) {
                 for (Player onlinePlayer : Bukkit.getOnlinePlayers()) {
                     onlinePlayer.showPlayer(core, player);
                 }
+            } else if (event.getEffect().getEffectType() == EffectType.NO_JUMP) {
+                player.removePotionEffect(PotionEffectType.JUMP);
             }
         }
     }
@@ -297,5 +302,12 @@ public class EffectListener implements Listener {
         }
 
         target.setFireTicks(0);
+    }
+
+    @EventHandler
+    public void onSprint(PlayerToggleSprintEvent event) {
+        if(effectManager.hasEffect(event.getPlayer(), EffectType.NO_SPRINT)){
+            event.getPlayer().setSprinting(false);
+        }
     }
 }

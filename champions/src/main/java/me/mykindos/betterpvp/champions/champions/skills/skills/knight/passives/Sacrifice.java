@@ -21,6 +21,10 @@ import java.util.Set;
 @BPvPListener
 public class Sacrifice extends Skill implements PassiveSkill {
 
+    private double basePercentage;
+
+    private double percentageIncreasePerLevel;
+
     @Inject
     public Sacrifice(Champions champions, ChampionsManager championsManager) {
         super(champions, championsManager);
@@ -34,20 +38,25 @@ public class Sacrifice extends Skill implements PassiveSkill {
     @Override
     public String[] getDescription(int level) {
 
-        double percentage = ((level * 0.08) * 100);
+        double percentage = getPercentage(level) * 100;
         return new String[]{
                 "Deal an extra <val>" + percentage + "%" + "</val> damage,",
                 "but you now also take <val>" + percentage + "%",
                 "extra damage from melee attacks"
         };
     }
+
+    public double getPercentage(int level) {
+        return basePercentage + level * percentageIncreasePerLevel;
+    }
+
     @Override
     public String getDefaultClassString() {
         return "knight";
     }
     @Override
     public SkillType getType() {
-        return SkillType.PASSIVE_B;
+        return SkillType.PASSIVE_A;
     }
 
 
@@ -58,7 +67,7 @@ public class Sacrifice extends Skill implements PassiveSkill {
         if (event.getDamager() instanceof Player damager) {
             int level = getLevel(damager);
             if (level > 0) {
-                event.setDamage(Math.ceil(event.getDamage() * (1.0 + (level * 0.08))));
+                event.setDamage(Math.ceil(event.getDamage() * (1.0 + getPercentage(level))));
             }
 
         }
@@ -66,10 +75,12 @@ public class Sacrifice extends Skill implements PassiveSkill {
         if (event.getDamagee() instanceof Player damagee) {
             int level = getLevel(damagee);
             if (level > 0) {
-                event.setDamage(Math.ceil(event.getDamage() * (1.0 + (level * 0.08))));
+                event.setDamage(Math.ceil(event.getDamage() * (1.0 + getPercentage(level))));
             }
         }
     }
-
+    public void loadSkillConfig() {
+        basePercentage = getConfig("basePercentage", 0.0, Double.class);
+        percentageIncreasePerLevel = getConfig("percentageIncreasePerLevel", 0.08, Double.class);
+    }
 }
-

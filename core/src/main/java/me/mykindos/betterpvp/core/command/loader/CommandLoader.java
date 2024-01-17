@@ -79,7 +79,7 @@ public class CommandLoader extends Loader {
 
             count++;
         } catch (Exception ex) {
-            ex.printStackTrace();
+            log.error("Failed to load command", ex);
         }
     }
 
@@ -91,7 +91,6 @@ public class CommandLoader extends Loader {
             String rankPath = "command." + command.getName().toLowerCase() + ".requiredRank";
             command.setEnabled(plugin.getConfig().getOrSaveBoolean(enabledPath, true));
             command.setRequiredRank(Rank.valueOf(plugin.getConfig().getOrSaveString(rankPath, "ADMIN").toUpperCase()));
-            plugin.getInjector().injectMembers(command);
 
             loadSubCommandsConfig(command, "command." + command.getName().toLowerCase() + ".");
 

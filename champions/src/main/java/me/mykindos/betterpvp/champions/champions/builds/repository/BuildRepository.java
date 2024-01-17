@@ -16,12 +16,17 @@ import me.mykindos.betterpvp.core.database.query.values.BooleanStatementValue;
 import me.mykindos.betterpvp.core.database.query.values.IntegerStatementValue;
 import me.mykindos.betterpvp.core.database.query.values.StringStatementValue;
 import me.mykindos.betterpvp.core.database.repository.IRepository;
+import me.mykindos.betterpvp.core.utilities.UtilMessage;
+import org.bukkit.Bukkit;
+import org.bukkit.entity.Player;
 
 import javax.sql.rowset.CachedRowSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+
+import static java.util.UUID.fromString;
 
 @Slf4j
 @Singleton
@@ -55,6 +60,9 @@ public class BuildRepository implements IRepository<RoleBuild> {
                 Optional<Role> roleOptional = roleManager.getRole(role);
                 if (roleOptional.isEmpty()) continue;
                 RoleBuild build = new RoleBuild(uuid, roleOptional.get(), id);
+
+                boolean active = result.getBoolean(10);
+                build.setActive(active);
 
 
                 Role roleClass = roleOptional.get();
@@ -104,9 +112,6 @@ public class BuildRepository implements IRepository<RoleBuild> {
                 }
 
 
-                boolean active = result.getBoolean(10);
-                build.setActive(active);
-
                 if (active) {
                     builds.getActiveBuilds().put(role, build);
                 }
@@ -123,15 +128,22 @@ public class BuildRepository implements IRepository<RoleBuild> {
 
         if (value != null && !value.isEmpty()) {
             String[] split = value.split(",");
-            Skill skill = skillManager.getObjects().get(split[0]);
-            if(skill == null) return;
-            if (!skill.isEnabled()) return;
-
-            int level = Integer.parseInt(split[1]);
-            if (level > skill.getMaxLevel()) level = skill.getMaxLevel();
-            build.setSkill(type, skill, level);
-            build.takePoints(level);
+            setSkill(build, type, split[0], Integer.parseInt(split[1]));
         }
+    }
+
+    private void setSkill(RoleBuild build, SkillType type, String skillName, int level) {
+        Skill skill = skillManager.getObjects().get(skillName);
+        if (skill == null) return;
+        if (!skill.isEnabled()) {
+            if (!build.isActive()) return;
+            Player player = Bukkit.getPlayer(fromString(build.getUuid()));
+            if (player == null) return;
+            UtilMessage.message(player, "Champions", UtilMessage.deserialize("<green>%s</green> has been disabled on this server, refunding <green>%s</green> skill point(s) and removing from <yellow>%s</yellow> build <green>%s</green>", skill.getName(), level, build.getRole().toString(), build.getId()));
+            return;
+        }
+        build.setSkill(type, skill, level);
+        build.takePoints(level);
     }
 
     @Override

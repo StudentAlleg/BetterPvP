@@ -27,10 +27,16 @@ import java.util.WeakHashMap;
 @BPvPListener
 public class Fortitude extends Skill implements PassiveSkill, Listener {
 
-    private final WeakHashMap<Player, Integer> health = new WeakHashMap<>();
+    private final WeakHashMap<Player, Double> health = new WeakHashMap<>();
     private final WeakHashMap<Player, Long> last = new WeakHashMap<>();
 
-    private double heal;
+    private double healRate;
+
+    private double baseHeal;
+
+    private double healIncreasePerLevel;
+
+    private double healInterval;
 
     @Inject
     public Fortitude(Champions champions, ChampionsManager championsManager) {
@@ -47,11 +53,21 @@ public class Fortitude extends Skill implements PassiveSkill, Listener {
     public String[] getDescription(int level) {
 
         return new String[]{
-                "After taking damage, you slowly",
-                "regenerate up to <val>" + (3 + (level - 1)) + "</val> health, at a",
-                "rate of <stat>" + heal + "</stat> health per second"
+                "After taking damage, you regenerate",
+                "up to <val>" + getMaxHeal(level) + "</val> of the health you lost.",
+                "",
+                "You restore health at a rate of",
+                "<stat>" + healRate + "</stat> health per <stat>" + healInterval + "</stat> seconds.",
+                "",
+                "This does not stack, and is reset if",
+                "you are hit again."
         };
     }
+
+    public double getMaxHeal(int level) {
+        return baseHeal + level * healIncreasePerLevel;
+    }
+
     @Override
     public String getDefaultClassString() {
         return "knight";
@@ -64,13 +80,12 @@ public class Fortitude extends Skill implements PassiveSkill, Listener {
 
     @EventHandler(priority = EventPriority.HIGHEST)
     public void onHit(CustomDamageEvent event) {
-        if (!(event.getDamagee() instanceof Player p)) return;
-        int level = getLevel(p);
+        if (!(event.getDamagee() instanceof Player player)) return;
+        int level = getLevel(player);
         if (level > 0) {
-            health.put(p, Math.min((2 + level), (int) event.getDamage() / 2));
-            last.put(p, System.currentTimeMillis());
+            health.put(player, Math.min(getMaxHeal(level), event.getDamage()));
+            last.put(player, System.currentTimeMillis());
         }
-
     }
 
     @UpdateEvent(delay = 250)
@@ -78,13 +93,13 @@ public class Fortitude extends Skill implements PassiveSkill, Listener {
 
         HashSet<Player> remove = new HashSet<>();
         for (Player cur : health.keySet()) {
-            if (UtilTime.elapsed(last.get(cur), 2500L)) {
-                health.put(cur, health.get(cur) - 1);
+            if (UtilTime.elapsed(last.get(cur), (long) (healInterval * 1000))) {
+                health.put(cur, health.get(cur) - healRate);
                 last.put(cur, System.currentTimeMillis());
                 if (health.get(cur) <= 0) {
                     remove.add(cur);
                 }
-                UtilPlayer.health(cur, 1.0D);
+                UtilPlayer.health(cur, healRate);
             }
         }
 
@@ -94,6 +109,9 @@ public class Fortitude extends Skill implements PassiveSkill, Listener {
         }
     }
     public void loadSkillConfig() {
-        heal = getConfig("heal", 1.0, Double.class);
+        healRate = getConfig("healRate", 1.0, Double.class);
+        baseHeal = getConfig("baseHeal", 3.0, Double.class);
+        healIncreasePerLevel = getConfig("healIncreasePerLevel", 1.0, Double.class);
+        healInterval = getConfig("healInterval", 1.5, Double.class);
     }
 }

@@ -14,14 +14,19 @@ import org.bukkit.entity.LivingEntity;
 import org.bukkit.util.BoundingBox;
 import org.bukkit.util.Vector;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 
 public class UtilLocation {
+
+    public static final float DEFAULT_FOV = 73f;
 
     public static Set<Location> getBoundingBoxCorners(final World world, final BoundingBox boundingBox) {
         return new HashSet<>(Arrays.asList(
@@ -83,15 +88,26 @@ public class UtilLocation {
      * @return Whether the location is in front of the entity.
      */
     public static boolean isInFront(final LivingEntity entity, final Location other) {
+        return isInFront(entity, other, DEFAULT_FOV);
+    }
+
+    /**
+     * Check if a location is in front of an entity's screen, even if there's an obstacle between.
+     *
+     * @param entity The entity to check.
+     * @param other  The location to check.
+     * @param angle  The angle of the entity's field of view.
+     * @return Whether the location is in front of the entity.
+     */
+    public static boolean isInFront(final LivingEntity entity, final Location other, final float angle) {
         if (!entity.hasLineOfSight(other)) {
             return false;
         }
 
-        float fov = 73;
         final Vector direction = entity.getEyeLocation().getDirection(); // This is already normalized
         final Vector lineToLocation = other.subtract(entity.getEyeLocation()).toVector().normalize();
-        final double angle = Math.toDegrees(lineToLocation.angle(direction));
-        return Math.abs(angle) <= fov;
+        final double angle2 = Math.toDegrees(lineToLocation.angle(direction));
+        return Math.abs(angle2) <= angle;
     }
 
     /**
@@ -195,6 +211,30 @@ public class UtilLocation {
         return reference.clone().add(direction);
     }
 
+    /**
+     * Get all surface blocks in a box within a certain radius of a {@link Location}.
+     *
+     * @param center The center location for the circle
+     * @param radius The radius of the circle
+     * @return A {@link Map} of blocks and their distance from the center
+     * @see #getClosestSurfaceBlock(Location, boolean)
+     */
+    public static List<Block> getBoxSurfaceBlocks(final Location center, final double radius, final double height) {
+        Preconditions.checkState(radius > 0, "Radius must be greater than 0");
+        final List<Block> blocks = new ArrayList<>();
+
+        // Loop through all blocks in the radius within the same y-level as the center and get the closest surface block
+        for (double x = -radius; x <= radius; x++) {
+            for (double z = -radius; z <= radius; z++) {
+                // Block at the same height as the center
+                final Location blockLocation = center.clone().add(x, 0, z);
+                // If there is a surface block, add it to the list
+                getClosestSurfaceBlock(blockLocation, height, false).map(Location::getBlock).ifPresent(blocks::add);
+            }
+        }
+        return blocks;
+    }
+
 
     /**
      * Get the closest surface block relative to a {@link Location}.
@@ -260,6 +300,49 @@ public class UtilLocation {
             result.setZ(location.getZ());
         }
         return Optional.of(result);
+    }
+
+    /**
+     *
+     * @param initialLocation the location that any relative coordinates refers to
+     * @param coordinates A list of a 3 strings, with x, y, z coordinates  Accepts `~` notation in the front. Acceptable inputs: ["0", "0", "0"], gives the location 0, 0, 0 and ["~", "~1", "~0"], which gives the location initialLocation.x, initalLocation.y + 1, initialLocation.z.
+     * @return the Location calculated
+     */
+    public static Location getTeleportLocation(Location initialLocation, String[] coordinates) {
+        double x = 0, y = 0, z = 0;
+        Location location = initialLocation.getWorld().getSpawnLocation();
+        if (coordinates.length == 3) {
+            if (coordinates[0].startsWith("~")) {
+                coordinates[0] = coordinates[0].substring(1);
+                x = initialLocation.getX();
+            }
+            try {
+                x += Double.parseDouble(coordinates[0]);
+            } catch (NumberFormatException e) {
+                x += 0;
+            }
+            if (coordinates[1].startsWith("~")) {
+                coordinates[1] = coordinates[1].substring(1);
+                y = initialLocation.getY();
+            }
+            try {
+                y += Double.parseDouble(coordinates[1]);
+            } catch (NumberFormatException e) {
+                y += 0;
+            }
+
+            if (coordinates[2].startsWith("~")) {
+                coordinates[2] = coordinates[2].substring(1);
+                z = initialLocation.getZ();
+            }
+            try {
+                z += Double.parseDouble(coordinates[2]);
+            } catch (NumberFormatException e) {
+                z += 0;
+            }
+            location.set(x, y, z);
+        }
+        return location;
     }
 
 }

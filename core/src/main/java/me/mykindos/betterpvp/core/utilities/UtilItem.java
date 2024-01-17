@@ -1,16 +1,22 @@
 package me.mykindos.betterpvp.core.utilities;
 
 import me.mykindos.betterpvp.core.framework.BPvPPlugin;
+import me.mykindos.betterpvp.core.framework.CoreNamespaceKeys;
 import me.mykindos.betterpvp.core.utilities.model.WeighedList;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.TextDecoration;
 import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
+import org.bukkit.Bukkit;
 import org.bukkit.Material;
+import org.bukkit.NamespacedKey;
 import org.bukkit.enchantments.Enchantment;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemFlag;
 import org.bukkit.inventory.ItemStack;
+import org.bukkit.inventory.Recipe;
 import org.bukkit.inventory.meta.ItemMeta;
+import org.bukkit.persistence.PersistentDataContainer;
+import org.bukkit.persistence.PersistentDataType;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -19,6 +25,20 @@ import java.util.Map;
 
 public class UtilItem {
 
+    public static boolean isCosmeticShield(ItemStack item) {
+        return item.getType() == Material.SHIELD && item.hasItemMeta()
+                && item.getItemMeta().getPersistentDataContainer().has(CoreNamespaceKeys.UNDROPPABLE_KEY, PersistentDataType.BOOLEAN)
+                && Boolean.TRUE.equals(item.getItemMeta().getPersistentDataContainer().get(CoreNamespaceKeys.UNDROPPABLE_KEY, PersistentDataType.BOOLEAN));
+    }
+
+    public static ItemStack createCosmeticShield(int modelData) {
+        ItemStack shield = new ItemStack(Material.SHIELD);
+        final ItemMeta meta = shield.getItemMeta();
+        meta.setCustomModelData(modelData);
+        meta.getPersistentDataContainer().set(CoreNamespaceKeys.UNDROPPABLE_KEY, PersistentDataType.BOOLEAN, true);
+        shield.setItemMeta(meta);
+        return shield;
+    }
 
     /**
      * Updates an ItemStack, giving it a custom name and lore
@@ -118,30 +138,27 @@ public class UtilItem {
     /**
      * Add the 'enchanted' glowing effect to any ItemStack
      *
-     * @param item Item to update
+     * @param meta Item to update
      * @return Returns an ItemStack that is now glowing
      */
     @SuppressWarnings("deprecation")
-    public static ItemStack addGlow(ItemStack item) {
-        ItemMeta itemMeta = item.getItemMeta();
-        Enchantment enchantment = Enchantment.getByName("Glow");
-        if (enchantment != null) {
-            itemMeta.addEnchant(enchantment, 1, true);
-        }
-
-        item.setItemMeta(itemMeta);
-
-        return item;
+    public static void addGlow(ItemMeta meta) {
+        meta.addItemFlags(ItemFlag.HIDE_ENCHANTS);
+        meta.addEnchant(Enchantment.LUCK, 1, true);
     }
 
     /**
      * Check if a Material is a type of sword
      *
-     * @param swordType Material to check
+     * @param item Material to check
      * @return Returns true if the Material is a type of sword
      */
-    public static boolean isSword(Material swordType) {
-        return swordType.name().contains("_SWORD");
+    public static boolean isSword(ItemStack item) {
+        return item.getType().name().contains("_SWORD");
+    }
+
+    public static boolean isSimilar(ItemStack item, ItemStack other) {
+        return (item.getType() == Material.AIR && other.getType() == Material.AIR) || (other.isSimilar(item));
     }
 
     /**
@@ -150,8 +167,8 @@ public class UtilItem {
      * @param axeType Material to check
      * @return Returns true if the Material is a type of axe
      */
-    public static boolean isAxe(Material axeType) {
-        return axeType.name().contains("_AXE");
+    public static boolean isAxe(ItemStack axeType) {
+        return axeType.getType().name().contains("_AXE");
     }
 
     /**
@@ -178,12 +195,12 @@ public class UtilItem {
         return hoeType.name().contains("_HOE");
     }
 
-    public static boolean isTool(Material material) {
-        return isPickaxe(material) || isHoe(material) || isShovel(material) || isAxe(material);
+    public static boolean isTool(ItemStack item) {
+        return isPickaxe(item.getType()) || isHoe(item.getType()) || isShovel(item.getType()) || isAxe(item);
     }
 
-    public static boolean isWeapon(Material material) {
-        return isSword(material) || isAxe(material) || isRanged(material);
+    public static boolean isWeapon(ItemStack itemStack) {
+        return isSword(itemStack) || isAxe(itemStack) || isRanged(itemStack);
     }
 
     public static boolean isArmour(Material material) {
@@ -197,22 +214,8 @@ public class UtilItem {
      * @param wep Material to check
      * @return Returns true if the Material is a type of ranged weapon
      */
-    public static boolean isRanged(Material wep) {
-        return (wep == Material.BOW || wep == Material.CROSSBOW);
-    }
-
-    /**
-     * Check if a Material is a gold tool
-     *
-     * @param item Material to check
-     * @return Returns true if the Material is a gold tool
-     */
-    public static boolean isGold(Material item) {
-        return (item == Material.GOLDEN_SWORD
-                || item == Material.GOLDEN_AXE
-                || item == Material.GOLDEN_PICKAXE
-                || item == Material.GOLDEN_SHOVEL
-                || item == Material.GOLDEN_HOE);
+    public static boolean isRanged(ItemStack wep) {
+        return (wep.getType() == Material.BOW || wep.getType() == Material.CROSSBOW);
     }
 
     public static void insert(Player player, ItemStack stack) {
@@ -222,8 +225,26 @@ public class UtilItem {
             } else {
                 player.getWorld().dropItem(player.getLocation(), stack);
             }
-
         }
+    }
+
+    /**
+     *
+     * @param itemMeta the itemMeta to check
+     * @param defaultDurability the default durability of the item
+     * @return the current durability of the item
+     */
+    public static int getOrSaveCustomDurability(ItemMeta itemMeta, int defaultDurability) {
+        return getOrSavePersistentData(itemMeta, CoreNamespaceKeys.DURABILITY_KEY, PersistentDataType.INTEGER, defaultDurability);
+    }
+
+    public static <T, Z> Z getOrSavePersistentData(ItemMeta itemMeta, NamespacedKey namespacedKey, PersistentDataType<T, Z> type, Z defaultValue) {
+        PersistentDataContainer dataContainer = itemMeta.getPersistentDataContainer();
+        if (!dataContainer.has(namespacedKey, type)) {
+            dataContainer.set(namespacedKey, type, defaultValue);
+            return defaultValue;
+        }
+        return dataContainer.getOrDefault(namespacedKey, type, defaultValue);
     }
 
     public static int indexOf(String matchingText, List<Component> components) {
@@ -267,10 +288,10 @@ public class UtilItem {
         return newComponents;
     }
 
-    public static WeighedList<ItemStack> getDropTable(BPvPPlugin plugin, String configKey) {
+    public static WeighedList<ItemStack> getDropTable(BPvPPlugin plugin, String config, String configKey) {
         WeighedList<ItemStack> droptable = new WeighedList<>();
 
-        var configSection = plugin.getConfig().getConfigurationSection(configKey);
+        var configSection = plugin.getConfig(config).getConfigurationSection(configKey);
         if (configSection == null) return droptable;
 
         configSection.getKeys(false).forEach(key -> {
@@ -286,5 +307,22 @@ public class UtilItem {
 
         return droptable;
     }
+
+    public static WeighedList<ItemStack> getDropTable(BPvPPlugin plugin, String configKey) {
+        return getDropTable(plugin, "config", configKey);
+    }
+
+    public static void removeRecipe(Material material) {
+        var iterator = Bukkit.getServer().recipeIterator();
+        while(iterator.hasNext()) {
+            Recipe recipe = iterator.next();
+
+            if(recipe.getResult().getType() == material) {
+                iterator.remove();
+            }
+        }
+    }
+
+
 
 }

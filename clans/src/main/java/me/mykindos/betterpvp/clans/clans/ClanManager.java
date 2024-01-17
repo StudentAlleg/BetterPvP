@@ -36,14 +36,7 @@ import org.bukkit.World;
 import org.bukkit.block.Block;
 import org.bukkit.entity.Player;
 
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.Comparator;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
-import java.util.UUID;
+import java.util.*;
 import java.util.concurrent.ConcurrentLinkedQueue;
 
 @Slf4j
@@ -255,8 +248,8 @@ public class ClanManager extends Manager<Clan> {
         return Component.text(target.getName() + " Information").color(getRelation(clan, target).getPrimary()).append(Component.newline())
                 .append(Component.text(" Age: ").color(NamedTextColor.WHITE).append(UtilMessage.getMiniMessage("<yellow>%s\n", target.getAge())))
                 .append(Component.text(" Territory: ").color(NamedTextColor.WHITE).append(UtilMessage.getMiniMessage("<yellow>%s\n", territoryString)))
-                .append(Component.text(" Allies: ").color(NamedTextColor.WHITE).append(Component.text(getAllianceList(player, target)))).append(Component.newline())
-                .append(Component.text(" Enemies: ").color(NamedTextColor.WHITE).append(Component.text(getEnemyList(player, target)))).append(Component.newline())
+                .append(Component.text(" Allies: ").color(NamedTextColor.WHITE).append(UtilMessage.getMiniMessage(getAllianceList(player, target)))).append(Component.newline())
+                .append(Component.text(" Enemies: ").color(NamedTextColor.WHITE).append(UtilMessage.getMiniMessage(getEnemyList(player, target)))).append(Component.newline())
                 .append(Component.text(" Members: ").color(NamedTextColor.WHITE).append(UtilMessage.getMiniMessage("%s", getMembersList(target))));
     }
 
@@ -317,6 +310,27 @@ public class ClanManager extends Manager<Clan> {
     public boolean canTeleport(Player player) {
         Gamer gamer = clientManager.search().online(player).getGamer();
         return UtilTime.elapsed(gamer.getLastDamaged(), 15000);
+    }
+
+    public boolean isAlly(Player player, Player target) {
+        return player.equals(target) || getAllies(player).stream().anyMatch(o -> Objects.equals(o.getUuid(), target.getUniqueId().toString()));
+    }
+
+    public List<ClanMember> getAllies(Player player) {
+        ArrayList<ClanMember> allyList = new ArrayList<>(List.of());
+        Optional<Clan> clanOptional = getClanByPlayer(player);
+
+        if (clanOptional.isEmpty()) {
+            return allyList;
+        }
+
+        Clan mainClan = clanOptional.get();
+        allyList.addAll(mainClan.getMembers());
+
+        for (ClanAlliance clanAlliance : mainClan.getAlliances()) {
+            allyList.addAll(clanAlliance.getClan().getMembers());
+        }
+        return allyList;
     }
 
     public boolean canHurt(Player player, Player target) {
@@ -500,7 +514,7 @@ public class ClanManager extends Manager<Clan> {
         Optional<Clan> clanOptional = getClanByLocation(player.getLocation());
         if (clanOptional.isPresent()) {
             Clan clan = clanOptional.get();
-            return clan.isAdmin() && clan.isSafe();
+            return clan.isSafe();
         }
         return false;
     }

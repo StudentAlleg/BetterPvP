@@ -18,6 +18,8 @@ import me.mykindos.betterpvp.core.framework.updater.UpdateEventExecutor;
 import me.mykindos.betterpvp.core.injector.CoreInjectorModule;
 import me.mykindos.betterpvp.core.items.ItemHandler;
 import me.mykindos.betterpvp.core.listener.loader.CoreListenerLoader;
+import me.mykindos.betterpvp.core.logging.Logger;
+import me.mykindos.betterpvp.core.recipes.RecipeHandler;
 import me.mykindos.betterpvp.core.redis.Redis;
 import net.kyori.adventure.key.Key;
 import org.reflections.Reflections;
@@ -34,7 +36,6 @@ import static io.papermc.paper.network.ChannelInitializeListenerHolder.removeLis
 public class Core extends BPvPPlugin {
 
     private final String PACKAGE = getClass().getPackageName();
-    private static final Key listenerKey = Key.key("unsafechat", "listener");
 
     @Getter
     @Setter
@@ -54,10 +55,6 @@ public class Core extends BPvPPlugin {
     @Inject
     private UpdateEventExecutor updateEventExecutor;
 
-    @Inject
-    @Config(path = "core.password", defaultValue = "")
-    public String password;
-
     @Override
     public void onEnable() {
         saveDefaultConfig();
@@ -72,6 +69,8 @@ public class Core extends BPvPPlugin {
         sharedDatabase.getConnection().runDatabaseMigrations(getClass().getClassLoader(), "classpath:core-migrations/global", "global");
         redis.credentials(this.getConfig());
 
+        injector.getInstance(Logger.class);
+
         var coreListenerLoader = injector.getInstance(CoreListenerLoader.class);
         coreListenerLoader.registerListeners(PACKAGE);
 
@@ -81,7 +80,12 @@ public class Core extends BPvPPlugin {
         clientManager = injector.getInstance(ClientManager.class);
 
         var itemHandler = injector.getInstance(ItemHandler.class);
-        itemHandler.loadItemData("Core");
+        itemHandler.loadItemData("core");
+
+        var recipeHandler = injector.getInstance(RecipeHandler.class);
+        recipeHandler.loadConfig(this.getConfig(), "minecraft");
+        recipeHandler.loadConfig(this.getConfig(), "core");
+        this.saveConfig();
 
         updateEventExecutor.loadPlugin(this);
         updateEventExecutor.initialize();
@@ -92,11 +96,10 @@ public class Core extends BPvPPlugin {
     @Override
     public void onDisable() {
         clientManager.processStatUpdates(false);
+        clientManager.shutdown();
+        redis.shutdown();
         injector.getInstance(GlobalCombatStatsRepository.class).shutdown();
 
-        if (hasListener(listenerKey)) {
-            removeListener(listenerKey);
-        }
     }
 
 }

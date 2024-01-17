@@ -41,11 +41,19 @@ public class Leech extends PrepareSkill implements CooldownSkill {
     private final List<LeechData> leechData = new ArrayList<>();
     private final List<LeechData> removeList = new ArrayList<>();
 
-    private int range;
+    private double baseRange;
 
-    private int maxRangeFromCaster;
+    private double rangeIncreasePerLevel;
 
-    private double leechedHealth;
+    private double maxRangeFromCaster;
+
+    private double maxRangeFromCasterIncreasePerLevel;
+
+    private double baseLeechedHealth;
+
+    private double leachedHealthIncreasePerLevel;
+
+
     @Inject
     public Leech(Champions champions, ChampionsManager championsManager) {
         super(champions, championsManager);
@@ -63,14 +71,27 @@ public class Leech extends PrepareSkill implements CooldownSkill {
                 "Right click with a Sword to activate",
                 "",
                 "Create a soul link between all enemies within",
-                "<stat>" + range + "</stat> blocks of your target, and all enemies within",
-                "<stat>" + range + "</stat> blocks of them and within <stat>" + maxRangeFromCaster + "</stat> blocks of you",
+                "<stat>" + getRange(level) + "</stat> blocks of your target, and all enemies within",
+                "<stat>" + getRange(level) + "</stat> blocks of them and within <stat>" + getMaxRangeFromCaster() + "</stat> blocks of you",
                 "",
-                "Linked targets have <stat>" + leechedHealth + "</stat> health leeched per second",
+                "Linked targets have <stat>" + getLeechedHealth(level) + "</stat> health leeched per second",
                 "",
                 "Cooldown: <val>" + getCooldown(level)
         };
     }
+
+    public double getRange(int level) {
+        return baseRange + level * rangeIncreasePerLevel;
+    }
+
+    public double getMaxRangeFromCaster() {
+        return maxRangeFromCaster;
+    }
+
+    public double getLeechedHealth(int level) {
+        return baseLeechedHealth + level * leachedHealthIncreasePerLevel;
+    }
+
     @Override
     public String getDefaultClassString() {
         return "warlock";
@@ -94,8 +115,9 @@ public class Leech extends PrepareSkill implements CooldownSkill {
     }
 
     private void chainEnemies(Player player, LivingEntity link) {
+        int level = getLevel(player);
         List<LivingEntity> temp = new ArrayList<>();
-        for (var entAData : UtilEntity.getNearbyEntities(player, link.getLocation(), range, EntityProperty.ENEMY)) {
+        for (var entAData : UtilEntity.getNearbyEntities(player, link.getLocation(), getRange(level), EntityProperty.ENEMY)) {
             LivingEntity entA = entAData.get();
             if (isNotLinked(player, entA)) {
                 leechData.add(new LeechData(player, link, entA));
@@ -106,7 +128,7 @@ public class Leech extends PrepareSkill implements CooldownSkill {
         }
 
         for (LivingEntity entA : temp) {
-            for (var entBData : UtilEntity.getNearbyEntities(player, entA.getLocation(), range, EntityProperty.ENEMY)) {
+            for (var entBData : UtilEntity.getNearbyEntities(player, entA.getLocation(), getRange(level), EntityProperty.ENEMY)) {
                 LivingEntity entB = entBData.get();
                 if (isNotLinked(player, entB)) {
                     leechData.add(new LeechData(player, entA, entB));
@@ -132,8 +154,6 @@ public class Leech extends PrepareSkill implements CooldownSkill {
                 }
             });
         });
-
-
     }
 
     private void breakChain(LeechData leech) {
@@ -165,7 +185,7 @@ public class Leech extends PrepareSkill implements CooldownSkill {
 
     @Override
     public double getCooldown(int level) {
-        return cooldown - (level * 2);
+        return cooldown - (level * cooldownDecreasePerLevel);
     }
 
     @Override
@@ -201,9 +221,9 @@ public class Leech extends PrepareSkill implements CooldownSkill {
                 removeList.add(leech);
                 continue;
             }
-
-            if (leech.getTarget().getLocation().distance(leech.getLinkedTo().getLocation()) > range
-                    || leech.getTarget().getLocation().distance(leech.getOwner().getLocation()) > 21) {
+            int level = getLevel(leech.getOwner());
+            if (leech.getTarget().getLocation().distance(leech.getLinkedTo().getLocation()) > getRange(level)
+                    || leech.getTarget().getLocation().distance(leech.getOwner().getLocation()) > getMaxRangeFromCaster()) {
                 if (leech.getLinkedTo().getUniqueId().equals(leech.getOwner().getUniqueId())) {
                     breakChain(leech);
                 }
@@ -223,8 +243,9 @@ public class Leech extends PrepareSkill implements CooldownSkill {
             Location loc = leech.getLinkedTo().getLocation();
             Vector v = leech.getTarget().getLocation().toVector().subtract(loc.toVector());
             double distance = leech.getLinkedTo().getLocation().distance(leech.getTarget().getLocation());
+            int level = getLevel(leech.getOwner());
             boolean remove = false;
-            if (distance > 7) continue;
+            if (distance > getRange(level)) continue;
             for (double i = 0.5; i < distance; i += 0.5) {
 
                 v.multiply(i);
@@ -248,10 +269,11 @@ public class Leech extends PrepareSkill implements CooldownSkill {
     @UpdateEvent(delay = 1000)
     public void dealDamage() {
         for (LeechData leech : leechData) {
-            CustomDamageEvent leechDmg = new CustomDamageEvent(leech.getTarget(), leech.getOwner(), null, EntityDamageEvent.DamageCause.MAGIC, leechedHealth, false, getName());
+            int level = getLevel(leech.getOwner());
+            CustomDamageEvent leechDmg = new CustomDamageEvent(leech.getTarget(), leech.getOwner(), null, EntityDamageEvent.DamageCause.MAGIC, getLeechedHealth(level), false, getName());
             leechDmg.setIgnoreArmour(true);
             UtilDamage.doCustomDamage(leechDmg);
-            UtilPlayer.health(leech.getOwner(), leechedHealth);
+            UtilPlayer.health(leech.getOwner(), getLeechedHealth(level));
         }
     }
 
@@ -277,9 +299,13 @@ public class Leech extends PrepareSkill implements CooldownSkill {
 
     @Override
     public void loadSkillConfig(){
-        range = getConfig("range", 7, Integer.class);
-        leechedHealth = getConfig("leechedHealth", 1.0, Double.class);
-        maxRangeFromCaster = getConfig("maxRangeFromCaster", 21, Integer.class);
+        baseRange = getConfig("baseRange", 7.0, Double.class);
+        rangeIncreasePerLevel = getConfig("rangeIncreasePerLevel", 0.0, Double.class);
+
+        baseLeechedHealth = getConfig("baseLeechedHealth", 1.0, Double.class);
+        leachedHealthIncreasePerLevel = getConfig("leachedHealthIncreasePerLevel", 0.0, Double.class);
+
+        maxRangeFromCaster = getConfig("maxRangeFromCaster", 20.0, Double.class);
     }
 
     @Data

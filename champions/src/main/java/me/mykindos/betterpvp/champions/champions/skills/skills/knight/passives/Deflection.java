@@ -20,6 +20,8 @@ import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.entity.EntityDamageEvent.DamageCause;
 
+import java.util.HashMap;
+import java.util.UUID;
 import java.util.WeakHashMap;
 
 @Singleton
@@ -30,7 +32,9 @@ public class Deflection extends Skill implements PassiveSkill {
     private double timeBetweenCharges;
     private double timeOutOfCombat;
 
-    private final WeakHashMap<Player, Integer> charges = new WeakHashMap<>();
+    private int baseCharges;
+
+    private final HashMap<UUID, Integer> charges = new HashMap<>();
 
     @Inject
     public Deflection(Champions champions, ChampionsManager championsManager) {
@@ -53,6 +57,11 @@ public class Deflection extends Skill implements PassiveSkill {
                 "reduced by the number of deflection charges",
         };
     }
+
+    public int getMaxCharges(int level) {
+        return baseCharges + level;
+    }
+
     @Override
     public String getDefaultClassString() {
         return "knight";
@@ -69,13 +78,13 @@ public class Deflection extends Skill implements PassiveSkill {
         if (event.isCancelled()) return;
         if (event.getCause() != DamageCause.ENTITY_ATTACK) return;
         if (!(event.getDamagee() instanceof Player player)) return;
-        if (!charges.containsKey(player)) return;
+        if (!charges.containsKey(player.getUniqueId())) return;
 
         int level = getLevel(player);
         if (level > 0) {
-            int charge = charges.get(player);
+            int charge = charges.remove(player.getUniqueId());
             event.setDamage(event.getDamage() - charge);
-            charges.remove(player);
+
         }
     }
 
@@ -84,22 +93,23 @@ public class Deflection extends Skill implements PassiveSkill {
 
         for (Player cur : Bukkit.getOnlinePlayers()) {
             int level = getLevel(cur);
-            if (level > 0) {
-                if (charges.containsKey(cur)) {
+            if (charges.containsKey(cur.getUniqueId())) {
+                if (level > 0) {
+
                     Gamer gamer = championsManager.getClientManager().search().online(cur).getGamer();
                     if (UtilTime.elapsed(gamer.getLastDamaged(), (long) timeOutOfCombat * 1000)) {
                         if (!championsManager.getCooldowns().use(cur, getName(), timeBetweenCharges, false)) return;
-                        int charge = charges.get(cur);
-                        if (charge < level) {
-                            charge = Math.min(level, charge + 1);
+                        int charge = charges.get(cur.getUniqueId());
+                        if (charge < getMaxCharges(level)) {
+                            charge = Math.min(getMaxCharges(level), charge + 1);
                             UtilMessage.simpleMessage(cur, "Champions", "Deflection charge: <yellow>%d", charge);
-                            charges.put(cur, charge);
+                            charges.put(cur.getUniqueId(), charge);
                         }
                     }
-
                 } else {
-                    charges.put(cur, 0);
+                    charges.remove(cur.getUniqueId());
                 }
+
             }
         }
 
@@ -109,6 +119,7 @@ public class Deflection extends Skill implements PassiveSkill {
     public void loadSkillConfig() {
         timeBetweenCharges = getConfig("timeBetweenCharges", 2.0, Double.class);
         timeOutOfCombat = getConfig("timeOutOfCombat", 2.0, Double.class);
+        baseCharges = getConfig("baseCharges", 0, Integer.class);
     }
 
 }

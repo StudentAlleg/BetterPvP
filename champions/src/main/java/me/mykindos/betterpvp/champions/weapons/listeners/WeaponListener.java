@@ -8,14 +8,18 @@ import me.mykindos.betterpvp.champions.weapons.types.ChannelWeapon;
 import me.mykindos.betterpvp.champions.weapons.types.CooldownWeapon;
 import me.mykindos.betterpvp.champions.weapons.types.InteractWeapon;
 import me.mykindos.betterpvp.champions.weapons.types.LegendaryWeapon;
+import me.mykindos.betterpvp.core.combat.click.events.RightClickEndEvent;
+import me.mykindos.betterpvp.core.combat.click.events.RightClickEvent;
 import me.mykindos.betterpvp.core.combat.combatlog.events.PlayerCombatLogEvent;
 import me.mykindos.betterpvp.core.components.champions.events.PlayerUseItemEvent;
 import me.mykindos.betterpvp.core.components.champions.weapons.IWeapon;
 import me.mykindos.betterpvp.core.cooldowns.CooldownManager;
 import me.mykindos.betterpvp.core.energy.EnergyHandler;
+import me.mykindos.betterpvp.core.framework.CoreNamespaceKeys;
 import me.mykindos.betterpvp.core.framework.events.items.ItemUpdateLoreEvent;
 import me.mykindos.betterpvp.core.framework.events.items.ItemUpdateNameEvent;
 import me.mykindos.betterpvp.core.framework.events.items.SpecialItemDropEvent;
+import me.mykindos.betterpvp.core.items.BPVPItem;
 import me.mykindos.betterpvp.core.items.ItemHandler;
 import me.mykindos.betterpvp.core.listener.BPvPListener;
 import me.mykindos.betterpvp.core.utilities.UtilMessage;
@@ -28,17 +32,19 @@ import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
-import org.bukkit.event.block.Action;
 import org.bukkit.event.entity.EntityPickupItemEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
+import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.persistence.PersistentDataType;
 
 import java.util.ArrayList;
-import java.util.Arrays;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
 
 @Singleton
 @BPvPListener
@@ -48,6 +54,7 @@ public class WeaponListener implements Listener {
     private final ItemHandler itemHandler;
     private final CooldownManager cooldownManager;
     private final EnergyHandler energyHandler;
+    private final Map<UUID, IWeapon> clicked = new HashMap<>();
 
     @Inject
     public WeaponListener(WeaponManager weaponManager, ItemHandler itemHandler, CooldownManager cooldownManager, EnergyHandler energyHandler) {
@@ -58,24 +65,38 @@ public class WeaponListener implements Listener {
     }
 
     @EventHandler(priority = EventPriority.HIGHEST)
+    public void onRelease(RightClickEndEvent event) {
+        clicked.remove(event.getPlayer().getUniqueId());
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST)
+    public void onStart(RightClickEvent event) {
+        if (clicked.containsKey(event.getPlayer().getUniqueId())) {
+            final IWeapon weapon = clicked.get(event.getPlayer().getUniqueId());
+            if (weapon instanceof ChannelWeapon channelWeapon && channelWeapon.useShield(event.getPlayer())) {
+                event.setUseShield(true);
+                event.setShieldModelData(RightClickEvent.INVISIBLE_SHIELD);
+            }
+        }
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST)
     public void onWeaponActivate(PlayerInteractEvent event) {
-        if (event.getAction() == Action.PHYSICAL) return;
-        if (event.getHand() == EquipmentSlot.OFF_HAND) return;
+        if (event.getHand() == EquipmentSlot.OFF_HAND || !event.getAction().isRightClick()) {
+            return; // Only main hand and right click
+        }
 
         Player player = event.getPlayer();
         ItemStack item = player.getInventory().getItemInMainHand();
         ItemMeta itemMeta = item.getItemMeta();
         if (itemMeta == null) return;
-        if (!itemMeta.getPersistentDataContainer().has(ChampionsNamespacedKeys.IS_CUSTOM_WEAPON)) return;
+        if (!itemMeta.getPersistentDataContainer().has(CoreNamespaceKeys.CUSTOM_ITEM_KEY)) return;
 
         Optional<IWeapon> weaponOptional = weaponManager.getWeaponByItemStack(item);
         if (weaponOptional.isEmpty()) return;
 
-
         IWeapon weapon = weaponOptional.get();
-
         if (weapon instanceof InteractWeapon interactWeapon) {
-            if (Arrays.stream(interactWeapon.getActions()).noneMatch(action -> action == event.getAction())) return;
             if (!interactWeapon.canUse(player)) {
                 return;
             }
@@ -87,9 +108,7 @@ public class WeaponListener implements Listener {
             return;
         }
 
-
         String name = PlainTextComponentSerializer.plainText().serialize(weapon.getName());
-
         if (weapon instanceof CooldownWeapon cooldownWeapon) {
             if (!cooldownManager.use(player, name, cooldownWeapon.getCooldown(),
                     cooldownWeapon.showCooldownFinished(), true, false, x -> weapon.isHoldingWeapon(player))) {
@@ -98,12 +117,17 @@ public class WeaponListener implements Listener {
         }
 
         if (weapon instanceof ChannelWeapon channelWeapon) {
+            if (clicked.get(event.getPlayer().getUniqueId()) == weapon) {
+                return; // Skip if we're currently holding click on this weapon
+            }
+
             if (channelWeapon.getEnergy() > 0) {
                 if (!energyHandler.use(player, name, channelWeapon.getEnergy(), true)) {
                     return;
                 }
             }
 
+            clicked.put(player.getUniqueId(), weapon); // Log this weapon as clicked
         }
 
         if (weapon instanceof InteractWeapon interactWeapon) {
@@ -117,8 +141,9 @@ public class WeaponListener implements Listener {
         Optional<IWeapon> weaponOptional = weaponManager.getWeaponByItemStack(event.getItemStack());
         if (weaponOptional.isPresent()) {
             IWeapon weapon = weaponOptional.get();
+            if(!(weapon instanceof BPVPItem item)) return;
 
-            event.getItemMeta().getPersistentDataContainer().set(ChampionsNamespacedKeys.IS_CUSTOM_WEAPON, PersistentDataType.STRING, "true");
+            event.getItemMeta().getPersistentDataContainer().set(CoreNamespaceKeys.CUSTOM_ITEM_KEY, PersistentDataType.STRING, item.getIdentifier());
             event.setItemName(weapon.getName());
         }
     }
@@ -128,8 +153,9 @@ public class WeaponListener implements Listener {
         Optional<IWeapon> weaponOptional = weaponManager.getWeaponByItemStack(event.getItemStack());
         if (weaponOptional.isPresent()) {
             IWeapon weapon = weaponOptional.get();
+            if(!(weapon instanceof BPVPItem item)) return;
 
-            event.getItemMeta().getPersistentDataContainer().set(ChampionsNamespacedKeys.IS_CUSTOM_WEAPON, PersistentDataType.STRING, "true");
+            event.getItemMeta().getPersistentDataContainer().set(CoreNamespaceKeys.CUSTOM_ITEM_KEY, PersistentDataType.STRING, item.getIdentifier());
             var lore = new ArrayList<>(weapon.getLore());
 
             var originalOwner = event.getItemMeta().getPersistentDataContainer().getOrDefault(ChampionsNamespacedKeys.ORIGINAL_OWNER, PersistentDataType.STRING, "");
@@ -191,4 +217,12 @@ public class WeaponListener implements Listener {
         }
     }
 
+    @EventHandler
+    public void onJoin(PlayerJoinEvent event) {
+        for (IWeapon weapon : weaponManager.getObjects().values()) {
+            if (weapon instanceof BPVPItem item) {
+                item.getRecipeKeys().forEach(key -> event.getPlayer().discoverRecipe(key));
+            }
+        }
+    }
 }

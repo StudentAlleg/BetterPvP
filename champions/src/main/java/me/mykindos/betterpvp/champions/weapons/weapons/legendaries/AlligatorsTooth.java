@@ -2,10 +2,11 @@ package me.mykindos.betterpvp.champions.weapons.weapons.legendaries;
 
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
-import me.mykindos.betterpvp.champions.champions.skills.data.SkillActions;
 import me.mykindos.betterpvp.champions.weapons.types.ChannelWeapon;
 import me.mykindos.betterpvp.champions.weapons.types.InteractWeapon;
 import me.mykindos.betterpvp.champions.weapons.types.LegendaryWeapon;
+import me.mykindos.betterpvp.core.client.gamer.Gamer;
+import me.mykindos.betterpvp.core.client.repository.ClientManager;
 import me.mykindos.betterpvp.core.combat.events.CustomDamageEvent;
 import me.mykindos.betterpvp.core.components.champions.events.PlayerUseItemEvent;
 import me.mykindos.betterpvp.core.config.Config;
@@ -15,6 +16,8 @@ import me.mykindos.betterpvp.core.listener.BPvPListener;
 import me.mykindos.betterpvp.core.utilities.UtilMessage;
 import me.mykindos.betterpvp.core.utilities.UtilServer;
 import me.mykindos.betterpvp.core.utilities.UtilVelocity;
+import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.format.NamedTextColor;
 import org.bukkit.Bukkit;
 import org.bukkit.Effect;
 import org.bukkit.Material;
@@ -23,39 +26,59 @@ import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
-import org.bukkit.event.block.Action;
 import org.bukkit.event.entity.EntityDamageEvent;
+
+import java.util.ArrayList;
+import java.util.Iterator;
+import java.util.List;
+import java.util.UUID;
 
 @Singleton
 @BPvPListener
 public class AlligatorsTooth extends ChannelWeapon implements InteractWeapon, LegendaryWeapon, Listener {
 
     @Inject
-    @Config(path = "weapons.alligators-tooth.energy-per-tick", defaultValue = "1.0")
+    @Config(path = "weapons.alligators-tooth.energy-per-tick", defaultValue = "1.0", configName = "weapons/legendaries")
     private double energyPerTick;
 
     @Inject
-    @Config(path = "weapons.alligators-tooth.initial-energy-cost", defaultValue = "10.0")
+    @Config(path = "weapons.alligators-tooth.initial-energy-cost", defaultValue = "10.0", configName = "weapons/legendaries")
     private double initialEnergyCost;
 
     @Inject
-    @Config(path = "weapons.alligators-tooth.base-damage", defaultValue = "8.0")
+    @Config(path = "weapons.alligators-tooth.base-damage", defaultValue = "8.0", configName = "weapons/legendaries")
     private double baseDamage;
 
     @Inject
-    @Config(path = "weapons.alligators-tooth.bonus-damage", defaultValue = "4.0")
+    @Config(path = "weapons.alligators-tooth.bonus-damage", defaultValue = "4.0", configName = "weapons/legendaries")
     private double bonusDamage;
 
     @Inject
-    @Config(path = "weapons.alligators-tooth.strength", defaultValue = "1.0")
+    @Config(path = "weapons.alligators-tooth.strength", defaultValue = "1.0", configName = "weapons/legendaries")
     private double velocityStrength;
 
     private final EnergyHandler energyHandler;
+    private final ClientManager clientManager;
 
     @Inject
-    public AlligatorsTooth(EnergyHandler energyHandler) {
-        super(Material.MUSIC_DISC_MALL, 1,UtilMessage.deserialize("<orange>Alligators Tooth"));
+    public AlligatorsTooth(EnergyHandler energyHandler, ClientManager clientManager) {
+        super("alligators_tooth");
         this.energyHandler = energyHandler;
+        this.clientManager = clientManager;
+    }
+
+    @Override
+    public List<Component> getLore() {
+        List<Component> lore = new ArrayList<>();
+        lore.add(Component.text("This deadly tooth was stolen from", NamedTextColor.WHITE));
+        lore.add(Component.text("a nest of reptilian beasts long ago.", NamedTextColor.WHITE));
+        lore.add(Component.text("Legends say that the holder is granted", NamedTextColor.WHITE));
+        lore.add(Component.text("the underwater agility of an Alligator.", NamedTextColor.WHITE));
+        lore.add(Component.text(""));
+        lore.add(UtilMessage.deserialize("<white>Deals <yellow>%.1f</yellow> Damage with attack on land", baseDamage));
+        lore.add(UtilMessage.deserialize("<white>Deals <yellow>%.1f</yellow> Damage with attack in water", (baseDamage + bonusDamage)));
+        lore.add(UtilMessage.deserialize("<yellow>Right-Click <white>to use <green>Gator Stroke"));
+        return lore;
     }
 
     @Override
@@ -65,16 +88,17 @@ public class AlligatorsTooth extends ChannelWeapon implements InteractWeapon, Le
 
     @UpdateEvent
     public void doAlligatorsTooth() {
-        for (Player player : Bukkit.getOnlinePlayers()) {
-            if (!active.contains(player.getUniqueId())) continue;
-
-            if (player.getInventory().getItemInMainHand().getType() != getMaterial()) {
-                active.remove(player.getUniqueId());
+        final Iterator<UUID> iterator = active.iterator();
+        while (iterator.hasNext()) {
+            final Player player = Bukkit.getPlayer(iterator.next());
+            if (player == null || !player.isOnline()) {
+                iterator.remove();
                 continue;
             }
 
-            if (!player.isHandRaised()) {
-                active.remove(player.getUniqueId());
+            final Gamer gamer = clientManager.search().online(player).getGamer();
+            if (!gamer.isHoldingRightClick() || player.getInventory().getItemInMainHand().getType() != getMaterial()) {
+                iterator.remove();
                 continue;
             }
 
@@ -85,12 +109,12 @@ public class AlligatorsTooth extends ChannelWeapon implements InteractWeapon, Le
             }
 
             if (!canUse(player)) {
-                active.remove(player.getUniqueId());
+                iterator.remove();
                 continue;
             }
 
-            if (!energyHandler.use(player, "Alligators Tooth", energyPerTick, true)) {
-                active.remove(player.getUniqueId());
+            if (!energyHandler.use(player, "Gator Stroke", energyPerTick, true)) {
+                iterator.remove();
                 continue;
             }
 
@@ -113,10 +137,19 @@ public class AlligatorsTooth extends ChannelWeapon implements InteractWeapon, Le
 
     }
 
+    @UpdateEvent(delay = 1000)
+    public void onOxygendDrain() {
+        for (Player player : Bukkit.getOnlinePlayers()) {
+            if (!player.isInWater()) continue;
+            if (!isHoldingWeapon(player)) continue;
+            player.setRemainingAir(player.getMaximumAir());
+        }
+    }
+
     @Override
     public boolean canUse(Player player) {
         if (!player.isInWater()) {
-            UtilMessage.simpleMessage(player, "Alligators Tooth", "You can only use this weapon in water!");
+            UtilMessage.simpleMessage(player, "Gator Stroke", "You can only use this ability in water!");
             return false;
         }
         return true;
@@ -128,8 +161,4 @@ public class AlligatorsTooth extends ChannelWeapon implements InteractWeapon, Le
         return initialEnergyCost;
     }
 
-    @Override
-    public Action[] getActions() {
-        return SkillActions.RIGHT_CLICK;
-    }
 }

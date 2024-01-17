@@ -22,6 +22,14 @@ import java.util.Set;
 @BPvPListener
 public class Overwhelm extends Skill implements PassiveSkill {
 
+    private double bonusDamage;
+
+    private double healthOverTarget;
+
+    private double baseMaxDamage;
+
+    private double maxDamageIncreasePerLevel;
+
     @Inject
     public Overwhelm(Champions champions, ChampionsManager championsManager) {
         super(champions, championsManager);
@@ -36,12 +44,17 @@ public class Overwhelm extends Skill implements PassiveSkill {
     public String[] getDescription(int level) {
 
         return new String[]{
-                "You deal <stat>1</stat> bonus damage for every",
-                "<stat>2</stat> more health you have than your target",
+                "You deal <stat>" + bonusDamage + "</stat> bonus damage for every",
+                "<stat>" + healthOverTarget + "</stat> more health you have than your target",
                 "",
-                "You can deal a maximum of <val>" + String.format("%.1f", (0.0 + (level * 0.5))) + "</val> bonus damage"
+                "You can deal a maximum of <val>" + String.format("%.1f", getMaxDamage(level)) + "</val> bonus damage"
         };
     }
+
+    public double getMaxDamage(int level) {
+        return baseMaxDamage + level * maxDamageIncreasePerLevel;
+    }
+
     @Override
     public String getDefaultClassString() {
         return "brute";
@@ -58,12 +71,20 @@ public class Overwhelm extends Skill implements PassiveSkill {
         int level = getLevel(player);
         if (level > 0) {
             LivingEntity ent = event.getDamagee();
-            double difference = (player.getHealth() - ent.getHealth()) / 2;
+            double difference = (player.getHealth() - ent.getHealth()) / healthOverTarget;
             if (difference > 0) {
-                difference = Math.min(difference, (level * 0.5));
-                event.setDamage(event.getDamage() + difference);
+                difference = Math.min(difference, getMaxDamage(level));
+                event.setDamage(event.getDamage() + difference * bonusDamage);
             }
         }
+    }
+
+    @Override
+    public void loadSkillConfig(){
+        bonusDamage = getConfig("bonusDamage", 1.0, Double.class);
+        healthOverTarget = getConfig("healthOverTarget", 2.0, Double.class);
+        baseMaxDamage = getConfig("baseMaxDamage", 0.0, Double.class);
+        maxDamageIncreasePerLevel = getConfig("maxDamageIncreasePerLevel", 0.5, Double.class);
     }
 
 

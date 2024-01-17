@@ -16,7 +16,6 @@ import me.mykindos.betterpvp.core.listener.BPvPListener;
 import me.mykindos.betterpvp.core.utilities.UtilBlock;
 import me.mykindos.betterpvp.core.utilities.UtilLocation;
 import me.mykindos.betterpvp.core.utilities.UtilMessage;
-import me.mykindos.betterpvp.core.utilities.UtilPlayer;
 import me.mykindos.betterpvp.core.utilities.math.VectorLine;
 import me.mykindos.betterpvp.core.utilities.model.display.PermanentComponent;
 import net.kyori.adventure.text.Component;
@@ -47,7 +46,7 @@ public class Flash extends Skill implements InteractSkill, Listener {
         final Player player = gamer.getPlayer();
 
         // Only display charges in hotbar if holding the weapon
-        if (player == null || !charges.containsKey(player) || !UtilPlayer.isHoldingItem(player, getItemsBySkillType())) {
+        if (player == null || !charges.containsKey(player) || !isHolding(player)) {
             return null; // Skip if not online or not charging
         }
 
@@ -61,7 +60,12 @@ public class Flash extends Skill implements InteractSkill, Listener {
     });
 
     private int baseMaxCharges;
+
+    private int chargeIncreasePerLevel;
+
     private double baseRechargeSeconds;
+
+    private double rechargeReductionPerLevel;
     private double teleportDistance;
 
     @Inject
@@ -82,24 +86,26 @@ public class Flash extends Skill implements InteractSkill, Listener {
                 "Teleport <stat>" + teleportDistance + "</stat> blocks forward",
                 "in the direction you are facing",
                 "",
-                "Store up to <val>" + getMaxCharges(level) + "</val> charges",
+                "Store up to <stat>" + getMaxCharges(level) + "</stat> charges",
                 "",
-                "Gain a charge every: <stat>" + getRechargeSeconds(level) + "</stat> seconds"
+                "Gain a charge every: <val>" + getRechargeSeconds(level) + "</val> seconds"
         };
     }
 
     private int getMaxCharges(int level) {
-        return baseMaxCharges + (level - 1);
+        return baseMaxCharges + ((level - 1) * chargeIncreasePerLevel);
     }
 
     private double getRechargeSeconds(int level) {
-        return baseRechargeSeconds;
+        return baseRechargeSeconds - (level * rechargeReductionPerLevel);
     }
 
     @Override
     public void loadSkillConfig() {
-        baseMaxCharges = getConfig("baseMaxCharges", 1, Integer.class);
-        baseRechargeSeconds = getConfig("baseRechargeSeconds", 4.0, Double.class);
+        baseMaxCharges = getConfig("baseMaxCharges", 5, Integer.class);
+        chargeIncreasePerLevel = getConfig("chargeIncreasePerLevel", 0, Integer.class);
+        baseRechargeSeconds = getConfig("baseRechargeSeconds", 9.0, Double.class);
+        rechargeReductionPerLevel = getConfig("rechargeReductionPerLevel", 1.0, Double.class);
         teleportDistance = getConfig("teleportDistance", 5.0, Double.class);
     }
     @Override

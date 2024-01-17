@@ -44,8 +44,8 @@ public class ClansSkillListener implements Listener {
 
     @EventHandler
     public void onGetPlayerPropertyEvent(GetPlayerRelationshipEvent event) {
-        boolean canHurt = clanManager.canHurt(event.getPlayer(), event.getTarget());
-        event.setEntityProperty(canHurt ? EntityProperty.ENEMY : EntityProperty.FRIENDLY);
+        boolean isAlly = clanManager.isAlly(event.getPlayer(), event.getTarget());
+        event.setEntityProperty(isAlly ? EntityProperty.FRIENDLY : EntityProperty.ENEMY);
     }
 
     @EventHandler
@@ -53,14 +53,18 @@ public class ClansSkillListener implements Listener {
         if (!(event.getSource() instanceof Player player)) return;
         event.getEntities().forEach(entity -> {
             if (!(entity.getKey() instanceof Player target)) return;
-            boolean canHurt = clanManager.canHurt(player, target);
+            boolean isAlly = clanManager.isAlly(player, target);
 
-            entity.setValue(canHurt ? EntityProperty.ENEMY : EntityProperty.FRIENDLY);
+            entity.setValue(isAlly ? EntityProperty.FRIENDLY : EntityProperty.ENEMY);
         });
 
         event.getEntities().removeIf(entity -> {
             if (entity.getKey() instanceof Player target) {
                 if (target.getGameMode() == GameMode.CREATIVE || target.getGameMode() == GameMode.SPECTATOR) {
+                    return true;
+                }
+
+                if (clanManager.isInSafeZone(target)) {
                     return true;
                 }
 
@@ -83,7 +87,7 @@ public class ClansSkillListener implements Listener {
             Clan playerClan = playerClanOptional.get();
             Clan locationClan = locationClanOptional.get();
 
-            if(playerClan.equals(locationClan) || playerClan.isAllied(locationClan)) {
+            if (playerClan.equals(locationClan) || playerClan.isAllied(locationClan)) {
                 event.cancel("Cannot use Longshot in own or allied territory");
             }
         }
@@ -91,7 +95,7 @@ public class ClansSkillListener implements Listener {
 
     @EventHandler
     public void disableSafezone(PlayerCanUseSkillEvent event) {
-        if(!clanManager.canCast(event.getPlayer())) {
+        if (!clanManager.canCast(event.getPlayer())) {
             UtilMessage.message(event.getPlayer(), "Restriction", "You cannot use this skill here.");
             event.setCancelled(true);
         }
@@ -99,7 +103,7 @@ public class ClansSkillListener implements Listener {
 
     @EventHandler
     public void disableSafezoneItems(PlayerUseItemEvent event) {
-        if(!clanManager.canCast(event.getPlayer()) && event.isDangerous()) {
+        if (!clanManager.canCast(event.getPlayer()) && event.isDangerous()) {
             event.setCancelled(true);
         }
     }

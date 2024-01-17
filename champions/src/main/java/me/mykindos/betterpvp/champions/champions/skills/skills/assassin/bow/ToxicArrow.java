@@ -9,6 +9,7 @@ import me.mykindos.betterpvp.champions.champions.skills.types.PrepareArrowSkill;
 import me.mykindos.betterpvp.core.components.champions.SkillType;
 import me.mykindos.betterpvp.core.effects.EffectType;
 import me.mykindos.betterpvp.core.listener.BPvPListener;
+import me.mykindos.betterpvp.core.utilities.UtilFormat;
 import org.bukkit.Location;
 import org.bukkit.Particle;
 import org.bukkit.Sound;
@@ -21,6 +22,10 @@ import org.bukkit.event.block.Action;
 public class ToxicArrow extends PrepareArrowSkill {
 
     private double baseDuration;
+
+    private double durationIncreasePerLevel;
+
+    private int poisonStrength;
 
     @Inject
     public ToxicArrow(Champions champions, ChampionsManager championsManager) {
@@ -39,7 +44,7 @@ public class ToxicArrow extends PrepareArrowSkill {
                 "Left click with a Bow to prepare",
                 "",
                 "Your next arrow will give your target ",
-                "<effect>Poison II</effect> for <val>" + (baseDuration + level) + "</val> seconds",
+                "<effect>Poison " + UtilFormat.getRomanNumeral(poisonStrength) + "</effect> for <val>" + (baseDuration + level) + "</val> seconds",
                 "",
                 "Cooldown: <val>" + getCooldown(level)
 
@@ -54,7 +59,7 @@ public class ToxicArrow extends PrepareArrowSkill {
     @Override
     public double getCooldown(int level) {
 
-        return cooldown - ((level - 1));
+        return cooldown - ((level - 1) * cooldownDecreasePerLevel);
     }
 
 
@@ -83,5 +88,7 @@ public class ToxicArrow extends PrepareArrowSkill {
 
     public void loadSkillConfig(){
         baseDuration = getConfig("baseDuration", 6.0, Double.class);
+        durationIncreasePerLevel = getConfig("durationIncreasePerLevel", 1.0, Double.class);
+        poisonStrength = getConfig("poisonStrength", 2, Integer.class);
     }
 }

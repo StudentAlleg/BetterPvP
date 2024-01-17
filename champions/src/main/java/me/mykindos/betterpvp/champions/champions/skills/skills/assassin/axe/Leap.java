@@ -29,6 +29,9 @@ import java.util.Set;
 @BPvPListener
 public class Leap extends Skill implements InteractSkill, CooldownSkill, Listener {
 
+    private double leapStrength;
+
+    private double wallKickStrength;
 
     @Inject
     public Leap(Champions champions, ChampionsManager championsManager) {
@@ -64,11 +67,11 @@ public class Leap extends Skill implements InteractSkill, CooldownSkill, Listene
     public void doLeap(Player player, boolean wallkick) {
 
         if (!wallkick) {
-            UtilVelocity.velocity(player, 1.3D, 0.2D, 1.0D, true);
+            UtilVelocity.velocity(player, leapStrength, 0.2D, 1.0D, true);
         } else {
             Vector vec = player.getLocation().getDirection();
             vec.setY(0);
-            UtilVelocity.velocity(player, vec, 0.9D, false, 0.0D, 0.8D, 2.0D, true);
+            UtilVelocity.velocity(player, vec, wallKickStrength, false, 0.0D, 0.8D, 2.0D, true);
             UtilMessage.message(player, "Champions", "You used <alt>Wall Kick</alt>.");
         }
 
@@ -166,7 +169,7 @@ public class Leap extends Skill implements InteractSkill, CooldownSkill, Listene
 
     @Override
     public double getCooldown(int level) {
-        return cooldown - ((level - 1) * 0.5);
+        return cooldown - ((level - 1) * cooldownDecreasePerLevel);
     }
 
     @Override
@@ -182,5 +185,11 @@ public class Leap extends Skill implements InteractSkill, CooldownSkill, Listene
     @Override
     public boolean canUseSlowed() {
         return false;
+    }
+
+    @Override
+    public void loadSkillConfig(){
+        leapStrength = getConfig("leapStrength", 1.3, Double.class);
+        wallKickStrength = getConfig("wallKickStrength", 0.9, Double.class);
     }
 }

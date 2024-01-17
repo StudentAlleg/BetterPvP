@@ -9,6 +9,7 @@ import me.mykindos.betterpvp.core.components.champions.Role;
 import me.mykindos.betterpvp.core.components.champions.SkillType;
 import me.mykindos.betterpvp.core.effects.EffectType;
 import me.mykindos.betterpvp.core.listener.BPvPListener;
+import me.mykindos.betterpvp.core.utilities.UtilFormat;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
@@ -23,6 +24,14 @@ import java.util.Set;
 @Singleton
 @BPvPListener
 public class ShockingStrikes extends Skill implements PassiveSkill, Listener {
+
+    private double baseDuration;
+
+    private double durationIncrease;
+
+    private double slownessDuration;
+
+    private int slownessStrength;
 
     @Inject
     public ShockingStrikes(Champions champions, ChampionsManager championsManager) {
@@ -42,9 +51,13 @@ public class ShockingStrikes extends Skill implements PassiveSkill, Listener {
 
         return new String[]{
                 "Your attacks <effect>Shock</effect> targets for",
-                "<val>" + (level) + "</val> second, giving them <effect>Slowness I</effect>",
+                "<val>" + getDuration(level) + "</val> second, giving them <effect>Slowness " + UtilFormat.getRomanNumeral(slownessStrength + 1) + "</effect>",
                 "and <effect>Screen-Shake</effect>"
         };
+    }
+
+    public double getDuration(int level) {
+        return baseDuration + durationIncrease * level;
     }
 
     @Override
@@ -60,11 +73,17 @@ public class ShockingStrikes extends Skill implements PassiveSkill, Listener {
         int level = getLevel(damager);
         if (level <= 0) return;
 
-        championsManager.getEffects().addEffect(damagee, EffectType.SHOCK, level * 1000L);
-        damagee.addPotionEffect(new PotionEffect(PotionEffectType.SLOW, 20, 0));
+        championsManager.getEffects().addEffect(damagee, EffectType.SHOCK, (long) (getDuration(level) * 1000L));
+        damagee.addPotionEffect(new PotionEffect(PotionEffectType.SLOW, (int) (slownessDuration * 20), slownessStrength));
         event.addReason(getName());
 
     }
 
-
+    @Override
+    public void loadSkillConfig() {
+        baseDuration = getConfig("baseDuration", 0.0, Double.class);
+        durationIncrease = getConfig("baseIncrease", 1.0, Double.class);
+        slownessDuration = getConfig("slownessDuration", 1.0, Double.class);
+        slownessStrength = getConfig("slownessStrength", 0, Integer.class);
+    }
 }

@@ -11,6 +11,7 @@ import me.mykindos.betterpvp.core.components.champions.Role;
 import me.mykindos.betterpvp.core.components.champions.SkillType;
 import me.mykindos.betterpvp.core.framework.updater.UpdateEvent;
 import me.mykindos.betterpvp.core.listener.BPvPListener;
+import me.mykindos.betterpvp.core.utilities.UtilFormat;
 import me.mykindos.betterpvp.core.utilities.UtilMessage;
 import me.mykindos.betterpvp.core.utilities.UtilSound;
 import org.bukkit.Effect;
@@ -37,7 +38,13 @@ public class BullsCharge extends Skill implements Listener, InteractSkill, Coold
 
     private final HashMap<UUID, Long> running = new HashMap<>();
 
+    private double speedDuration;
+
     private double slowDuration;
+
+    private int speedStrength;
+
+    private int slownessStrength;
 
     @Inject
     public BullsCharge(Champions champions, ChampionsManager championsManager) {
@@ -54,8 +61,8 @@ public class BullsCharge extends Skill implements Listener, InteractSkill, Coold
         return new String[]{
                 "Right click with an Axe to activate",
                 "",
-                "Enter a rage, gaining <effect>Speed II</effect>",
-                "and giving <effect>Slowness III</effect> to anything you hit for <stat>" + slowDuration + "</stat> seconds",
+                "Enter a rage, gaining <effect>Speed " + UtilFormat.getRomanNumeral(speedStrength + 1) + "</effect> for ",
+                "and giving <effect>Slowness " + UtilFormat.getRomanNumeral(slownessStrength + 1) + "</effect> to anything you hit for <stat>" + slowDuration + "</stat> seconds",
                 "",
                 "While charging, you take no knockback",
                 "",
@@ -68,7 +75,7 @@ public class BullsCharge extends Skill implements Listener, InteractSkill, Coold
     }
     @Override
     public void activate(Player player, int level) {
-        player.addPotionEffect(new PotionEffect(PotionEffectType.SPEED, 60, 2));
+        player.addPotionEffect(new PotionEffect(PotionEffectType.SPEED, (int) speedDuration * 20, speedStrength));
         UtilSound.playSound(player.getWorld(), player, Sound.ENTITY_ENDERMAN_SCREAM, 1.5F, 0);
         player.getWorld().playEffect(player.getLocation(), Effect.STEP_SOUND, 49);
         running.put(player.getUniqueId(), System.currentTimeMillis() + 4000L);
@@ -131,7 +138,7 @@ public class BullsCharge extends Skill implements Listener, InteractSkill, Coold
 
     @Override
     public double getCooldown(int level) {
-        return cooldown - (level - 1);
+        return cooldown - (level - 1) * cooldownDecreasePerLevel;
     }
 
     @Override
@@ -140,7 +147,10 @@ public class BullsCharge extends Skill implements Listener, InteractSkill, Coold
     }
 
     public void loadSkillConfig() {
+        speedDuration = getConfig("speedDuration", 3.0, Double.class);
         slowDuration = getConfig("slowDuration", 3.0, Double.class);
+        slownessStrength = getConfig("slownessStrength", 2, Integer.class);
+        speedStrength = getConfig("slownessStrength", 2, Integer.class);
     }
 
 }

@@ -22,6 +22,10 @@ import java.util.Set;
 @BPvPListener
 public class Fury extends Skill implements PassiveSkill, Listener {
 
+    private double baseBonusDamage;
+
+    private double bonusDamageIncreasePerLevel;
+
     @Inject
     public Fury(Champions champions, ChampionsManager championsManager) {
         super(champions, championsManager);
@@ -35,9 +39,14 @@ public class Fury extends Skill implements PassiveSkill, Listener {
     @Override
     public String[] getDescription(int level) {
         return new String[]{
-                "Your attacks deal a bonus <val>" + (level * 0.5) + "</val> damage"
+                "Your attacks deal a bonus <val>" + getBonusDamage(level) + "</val> damage"
         };
     }
+
+    public double getBonusDamage(int level) {
+        return baseBonusDamage + level * bonusDamageIncreasePerLevel;
+    }
+
     @Override
     public String getDefaultClassString() {
         return "knight";
@@ -55,10 +64,13 @@ public class Fury extends Skill implements PassiveSkill, Listener {
 
         int level = getLevel(player);
         if (level > 0) {
-            event.setDamage(event.getDamage() + (level * 0.5));
+            event.setDamage(event.getDamage() + getBonusDamage(level));
         }
+    }
+    public void loadSkillConfig() {
+        baseBonusDamage = getConfig("baseBonusDamage", 0.0, Double.class);
+        bonusDamageIncreasePerLevel = getConfig("bonusDamageIncreasePerLevel", 0.5, Double.class);
 
     }
-
 }
 

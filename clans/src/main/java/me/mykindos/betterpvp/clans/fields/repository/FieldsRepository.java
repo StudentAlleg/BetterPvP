@@ -33,11 +33,9 @@ public class FieldsRepository implements IRepository<FieldsBlockEntry> {
     @Getter
     private final Set<FieldsInteractable> types = new HashSet<>();
     private final Database database;
-    private final Clans clans;
 
     @Inject
     public FieldsRepository(Clans clans, Database database) {
-        this.clans = clans;
         this.database = database;
 
         Reflections reflections = new Reflections(Fields.class.getPackageName());
@@ -51,10 +49,6 @@ public class FieldsRepository implements IRepository<FieldsBlockEntry> {
         }
         types.addAll(List.of(SimpleOre.values()));
         log.info("Loaded " + types.size() + " ore types");
-    }
-
-    public void reload() {
-        types.forEach(type -> clans.getInjector().injectMembers(type));
     }
 
     @Override

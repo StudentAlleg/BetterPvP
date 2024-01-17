@@ -2,6 +2,7 @@ package me.mykindos.betterpvp.champions.champions.skills.skills.brute.passives;
 
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
+import io.papermc.paper.configuration.type.fallback.FallbackValue;
 import me.mykindos.betterpvp.champions.Champions;
 import me.mykindos.betterpvp.champions.champions.ChampionsManager;
 import me.mykindos.betterpvp.champions.champions.skills.Skill;
@@ -20,6 +21,8 @@ import java.util.Set;
 @BPvPListener
 public class Resistance extends Skill implements PassiveSkill {
 
+    public int increasePerLevel;
+
     @Inject
     public Resistance(Champions champions, ChampionsManager championsManager) {
         super(champions, championsManager);
@@ -34,10 +37,15 @@ public class Resistance extends Skill implements PassiveSkill {
     public String[] getDescription(int level) {
 
         return new String[]{
-                "You take <val>" + (level * 15) + "%</val> less damage",
-                "but you deal <val>" + (level * 15) + "%</val> less damage as well"
+                "You take <val>" + getPercent(level) + "%</val> less damage",
+                "but you deal <val>" + getPercent(level) + "%</val> less damage as well"
         };
     }
+
+    private int getPercent(int level) {
+        return level * increasePerLevel;
+    }
+
     @Override
     public String getDefaultClassString() {
         return "brute";
@@ -58,7 +66,7 @@ public class Resistance extends Skill implements PassiveSkill {
         if (event.getDamager() instanceof Player damager) {
             int level = getLevel(damager);
             if(level > 0) {
-                double modifier = level * 15;
+                double modifier = getPercent(level);
                 double modifier2 = modifier >= 10 ? 0.01 : 0.1;
 
                 event.setDamage(event.getDamage() * (1.0 - (modifier * modifier2)));
@@ -73,4 +81,8 @@ public class Resistance extends Skill implements PassiveSkill {
         return SkillType.PASSIVE_A;
     }
 
+    @Override
+    public void loadSkillConfig(){
+        increasePerLevel = getConfig("increasePerLevel", 15, Integer.class);
+    }
 }

@@ -22,6 +22,10 @@ import java.util.Set;
 @BPvPListener
 public class Precision extends Skill implements PassiveSkill {
 
+    private double baseDamage;
+
+    private double damageIncreasePerLevel;
+
     @Inject
     public Precision(Champions champions, ChampionsManager championsManager) {
         super(champions, championsManager);
@@ -36,9 +40,14 @@ public class Precision extends Skill implements PassiveSkill {
     public String[] getDescription(int level) {
 
         return new String[] {
-                "Your arrows deal <val>" + (level * 0.5) + "</val> bonus damage on hit"
+                "Your arrows deal <val>" + getDamage(level) + "</val> bonus damage on hit"
         };
     }
+
+    public double getDamage(int level) {
+        return baseDamage + damageIncreasePerLevel * level;
+    }
+
     @Override
     public String getDefaultClassString() {
         return "ranger";
@@ -51,15 +60,20 @@ public class Precision extends Skill implements PassiveSkill {
 
 
     @EventHandler(priority = EventPriority.HIGHEST)
-    public void onSlow(CustomDamageEvent event) {
+    public void onDamage(CustomDamageEvent event) {
         if(!(event.getProjectile() instanceof Arrow)) return;
         if(!(event.getDamager() instanceof Player damager)) return;
 
         int level = getLevel(damager);
         if(level > 0) {
-            event.setDamage(event.getDamage() + (level * 0.5));
+            event.setDamage(event.getDamage() + getDamage(level));
         }
 
     }
 
+    @Override
+    public void loadSkillConfig() {
+        baseDamage = getConfig("baseDamage", 0.0, Double.class);
+        damageIncreasePerLevel = getConfig("damageIncreasePerLevel", 0.5, Double.class);
+    }
 }

@@ -4,9 +4,9 @@ import me.mykindos.betterpvp.core.framework.CoreNamespaceKeys;
 import org.bukkit.Chunk;
 import org.bukkit.Location;
 import org.bukkit.Material;
+import org.bukkit.World;
 import org.bukkit.block.Block;
 import org.bukkit.block.BlockFace;
-import org.bukkit.craftbukkit.v1_20_R2.entity.CraftEntity;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Player;
 import org.bukkit.persistence.PersistentDataContainer;
@@ -74,9 +74,18 @@ public class UtilBlock {
     public static boolean isInWater(Player p) {
 
         Block block = p.getLocation().getBlock();
+        Location belowFeet = p.getLocation().subtract(0, 0.1, 0);
+        Block blockBelowFeet = belowFeet.getBlock();
+        return isWater(block) || isWater(blockBelowFeet);
+    }
+
+    public static boolean isWater(Block block) {
         return block.getType() == Material.WATER
                 || block.getType() == Material.BUBBLE_COLUMN
-                || block.getType() == Material.SEAGRASS;
+                || block.getType() == Material.SEAGRASS
+                || block.getType() == Material.TALL_SEAGRASS
+                || block.getType() == Material.KELP
+                || block.getType() == Material.KELP_PLANT;
     }
 
     /**
@@ -106,11 +115,30 @@ public class UtilBlock {
      * @return Returns true if the entity is on the ground
      */
     public static boolean isGrounded(Entity ent) {
-        if ((ent instanceof CraftEntity)) {
-
+        if (!(ent instanceof Player player)) {
             return ent.isOnGround();
         }
-        return !airFoliage(ent.getLocation().add(0, -1, 0).getBlock());
+
+        final World world = player.getWorld();
+        final BoundingBox reference = player.getBoundingBox();
+        final BoundingBox collisionBox = reference.clone().shift(0, -0.1, 0);
+        Block block = new Location(world, reference.getMinX(), reference.getMinY() - 0.1, reference.getMinZ()).getBlock();
+        if (solid(block) && doesBoundingBoxCollide(collisionBox, block)) {
+            return true;
+        }
+
+        block = new Location(world, reference.getMinX(), reference.getMinY() - 0.1, reference.getMaxZ()).getBlock();
+        if (solid(block) && doesBoundingBoxCollide(collisionBox, block)) {
+            return true;
+        }
+
+        block = new Location(world, reference.getMaxX(), reference.getMinY() - 0.1, reference.getMinZ()).getBlock();
+        if (solid(block) && doesBoundingBoxCollide(collisionBox, block)) {
+            return true;
+        }
+
+        block = new Location(world, reference.getMaxX(), reference.getMinY() - 0.1, reference.getMaxZ()).getBlock();
+        return solid(block) && doesBoundingBoxCollide(collisionBox, block);
     }
 
     /**
@@ -332,8 +360,11 @@ public class UtilBlock {
     }
 
     public static boolean isInLiquid(Entity ent) {
-
-        return ent.isInWater() || ent.isInLava() || ent.isInBubbleColumn();
+        if (ent instanceof Player player) {
+            return isInWater(player) || isInLava(player) || ent.isInBubbleColumn();
+        } else {
+            return ent.isInWater() || ent.isInLava() || ent.isInBubbleColumn();
+        }
     }
 
     public static boolean isWall(Block block) {

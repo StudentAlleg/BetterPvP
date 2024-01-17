@@ -6,8 +6,10 @@ import me.mykindos.betterpvp.champions.Champions;
 import me.mykindos.betterpvp.champions.champions.builds.BuildManager;
 import me.mykindos.betterpvp.champions.champions.builds.GamerBuilds;
 import me.mykindos.betterpvp.champions.champions.roles.RoleManager;
+import me.mykindos.betterpvp.champions.champions.builds.BuildManager;
 import me.mykindos.betterpvp.champions.champions.skills.SkillManager;
 import me.mykindos.betterpvp.champions.listeners.ChampionsListenerLoader;
+import me.mykindos.betterpvp.champions.weapons.WeaponManager;
 import me.mykindos.betterpvp.core.client.Client;
 import me.mykindos.betterpvp.core.client.Rank;
 import me.mykindos.betterpvp.core.command.Command;
@@ -15,7 +17,6 @@ import me.mykindos.betterpvp.core.command.IConsoleCommand;
 import me.mykindos.betterpvp.core.command.SubCommand;
 import me.mykindos.betterpvp.core.items.ItemHandler;
 import me.mykindos.betterpvp.core.utilities.UtilMessage;
-import org.bukkit.Bukkit;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 
@@ -68,10 +69,13 @@ public class ChampionsCommand extends Command implements IConsoleCommand {
         private ItemHandler itemHandler;
 
         @Inject
-        RoleManager roleManager;
+        private WeaponManager weaponManager;
 
         @Inject
-        BuildManager buildManager;
+        private BuildManager buildManager;
+
+        @Inject
+        RoleManager roleManager;
 
         @Override
         public String getName() {
@@ -90,18 +94,13 @@ public class ChampionsCommand extends Command implements IConsoleCommand {
 
         @Override
         public void execute(CommandSender sender, String[] args) {
-            champions.reloadConfig();
+            champions.reload();
 
             commandLoader.reload(champions.getClass().getPackageName());
-            listenerLoader.reload(champions.getClass().getPackageName());
             skillManager.reloadSkills();
-
-            itemHandler.loadItemData("Champions");
             roleManager.reloadRoles();
-
-            for (Player player : Bukkit.getOnlinePlayers()) {
-                buildManager.loadBuildsForPlayer(player.getUniqueId().toString());
-            }
+            buildManager.reloadBuilds();
+            itemHandler.loadItemData("champions");
 
             UtilMessage.message(sender, "Champions", "Successfully reloaded champions");
         }

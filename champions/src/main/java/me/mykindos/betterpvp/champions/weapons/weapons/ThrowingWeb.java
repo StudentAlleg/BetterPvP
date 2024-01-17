@@ -10,13 +10,15 @@ import me.mykindos.betterpvp.core.combat.throwables.ThrowableItem;
 import me.mykindos.betterpvp.core.combat.throwables.events.ThrowableHitEntityEvent;
 import me.mykindos.betterpvp.core.combat.throwables.events.ThrowableHitGroundEvent;
 import me.mykindos.betterpvp.core.config.Config;
+import me.mykindos.betterpvp.core.cooldowns.CooldownManager;
 import me.mykindos.betterpvp.core.framework.CoreNamespaceKeys;
+import me.mykindos.betterpvp.core.items.BPVPItem;
 import me.mykindos.betterpvp.core.listener.BPvPListener;
 import me.mykindos.betterpvp.core.utilities.UtilBlock;
 import me.mykindos.betterpvp.core.utilities.UtilInventory;
 import me.mykindos.betterpvp.core.world.blocks.WorldBlockHandler;
-import net.kyori.adventure.text.Component;
-import net.kyori.adventure.text.format.NamedTextColor;
+import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
+import org.bukkit.Bukkit;
 import org.bukkit.Material;
 import org.bukkit.Particle;
 import org.bukkit.block.Block;
@@ -24,8 +26,9 @@ import org.bukkit.entity.Item;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
-import org.bukkit.event.block.Action;
+import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.inventory.ItemStack;
+import org.bukkit.inventory.ShapedRecipe;
 import org.bukkit.persistence.PersistentDataType;
 
 import java.util.UUID;
@@ -35,26 +38,39 @@ import java.util.UUID;
 public class ThrowingWeb extends Weapon implements Listener, InteractWeapon, CooldownWeapon {
 
     @Inject
-    @Config(path = "weapons.throwing-web.cooldown", defaultValue = "10.0")
+    @Config(path = "weapons.throwing-web.cooldown", defaultValue = "10.0", configName = "weapons/standard")
     private double cooldown;
 
     @Inject
-    @Config(path = "weapons.throwing-web.duration", defaultValue = "2.5")
+    @Config(path = "weapons.throwing-web.duration", defaultValue = "2.5", configName = "weapons/standard")
     private double duration;
 
     @Inject
-    @Config(path = "weapons.throwing-web.throwable-expiry", defaultValue = "10.0")
+    @Config(path = "weapons.throwing-web.throwable-expiry", defaultValue = "10.0", configName = "weapons/standard")
     private double throwableExpiry;
 
     private final ChampionsManager championsManager;
     private final WorldBlockHandler blockHandler;
 
+    private final CooldownManager cooldownManager;
+
     @Inject
-    public ThrowingWeb(ChampionsManager championsManager, WorldBlockHandler blockHandler) {
-        super(Material.COBWEB, Component.text("Throwing Web", NamedTextColor.LIGHT_PURPLE));
+    public ThrowingWeb(ChampionsManager championsManager, WorldBlockHandler blockHandler, CooldownManager cooldownManager) {
+        super("throwing_web");
 
         this.championsManager = championsManager;
         this.blockHandler = blockHandler;
+
+        this.cooldownManager = cooldownManager;
+    }
+
+    @Override
+    public void loadWeapon(BPVPItem item) {
+        super.loadWeapon(item);
+        ShapedRecipe shapedRecipe = getShapedRecipe("*S*", "SSS", "*S*");
+        shapedRecipe.setIngredient('*', Material.AIR);
+        shapedRecipe.setIngredient('S', Material.STRING);
+        Bukkit.addRecipe(shapedRecipe);
     }
 
     @Override
@@ -63,12 +79,22 @@ public class ThrowingWeb extends Weapon implements Listener, InteractWeapon, Coo
         item.getItemStack().getItemMeta().getPersistentDataContainer().set(CoreNamespaceKeys.UUID_KEY, PersistentDataType.STRING, UUID.randomUUID().toString());
         item.setVelocity(player.getLocation().getDirection().multiply(1.8));
 
-        ThrowableItem throwableItem = new ThrowableItem(item, player, "Throwing Web", (long) (throwableExpiry * 1000L), true, true);
+        ThrowableItem throwableItem = new ThrowableItem(item, player, "Throwing Web", (long) (throwableExpiry * 1000L), true);
         throwableItem.setCollideGround(true);
         throwableItem.getImmunes().add(player);
         championsManager.getThrowables().addThrowable(throwableItem);
 
         UtilInventory.remove(player, Material.COBWEB, 1);
+    }
+
+    @EventHandler
+    public void onInteract(PlayerInteractEvent event) {
+        if (event.getAction().isLeftClick() && matches(event.getItem())) {
+            String name = PlainTextComponentSerializer.plainText().serialize(getName());
+            if (cooldownManager.use(event.getPlayer(), name, getCooldown(), showCooldownFinished(), true, false, x -> isHoldingWeapon(event.getPlayer()))) {
+                activate(event.getPlayer()); // also activate on left click
+            }
+        }
     }
 
     @EventHandler
@@ -119,8 +145,4 @@ public class ThrowingWeb extends Weapon implements Listener, InteractWeapon, Coo
         return cooldown;
     }
 
-    @Override
-    public Action[] getActions() {
-        return new Action[]{Action.LEFT_CLICK_AIR};
-    }
 }

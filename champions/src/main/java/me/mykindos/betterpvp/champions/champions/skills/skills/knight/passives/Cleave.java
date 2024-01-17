@@ -28,6 +28,8 @@ public class Cleave extends Skill implements PassiveSkill, Listener {
 
     private double baseDistance;
 
+    private double distanceIncreasePerLevel;
+
     @Inject
     public Cleave(Champions champions, ChampionsManager championsManager) {
         super(champions, championsManager);
@@ -44,9 +46,14 @@ public class Cleave extends Skill implements PassiveSkill, Listener {
         return new String[]{
                 "Your axe attacks cleave onto nearby targets and deal damage",
                 "",
-                "Distance: <val>" + (baseDistance + level),
+                "Distance: <val>" + getDistance(level),
         };
     }
+
+    public double getDistance(int level) {
+        return baseDistance + level * distanceIncreasePerLevel;
+    }
+
     @Override
     public String getDefaultClassString() {
         return "knight";
@@ -61,12 +68,12 @@ public class Cleave extends Skill implements PassiveSkill, Listener {
         if (event.isCancelled()) return;
         if (event.getCause() != DamageCause.ENTITY_ATTACK) return;
         if (!(event.getDamager() instanceof Player damager)) return;
-        if (!UtilPlayer.isHoldingItem(damager, SkillWeapons.AXES)) return;
+        if (!SkillWeapons.isHolding(damager, SkillType.AXE)) return;
         if (event.hasReason(getName())) return; // Don't get stuck in an endless damage loop
 
         int level = getLevel(damager);
         if (level > 0) {
-            for (var target : UtilEntity.getNearbyEntities(damager, damager.getLocation(), baseDistance + level, EntityProperty.ENEMY)) {
+            for (var target : UtilEntity.getNearbyEntities(damager, damager.getLocation(), getDistance(level), EntityProperty.ENEMY)) {
                 if (target.get().equals(event.getDamagee())) continue;
 
                 UtilDamage.doCustomDamage(new CustomDamageEvent(target.getKey(), damager, null, DamageCause.ENTITY_ATTACK, event.getDamage(), true, getName()));
@@ -77,6 +84,7 @@ public class Cleave extends Skill implements PassiveSkill, Listener {
     @Override
     public void loadSkillConfig() {
         baseDistance = getConfig("baseDistance", 2.0, Double.class);
+        distanceIncreasePerLevel = getConfig("distanceIncreasePerLevel", 1.0, Double.class);
     }
 
 

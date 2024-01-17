@@ -29,7 +29,9 @@ import java.util.*;
 @BPvPListener
 public class LifeBonds extends ActiveToggleSkill implements EnergySkill {
 
-    private double minRadius;
+    private double baseRadius;
+
+    private double radiusIncreasePerLevel;
     private double duration;
 
 
@@ -51,12 +53,17 @@ public class LifeBonds extends ActiveToggleSkill implements EnergySkill {
                 "",
                 "Connect you and all your allies through",
                 "the power of nature, spreading your health",
-                "between all allies within <val>" + (minRadius + level) + "</val> blocks",
+                "between all allies within <val>" + getRadius(level) + "</val> blocks",
                 "",
                 "Energy / Second: <val>" + getEnergy(level)
 
         };
     }
+
+    public double getRadius(int level) {
+        return baseRadius + level * radiusIncreasePerLevel;
+    }
+
     @Override
     public String getDefaultClassString() {
         return "mage";
@@ -96,7 +103,7 @@ public class LifeBonds extends ActiveToggleSkill implements EnergySkill {
                 if (level <= 0 || !championsManager.getEnergy().use(player, getName(), getEnergy(level) / 2, true) || championsManager.getEffects().hasEffect(player, EffectType.SILENCE)) {
                     iterator.remove();
                 } else {
-                    double distance = minRadius + level;
+                    double distance = getRadius(level);
 
                     HashMap<Block, Double> blocks = UtilBlock.getInRadius(player.getLocation(), distance);
 
@@ -160,7 +167,7 @@ public class LifeBonds extends ActiveToggleSkill implements EnergySkill {
     @Override
     public float getEnergy(int level) {
 
-        return (float) energy - ((level - 1));
+        return (float) (energy - ((level - 1) * energyDecreasePerLevel));
     }
 
     private void sendState(Player player, boolean state) {
@@ -169,7 +176,8 @@ public class LifeBonds extends ActiveToggleSkill implements EnergySkill {
 
     @Override
     public void loadSkillConfig() {
-        minRadius = getConfig("minRadius", 2.0, Double.class);
+        baseRadius = getConfig("baseRadius", 2.0, Double.class);
+        radiusIncreasePerLevel = getConfig("radiusIncreasePerLevel", 1.0, Double.class);
         duration = getConfig("duration", 2.0, Double.class);
     }
 }

@@ -37,6 +37,7 @@ import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.entity.EntityDamageEvent;
+import org.bukkit.event.entity.EntityDamageEvent.DamageCause;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.Damageable;
 import org.bukkit.inventory.meta.ItemMeta;
@@ -45,11 +46,30 @@ import org.jetbrains.annotations.Nullable;
 
 import javax.inject.Inject;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 @Slf4j
 @BPvPListener
 public class CombatListener implements Listener {
+
+    private static final List<DamageCause> TRUE_DAMAGE_SOURCES = Arrays.asList(
+            DamageCause.FIRE_TICK,
+            DamageCause.FALL,
+            DamageCause.LAVA,
+            DamageCause.FIRE,
+            DamageCause.DROWNING,
+            DamageCause.SUFFOCATION,
+            DamageCause.STARVATION,
+            DamageCause.VOID,
+            DamageCause.CONTACT,
+            DamageCause.CRAMMING,
+            DamageCause.HOT_FLOOR,
+            DamageCause.FLY_INTO_WALL,
+            DamageCause.KILL,
+            DamageCause.MAGIC,
+            DamageCause.WORLD_BORDER
+    );
 
     private final List<DamageData> damageDataList;
     private final ClientManager clientManager;
@@ -224,7 +244,7 @@ public class CombatListener implements Listener {
             return;
         }
 
-        if (cde.getCause() == EntityDamageEvent.DamageCause.ENTITY_ATTACK) {
+        if (cde.getCause() == DamageCause.ENTITY_ATTACK) {
             if (cde.getDamager() != null) {
                 if (cde.getDamager().getHealth() <= 0) {
                     event.setCancelled(true);
@@ -260,28 +280,19 @@ public class CombatListener implements Listener {
             }
         }
 
-        if (event.getCause() == EntityDamageEvent.DamageCause.POISON) {
+        if (event.getCause() == DamageCause.POISON) {
             if (damagee.getHealth() < 2) {
                 event.setCancelled(true);
             }
         }
 
-        if (event.getCause() == EntityDamageEvent.DamageCause.LIGHTNING) {
+        if (event.getCause() == DamageCause.LIGHTNING) {
             event.setCancelled(true);
         }
 
-        if (event.getCause() == EntityDamageEvent.DamageCause.WITHER) {
+        if (event.getCause() == DamageCause.WITHER) {
             event.setCancelled(true);
         }
-
-
-        // TODO move elsewhere
-
-        //if (event.getEntity() instanceof Sheep sheep) {
-        //    if (sheep.customName() != null) {
-        //        event.setCancelled(true);
-        //    }
-        //}
 
         if (event.isCancelled()) {
             return;
@@ -294,28 +305,27 @@ public class CombatListener implements Listener {
         UtilDamage.doCustomDamage(cde);
 
         event.setCancelled(true);
-
     }
 
     @EventHandler(priority = EventPriority.LOWEST)
     public void handleCauseTimers(CustomDamageEvent e) {
 
-        if (e.getCause() == EntityDamageEvent.DamageCause.ENTITY_ATTACK
-                || e.getCause() == EntityDamageEvent.DamageCause.PROJECTILE
-                || e.getCause() == EntityDamageEvent.DamageCause.CUSTOM) {
+        if (e.getCause() == DamageCause.ENTITY_ATTACK
+                || e.getCause() == DamageCause.PROJECTILE
+                || e.getCause() == DamageCause.CUSTOM) {
             e.setDamageDelay(400);
         }
 
-        if (e.getCause() == EntityDamageEvent.DamageCause.POISON) {
+        if (e.getCause() == DamageCause.POISON) {
             e.setDamageDelay(1000);
         }
 
-        if (e.getCause() == EntityDamageEvent.DamageCause.LAVA) {
+        if (e.getCause() == DamageCause.LAVA) {
             e.setDamageDelay(400);
         }
 
         if (e.getDamagee().getLocation().getBlock().isLiquid()) {
-            if (e.getCause() == EntityDamageEvent.DamageCause.FIRE || e.getCause() == EntityDamageEvent.DamageCause.FIRE_TICK) {
+            if (e.getCause() == DamageCause.FIRE || e.getCause() == DamageCause.FIRE_TICK) {
                 e.cancel("Already in lava / liquid");
             }
         }
@@ -328,7 +338,7 @@ public class CombatListener implements Listener {
         double knockback = event.getDamage();
         if (event.getDamager() instanceof Player player) {
             if (player.isSprinting()) {
-                if (event.getCustomDamageEvent().getCause() == EntityDamageEvent.DamageCause.ENTITY_ATTACK) {
+                if (event.getCustomDamageEvent().getCause() == DamageCause.ENTITY_ATTACK) {
                     knockback += 3;
                 }
             }
@@ -356,6 +366,7 @@ public class CombatListener implements Listener {
         }
 
         double velocity = 0.2D + trajectory.length() * 0.8D;
+        trajectory.multiply(event.getMultiplier());
 
         UtilVelocity.velocity(event.getDamagee(),
                 trajectory, velocity, false, 0.0D, Math.abs(0.2D * knockback), 0.4D + (0.04D * knockback), true);
@@ -366,11 +377,11 @@ public class CombatListener implements Listener {
         damageDataList.removeIf(damageData -> UtilTime.elapsed(damageData.getTimeOfDamage(), damageData.getDamageDelay()));
     }
 
-    public boolean hasDamageData(LivingEntity damagee, EntityDamageEvent.DamageCause cause, @Nullable LivingEntity damager) {
+    public boolean hasDamageData(LivingEntity damagee, DamageCause cause, @Nullable LivingEntity damager) {
         return damageDataList.stream().anyMatch(damageData -> {
             if (damageData.getUuid().equalsIgnoreCase(damagee.getUniqueId().toString())
                     && damageData.getCause() == cause) {
-                if (damager == null) {
+                if (damager == null || damageData.getDamager() == null) {
                     return true;
                 } else {
                     return damageData.getDamager().equalsIgnoreCase(damager.getUniqueId().toString());
@@ -481,7 +492,7 @@ public class CombatListener implements Listener {
 
         if (durabilityEvent.isDamagerTakeDurability()) {
             if (event.getDamager() instanceof Player damager) {
-                if (event.getCause() != EntityDamageEvent.DamageCause.ENTITY_ATTACK) return;
+                if (event.getCause() != DamageCause.ENTITY_ATTACK) return;
 
 
                 ItemStack weapon = damager.getInventory().getItemInMainHand();
@@ -507,8 +518,8 @@ public class CombatListener implements Listener {
     }
 
     @EventHandler
-    public void onFireDamage(CustomDamageEvent event) {
-        if (event.getCause() == EntityDamageEvent.DamageCause.FIRE_TICK) {
+    public void onTrueDamage(CustomDamageEvent event) {
+        if (TRUE_DAMAGE_SOURCES.contains(event.getCause())) {
             event.setIgnoreArmour(true);
         }
     }

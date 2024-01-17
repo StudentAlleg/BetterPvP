@@ -12,6 +12,7 @@ import me.mykindos.betterpvp.core.components.champions.Role;
 import me.mykindos.betterpvp.core.components.champions.SkillType;
 import me.mykindos.betterpvp.core.effects.EffectType;
 import me.mykindos.betterpvp.core.listener.BPvPListener;
+import me.mykindos.betterpvp.core.utilities.UtilFormat;
 import me.mykindos.betterpvp.core.utilities.UtilPlayer;
 import org.bukkit.Sound;
 import org.bukkit.entity.Player;
@@ -24,7 +25,11 @@ import java.util.Set;
 public class StrengthInNumbers extends Skill implements InteractSkill, CooldownSkill {
 
     private int radius;
-    private double duration;
+    private double baseDuration;
+
+    private double durationIncreasePerLevel;
+
+    private int strengthStrength;
 
     @Inject
     public StrengthInNumbers(Champions champions, ChampionsManager championsManager) {
@@ -43,7 +48,7 @@ public class StrengthInNumbers extends Skill implements InteractSkill, CooldownS
                 "Right click with an Axe to activate",
                 "",
                 "Grant all allies within <stat>" + radius + "</stat> blocks",
-                "<effect>Strength</effect> I for <val>" + (duration + level) + "</val> seconds",
+                "<effect>Strength " + UtilFormat.getRomanNumeral(strengthStrength) + "</effect> for <val>" + getDuration(level) + "</val> seconds",
                 "",
                 "This does not give you the buff",
                 "",
@@ -51,6 +56,11 @@ public class StrengthInNumbers extends Skill implements InteractSkill, CooldownS
 
         };
     }
+
+    public double getDuration (int level) {
+        return baseDuration + (level * durationIncreasePerLevel);
+    }
+
     @Override
     public String getDefaultClassString() {
         return "brute";
@@ -65,16 +75,16 @@ public class StrengthInNumbers extends Skill implements InteractSkill, CooldownS
     @Override
     public double getCooldown(int level) {
 
-        return cooldown - ((level - 1));
+        return cooldown - ((level - 1) * cooldownDecreasePerLevel);
     }
 
     @Override
     public void activate(Player player, int level) {
         player.getWorld().playSound(player.getLocation(), Sound.ENTITY_WITHER_SPAWN, 1.0F, 2.0F);
-        championsManager.getEffects().addEffect(player, EffectType.STRENGTH, 1, (long) ((duration + level) * 1000L));
+        championsManager.getEffects().addEffect(player, EffectType.STRENGTH, 1, (long) (getDuration(level) * 1000L));
 
         for (Player target : UtilPlayer.getNearbyAllies(player, player.getLocation(), radius)) {
-            championsManager.getEffects().addEffect(target, EffectType.STRENGTH, 1, (long) ((duration + level) * 1000L));
+            championsManager.getEffects().addEffect(target, EffectType.STRENGTH, 1, (long) ((getDuration(level)* 1000L)));
         }
     }
 
@@ -86,6 +96,8 @@ public class StrengthInNumbers extends Skill implements InteractSkill, CooldownS
     @Override
     public void loadSkillConfig() {
         radius = getConfig("radius", 10, Integer.class);
-        duration = getConfig("duration", 2.0, Double.class);
+        baseDuration = getConfig("baseDuration", 2.0, Double.class);
+        durationIncreasePerLevel = getConfig("durationIncreasePerLevel", 2.0, Double.class);
+        strengthStrength = getConfig("strengthStrength", 1, Integer.class);
     }
 }

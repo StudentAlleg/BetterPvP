@@ -2,7 +2,6 @@ package me.mykindos.betterpvp.champions.weapons.weapons;
 
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
-import me.mykindos.betterpvp.champions.champions.skills.data.SkillActions;
 import me.mykindos.betterpvp.champions.weapons.Weapon;
 import me.mykindos.betterpvp.champions.weapons.types.CooldownWeapon;
 import me.mykindos.betterpvp.champions.weapons.types.InteractWeapon;
@@ -15,7 +14,6 @@ import net.kyori.adventure.text.format.NamedTextColor;
 import org.bukkit.Material;
 import org.bukkit.Sound;
 import org.bukkit.entity.Player;
-import org.bukkit.event.block.Action;
 
 @Singleton
 public class EnergyApple extends Weapon implements InteractWeapon, CooldownWeapon {
@@ -23,22 +21,17 @@ public class EnergyApple extends Weapon implements InteractWeapon, CooldownWeapo
     private final EnergyHandler energyHandler;
 
     @Inject
-    @Config(path = "weapons.energy-apple.cooldown", defaultValue = "10.0")
+    @Config(path = "weapons.energy-apple.cooldown", defaultValue = "10.0", configName = "weapons/standard")
     private double cooldown;
 
     @Inject
-    @Config(path = "weapons.energy-apple.energy-regen", defaultValue = "0.50")
+    @Config(path = "weapons.energy-apple.energy-regen", defaultValue = "0.50", configName = "weapons/standard")
     private double energyRegen;
 
     @Inject
     public EnergyApple(EnergyHandler energyHandler) {
-        super(Material.APPLE, Component.text("Energy Apple", NamedTextColor.LIGHT_PURPLE));
+        super("energy_apple");
         this.energyHandler = energyHandler;
-    }
-
-    @Override
-    public Action[] getActions() {
-        return SkillActions.RIGHT_CLICK;
     }
 
     @Override

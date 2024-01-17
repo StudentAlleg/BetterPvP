@@ -22,6 +22,7 @@ public class ConfigInjectorModule extends AbstractModule {
         this.plugin = plugin;
         this.fields = fields;
         this.providers = new HashMap<>();
+
     }
 
     @Override
@@ -31,29 +32,33 @@ public class ConfigInjectorModule extends AbstractModule {
             Config config = field.getAnnotation(Config.class);
             if (config == null) continue;
 
-            Config conf = new ConfigImpl(config.path(), config.defaultValue());
+            Config conf = new ConfigImpl(config.path(), config.defaultValue(), config.configName());
 
             Class<?> type = field.getType();
             if (type == List.class) {
-                bind(new TypeLiteral<List<String>>() {}).annotatedWith(conf).toProvider(getProvider(config.path(), config.defaultValue(), type));
+                bind(new TypeLiteral<List<String>>() {}).annotatedWith(conf).toProvider(getProvider(config.path(), config.defaultValue(), type, config.configName()));
             } else {
-                bind(type).annotatedWith(conf).toProvider(getProvider(config.path(), config.defaultValue(), type));
+                bind(type).annotatedWith(conf).toProvider(getProvider(config.path(), config.defaultValue(), type, config.configName()));
             }
         }
 
     }
 
     @SuppressWarnings("unchecked")
-    private <T> ConfigProvider<T> getProvider(String path, String defaultValue, Class<?> type) {
+    private <T> ConfigProvider<T> getProvider(String path, String defaultValue, Class<?> type, String configName) {
         ConfigProvider<?> provider;
         if (providers.containsKey(path)) {
             provider = providers.get(path);
         } else {
-            provider = new ConfigProvider<>(plugin, path, defaultValue, type);
+            provider = new ConfigProvider<>(plugin, path, defaultValue, type, configName);
             providers.put(path, provider);
         }
 
         return (ConfigProvider<T>) provider;
+    }
+
+    public void reload() {
+
     }
 
 }

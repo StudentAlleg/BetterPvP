@@ -22,6 +22,10 @@ import java.util.Set;
 @BPvPListener
 public class MagmaBlade extends Skill implements PassiveSkill {
 
+    public double baseDamage;
+
+    public double damageIncreasePerLevel;
+
     @Inject
     public MagmaBlade(Champions champions, ChampionsManager championsManager) {
         super(champions, championsManager);
@@ -37,9 +41,14 @@ public class MagmaBlade extends Skill implements PassiveSkill {
 
         return new String[]{
                 "Your sword is fueled by flames,",
-                "dealing an additional <val>" + (level) + "</val> damage",
+                "dealing an additional <val>" + getDamage(level) + "</val> damage",
                 "to players who are on fire"};
     }
+
+    public double getDamage(int level) {
+        return baseDamage + level * damageIncreasePerLevel;
+    }
+
     @Override
     public String getDefaultClassString() {
         return "mage";
@@ -53,18 +62,23 @@ public class MagmaBlade extends Skill implements PassiveSkill {
     public void onDamage(CustomDamageEvent event) {
         if (event.getCause() != DamageCause.ENTITY_ATTACK) return;
         if (!(event.getDamager() instanceof Player player)) return;
-        if (!UtilPlayer.isHoldingItem(player, SkillWeapons.SWORDS)) return;
+        if (!SkillWeapons.isHolding(player, SkillType.SWORD)) return;
 
         int level = getLevel(player);
         if (level > 0) {
             LivingEntity ent = event.getDamagee();
             if (ent.getFireTicks() > 0) {
-                event.setDamage(event.getDamage() + level);
+                event.setDamage(event.getDamage() + getDamage(level));
             }
         }
 
     }
 
+    @Override
+    public void loadSkillConfig() {
+        baseDamage = getConfig("baseDamage", 0.0, Double.class);
+        damageIncreasePerLevel = getConfig("damageIncreasePerLevel", 1.0, Double.class);
+    }
 }
 
 

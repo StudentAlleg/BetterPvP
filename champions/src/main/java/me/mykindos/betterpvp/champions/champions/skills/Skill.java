@@ -13,8 +13,6 @@ import me.mykindos.betterpvp.champions.champions.skills.types.CooldownSkill;
 import me.mykindos.betterpvp.champions.champions.skills.types.EnergySkill;
 import me.mykindos.betterpvp.core.components.champions.ISkill;
 import me.mykindos.betterpvp.core.components.champions.Role;
-import me.mykindos.betterpvp.core.utilities.UtilPlayer;
-import org.bukkit.Material;
 import org.bukkit.entity.Player;
 
 import java.util.HashSet;
@@ -25,7 +23,6 @@ import java.util.Set;
 @Slf4j
 public abstract class Skill implements ISkill {
 
-
     protected final Champions champions;
     protected final ChampionsManager championsManager;
 
@@ -33,8 +30,20 @@ public abstract class Skill implements ISkill {
 
     private Set<Role> ClassTypes = new HashSet<>();
     private int maxLevel;
-    protected int cooldown;
+    protected double cooldown;
+    protected double cooldownDecreasePerLevel;
     protected int energy;
+    protected Double energyDecreasePerLevel;
+
+    private boolean canUseWhileSlowed;
+
+    private boolean canUseWhileStunned;
+
+    private boolean canUseWhileSilenced;
+
+    private boolean canUseWhileLevitating;
+
+    private boolean canUseInLiquid;
 
     @Inject
     public Skill(Champions champions, ChampionsManager championsManager) {
@@ -49,6 +58,32 @@ public abstract class Skill implements ISkill {
     }
 
     @Override
+    public boolean canUseWhileSlowed() {
+        return canUseWhileSlowed;
+    }
+
+    @Override
+    public boolean canUseWhileStunned() {
+        return canUseWhileStunned;
+    }
+
+    @Override
+    public boolean canUseWhileSilenced() {
+        return canUseWhileSilenced;
+    }
+
+    @Override
+    public boolean canUseWhileLevitating() {
+        return canUseWhileLevitating;
+    }
+
+    @Override
+    public boolean canUseInLiquid() {
+        return canUseInLiquid;
+    }
+
+
+    @Override
     public int getMaxLevel() {
         return maxLevel;
     }
@@ -61,15 +96,31 @@ public abstract class Skill implements ISkill {
         }
     }
 
-    protected <T> T getConfig(String name, Object defaultValue, Class<T> type) {
+    private String getPath(String name) {
         String path;
         if (getClassType() != null) {
             path = "skills." + getDefaultClassString() + "." + getName().toLowerCase().replace(" ", "") + "." + name;
         } else {
             path = "skills.global." + getName().toLowerCase().replace(" ", "") + "." + name;
         }
-        return champions.getConfig().getOrSaveObject(path, defaultValue, type);
+        return path;
     }
+
+    protected <T> T getConfig(String name, Object defaultValue, Class<T> type) {
+        return champions.getConfig("skills/skills").getOrSaveObject(getPath(name), defaultValue, type);
+    }
+
+    /**
+     * @param name name of the value
+     * @param defaultValue default value
+     * @param type The type of default value
+     * @param <T> The type of default value
+     * @return returns the config value if exists, or the default value if it does not. Does not save value in the config
+     */
+    protected <T> T getConfigObject(String name, T defaultValue, Class<T> type) {
+        return champions.getConfig("skills/skills").getObject(getPath(name), type, defaultValue);
+    }
+
 
     @Override
     public final void loadConfig() {
@@ -77,12 +128,20 @@ public abstract class Skill implements ISkill {
         maxLevel = getConfig("maxlevel", 5, Integer.class);
 
         if (this instanceof CooldownSkill) {
-            cooldown = getConfig("cooldown", 0, Integer.class);
+            cooldown = getConfig("cooldown", 1.0, Double.class);
+            cooldownDecreasePerLevel = getConfig("cooldownDecreasePerLevel", 1.0, Double.class);
         }
 
         if (this instanceof EnergySkill) {
             energy = getConfig("energy", 0, Integer.class);
+            energyDecreasePerLevel = getConfig("energyDecreasePerLevel", 1.0, Double.class);
         }
+
+        canUseWhileSlowed = getConfigObject("canUseWhileSlowed", true, Boolean.class);
+        canUseWhileSilenced = getConfigObject("canUseWhileSilenced", false, Boolean.class);
+        canUseWhileStunned = getConfigObject("canUseWhileStunned", false, Boolean.class);
+        canUseWhileLevitating = getConfigObject("canUseWhileLevitating", false, Boolean.class);
+        canUseInLiquid = getConfigObject("canUseInLiquid", false, Boolean.class);
 
         loadSkillConfig();
     }
@@ -150,24 +209,16 @@ public abstract class Skill implements ISkill {
     protected int getLevel(Player player) {
         Optional<BuildSkill> skillOptional = getSkill(player);
         int level = skillOptional.map(BuildSkill::getLevel).orElse(0);
-        if (level > 0) {
-            if (UtilPlayer.isHoldingItem(player, getItemsBySkillType())) {
-                if (UtilPlayer.isHoldingItem(player, SkillWeapons.BOOSTERS)) {
-                    level++;
-                }
-            }
+        if (level > 0 && SkillWeapons.isHolding(player, getType()) && SkillWeapons.hasBooster(player)) {
+            level++;
         }
 
         return level;
     }
 
-    public Material[] getItemsBySkillType() {
-        return switch (getType()) {
-            case SWORD -> SkillWeapons.SWORDS;
-            case AXE -> SkillWeapons.AXES;
-            case BOW -> SkillWeapons.BOWS;
-            default -> new Material[]{};
-        };
+    @Override
+    public boolean isHolding(Player player) {
+        return SkillWeapons.isHolding(player, getType());
     }
 
     @Override

@@ -1,5 +1,6 @@
 package me.mykindos.betterpvp.core.config;
 
+import lombok.extern.slf4j.Slf4j;
 import org.bukkit.Bukkit;
 import org.bukkit.configuration.InvalidConfigurationException;
 import org.bukkit.configuration.file.YamlConfiguration;
@@ -13,6 +14,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.logging.Level;
 
+@Slf4j
 public class ExtendedYamlConfiguration extends YamlConfiguration {
 
     @NotNull
@@ -22,8 +24,9 @@ public class ExtendedYamlConfiguration extends YamlConfiguration {
         try {
             config.load(file);
         } catch (FileNotFoundException ignored) {
+            log.error("Could not find config file {}", file);
         } catch (IOException | InvalidConfigurationException ex) {
-            Bukkit.getLogger().log(Level.SEVERE, "Cannot load " + file, ex);
+            log.error("Cannot load " + file, ex);
         }
 
         return config;

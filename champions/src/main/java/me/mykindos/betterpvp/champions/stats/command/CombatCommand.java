@@ -8,13 +8,13 @@ import me.mykindos.betterpvp.champions.stats.impl.ChampionsFilter;
 import me.mykindos.betterpvp.champions.stats.impl.ChampionsFilterManager;
 import me.mykindos.betterpvp.champions.stats.repository.ChampionsStatsRepository;
 import me.mykindos.betterpvp.core.client.Client;
+import me.mykindos.betterpvp.core.client.repository.ClientManager;
 import me.mykindos.betterpvp.core.combat.stats.impl.GlobalCombatStatsRepository;
 import me.mykindos.betterpvp.core.combat.stats.model.CombatData;
 import me.mykindos.betterpvp.core.command.Command;
 import me.mykindos.betterpvp.core.utilities.UtilMessage;
 import net.kyori.adventure.text.Component;
 import org.bukkit.Bukkit;
-import org.bukkit.OfflinePlayer;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 
@@ -36,6 +36,9 @@ public class CombatCommand extends Command {
     private RoleManager roleManager;
 
     @Inject
+    private ClientManager clientManager;
+
+    @Inject
     private ChampionsFilterManager championsFilterManager;
 
     @Override
@@ -55,52 +58,52 @@ public class CombatCommand extends Command {
             return;
         }
 
+        if (args.length > 1) {
+            clientManager.search(player).advancedOffline(args[1], result -> {
+                run(player, result.iterator().next(), args);
+            });
+        } else {
+            run(player, client, args);
+        }
+    }
+
+    private void run(Player caster, Client target, String[] args) {
         CompletableFuture<CombatData> loaded;
         final ChampionsFilter filter;
-        OfflinePlayer target = player;
-        if (args.length > 1) {
-            target = Bukkit.getOfflinePlayer(args[1]);
-        }
-
-        if (!target.hasPlayedBefore()) {
-            UtilMessage.message(player, "Stats", "Player not found [<alt2>%s</alt2>].", args[1]);
-            return;
-        }
-
         try {
             if (args.length == 0) {
                 filter = roleManager.getObject(target.getUniqueId()).map(championsFilterManager::getFromRole).orElse(championsFilterManager.getObject("NONE").orElseThrow());
-                loaded = championsRepository.getDataAsync(target).thenApply(roleStats -> roleStats.getCombatData(filter));
+                loaded = championsRepository.getDataAsync(target.getUniqueId()).thenApply(roleStats -> roleStats.getCombatData(filter));
             } else {
                 filter = championsFilterManager.getObject(args[0]).orElseThrow();
                 if (championsFilterManager.isGlobal(filter)) {
                     // For some reason needs to be cast to CombatData even though it's a subtype?
-                    loaded = globalRepository.getDataAsync(target).thenApply(global -> global);
+                    loaded = globalRepository.getDataAsync(target.getUniqueId()).thenApply(global -> global);
                 } else {
-                    loaded = championsRepository.getDataAsync(target).thenApply(roleStats -> roleStats.getCombatData(filter));
+                    loaded = championsRepository.getDataAsync(target.getUniqueId()).thenApply(roleStats -> roleStats.getCombatData(filter));
                 }
             }
         } catch (NoSuchElementException exception) {
-            UtilMessage.message(player, "Combat", "Invalid role.");
+            UtilMessage.message(caster, "Combat", "Invalid role.");
             return;
         }
 
         if (!loaded.isDone()) {
-            UtilMessage.message(player, "Combat", "Retrieving player data...");
+            UtilMessage.message(caster, "Combat", "Retrieving player data...");
         }
 
         final String targetName = target.getName();
         loaded.whenComplete((data, throwable) -> {
             if (throwable != null) {
-                UtilMessage.message(player, "Combat", "There was an error retrieving this player data.");
+                UtilMessage.message(caster, "Combat", "There was an error retrieving this player data.");
                 log.error("There was an error retrieving player data for {}", targetName, throwable);
                 return;
             }
 
-            UtilMessage.message(player, "Combat", "Combat data for <alt2>%s</alt2>:", targetName);
-            UtilMessage.message(player, "Combat", "Type: <alt>%s", filter.getName());
+            UtilMessage.message(caster, "Combat", "Combat data for <alt2>%s</alt2>:", targetName);
+            UtilMessage.message(caster, "Combat", "Type: <alt>%s", filter.getName());
             for (Component component : data.getDescription()) {
-                UtilMessage.message(player, "Combat", component);
+                UtilMessage.message(caster, "Combat", component);
             }
         });
     }
@@ -110,7 +113,7 @@ public class CombatCommand extends Command {
         if (args.length == 1) {
             return championsFilterManager.getObjects().keySet().stream().toList();
         } else if (args.length == 2) {
-            return Bukkit.getOnlinePlayers().stream().map(Player::getName).toList();
+            return Bukkit.getOnlinePlayers().stream().map(Player::getName).filter(name -> name.toLowerCase().contains(args[1].toLowerCase())).toList();
         }
         return List.of();
     }

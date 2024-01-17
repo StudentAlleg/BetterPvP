@@ -23,7 +23,9 @@ import org.bukkit.scoreboard.DisplaySlot;
 import org.bukkit.scoreboard.Objective;
 import org.bukkit.scoreboard.Scoreboard;
 
+import java.util.HashSet;
 import java.util.Optional;
+import java.util.Set;
 
 @BPvPListener
 public class ClansSidebarListener implements Listener {
@@ -50,11 +52,19 @@ public class ClansSidebarListener implements Listener {
         Player player = event.getPlayer();
         Scoreboard scoreboard = player.getScoreboard();
 
-        if (isHub) {
+        if (isHub || !event.getPlayer().isOnline()) {
             return;
         }
 
-        final Client client = clientManager.search().online(event.getPlayer());
+        final Optional<Client> clientOpt = clientManager.search().online(event.getPlayer().getUniqueId());
+        if (clientOpt.isEmpty()) {
+            return;
+        }
+
+        final Client client = clientOpt.get();
+        if (!client.isLoaded()) {
+            return;
+        }
         Optional<Boolean> sideBarEnabled = client.getProperty(ClientProperty.SIDEBAR_ENABLED);
         if (sideBarEnabled.isPresent()) {
             if (!sideBarEnabled.get()) {
@@ -75,7 +85,9 @@ public class ClansSidebarListener implements Listener {
             sidebarObjective.setDisplaySlot(DisplaySlot.SIDEBAR);
         }
 
-        for (String s : scoreboard.getEntries()) {
+        Set<String> entries = new HashSet<>(scoreboard.getEntries());
+
+        for (String s : entries) {
             if (s == null) continue;
             if (!s.contains("\u00A7")) {
                 continue;
@@ -95,7 +107,7 @@ public class ClansSidebarListener implements Listener {
             sidebarObjective.getScore(ChatColor.AQUA.toString() + name + ChatColor.RESET).setScore(14);
             sidebarObjective.getScore(ChatColor.RED + "").setScore(13);
 
-            if (clan.getTerritory().size() > 0) {
+            if (!clan.getTerritory().isEmpty()) {
                 sidebarObjective.getScore(ChatColor.YELLOW.toString() + ChatColor.BOLD + "Clan Energy").setScore(12);
                 sidebarObjective.getScore(ChatColor.GREEN.toString() + clan.getEnergyTimeRemaining()).setScore(11);
                 sidebarObjective.getScore(ChatColor.BLUE + "").setScore(10);
@@ -120,7 +132,5 @@ public class ClansSidebarListener implements Listener {
         } else {
             sidebarObjective.getScore(ChatColor.GRAY.toString() + "Wilderness").setScore(5);
         }
-
-        // TODO world event
     }
 }

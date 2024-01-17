@@ -10,6 +10,7 @@ import me.mykindos.betterpvp.core.components.champions.Role;
 import me.mykindos.betterpvp.core.components.champions.SkillType;
 import me.mykindos.betterpvp.core.framework.updater.UpdateEvent;
 import me.mykindos.betterpvp.core.listener.BPvPListener;
+import me.mykindos.betterpvp.core.utilities.UtilFormat;
 import me.mykindos.betterpvp.core.utilities.UtilPlayer;
 import me.mykindos.betterpvp.core.utilities.UtilSound;
 import org.bukkit.Bukkit;
@@ -23,6 +24,12 @@ import java.util.Set;
 @Singleton
 @BPvPListener
 public class Bloodthirst extends Skill implements PassiveSkill {
+
+    private double baseHealthPercent;
+
+    private double healthPercentIncreasePerLevel;
+
+    private int speedStrength;
 
     @Inject
     public Bloodthirst(Champions champions, ChampionsManager championsManager) {
@@ -38,12 +45,17 @@ public class Bloodthirst extends Skill implements PassiveSkill {
     public String[] getDescription(int level) {
         return new String[]{
                 "Your senses are heightened, allowing you",
-                "to detect nearby enemies below <val>" + (25 + (5 * level)) + "%</val> health",
+                "to detect nearby enemies below <val>" + getHealthPercent(level) * 100 + "%</val> health",
                 "",
                 "While running towards weak enemies,",
-                "you receive <effect>Speed I</effect>"
+                "you receive <effect>Speed " + UtilFormat.getRomanNumeral(speedStrength + 1) + "</effect>"
         };
     }
+
+    public double getHealthPercent(int level) {
+        return baseHealthPercent + level * healthPercentIncreasePerLevel;
+    }
+
     @Override
     public String getDefaultClassString() {
         return "warlock";
@@ -56,7 +68,7 @@ public class Bloodthirst extends Skill implements PassiveSkill {
             if (level <= 0) continue;
 
             for (Player target : UtilPlayer.getNearbyEnemies(player, player.getLocation(), 50)) {
-                if (UtilPlayer.getHealthPercentage(target) < (25 + (level * 5))) {
+                if (UtilPlayer.getHealthPercentage(target) < getHealthPercent(level)) {
                     UtilPlayer.setGlowing(player, target, true);
 
                     // Check if player is running towards target
@@ -66,13 +78,13 @@ public class Bloodthirst extends Skill implements PassiveSkill {
                         if (player.hasPotionEffect(PotionEffectType.SPEED)) {
                             PotionEffect speed = player.getPotionEffect(PotionEffectType.SPEED);
                             if (speed != null) {
-                                if (speed.getAmplifier() < 1) {
+                                if (speed.getAmplifier() < speedStrength) {
                                     player.removePotionEffect(PotionEffectType.SPEED);
                                 }
                             }
                         }
 
-                        player.addPotionEffect(new PotionEffect(PotionEffectType.SPEED, 30, 0));
+                        player.addPotionEffect(new PotionEffect(PotionEffectType.SPEED, 30, speedStrength));
                         UtilSound.playSound(player.getWorld(), player, Sound.ENTITY_WARDEN_HEARTBEAT, 1, 0.2f);
                         break;
                     }
@@ -90,5 +102,11 @@ public class Bloodthirst extends Skill implements PassiveSkill {
         return SkillType.PASSIVE_B;
     }
 
+    @Override
+    public void loadSkillConfig() {
+        baseHealthPercent = getConfig("baseHealthPercent", 0.25, Double.class);
+        healthPercentIncreasePerLevel = getConfig("healthPercentIncreasePerLevel", 0.05, Double.class);
 
+        speedStrength = getConfig("speedStrength", 0, Integer.class);
+    }
 }

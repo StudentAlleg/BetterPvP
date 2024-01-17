@@ -34,8 +34,16 @@ public class Boulder extends Skill implements Listener, InteractSkill, CooldownS
     private final WeakHashMap<Player, List<BoulderObject>> boulders = new WeakHashMap<>();
 
     private double baseHeal;
+
+    private double healingIncreasePerLevel;
+
     private double baseDamage;
+
+    private double damageIncreasePerLevel;
+
     private double baseRadius;
+
+    private double radiusIncreasePerLevel;
 
     @Inject
     public Boulder(Champions champions, ChampionsManager championsManager) {
@@ -65,20 +73,20 @@ public class Boulder extends Skill implements Listener, InteractSkill, CooldownS
         return "mage";
     }
     private double getRadius(int level) {
-        return baseRadius + 0.5 * (level - 1);
+        return baseRadius + radiusIncreasePerLevel * (level - 1);
     }
 
     private double getDamage(int level) {
-        return baseDamage + (level - 1);
+        return baseDamage + (level - 1) * damageIncreasePerLevel;
     }
 
     private double getHeal(int level) {
-        return baseHeal + (level - 1);
+        return baseHeal + (level - 1) * healingIncreasePerLevel;
     }
 
     @Override
     public double getCooldown(int level) {
-        return cooldown - (level - 1d);
+        return cooldown - (level - 1d) * cooldownDecreasePerLevel;
     }
 
     @Override
@@ -121,8 +129,11 @@ public class Boulder extends Skill implements Listener, InteractSkill, CooldownS
     @Override
     public void loadSkillConfig() {
         baseHeal = getConfig("baseHeal", 2.0, Double.class);
+        healingIncreasePerLevel = getConfig("healingIncreasePerLevel", 1.0, Double.class);
         baseDamage = getConfig("baseDamage", 3.0, Double.class);
+        damageIncreasePerLevel = getConfig("damageIncreasePerLevel", 1.0, Double.class);
         baseRadius = getConfig("baseRadius", 4.0, Double.class);
+        radiusIncreasePerLevel = getConfig("radiusIncreasePerLevel", 0.5, Double.class);
     }
 
     @UpdateEvent

@@ -5,17 +5,17 @@ import com.google.inject.Singleton;
 import me.mykindos.betterpvp.champions.Champions;
 import me.mykindos.betterpvp.champions.champions.ChampionsManager;
 import me.mykindos.betterpvp.champions.champions.skills.data.SkillActions;
-import me.mykindos.betterpvp.champions.champions.skills.data.SkillWeapons;
 import me.mykindos.betterpvp.champions.champions.skills.types.ChannelSkill;
 import me.mykindos.betterpvp.champions.champions.skills.types.EnergySkill;
 import me.mykindos.betterpvp.champions.champions.skills.types.InteractSkill;
+import me.mykindos.betterpvp.core.client.gamer.Gamer;
 import me.mykindos.betterpvp.core.combat.events.CustomDamageEvent;
 import me.mykindos.betterpvp.core.components.champions.Role;
 import me.mykindos.betterpvp.core.components.champions.SkillType;
 import me.mykindos.betterpvp.core.framework.updater.UpdateEvent;
 import me.mykindos.betterpvp.core.listener.BPvPListener;
+import me.mykindos.betterpvp.core.utilities.UtilFormat;
 import me.mykindos.betterpvp.core.utilities.UtilMath;
-import me.mykindos.betterpvp.core.utilities.UtilPlayer;
 import org.bukkit.Bukkit;
 import org.bukkit.Sound;
 import org.bukkit.entity.LivingEntity;
@@ -28,6 +28,8 @@ import org.bukkit.potion.PotionEffectType;
 import org.bukkit.util.Vector;
 
 import java.util.Set;
+import java.util.Iterator;
+import java.util.UUID;
 import java.util.WeakHashMap;
 
 @Singleton
@@ -36,7 +38,12 @@ public class Blizzard extends ChannelSkill implements InteractSkill, EnergySkill
 
     private final WeakHashMap<Snowball, Player> snow = new WeakHashMap<>();
 
-    private double slowDuration;
+    private double baseSlowDuration;
+
+    private double slowDurationIncreasePerLevel;
+
+    private int slowStrength;
+
     @Inject
     public Blizzard(Champions champions, ChampionsManager championsManager) {
         super(champions, championsManager);
@@ -55,12 +62,17 @@ public class Blizzard extends ChannelSkill implements InteractSkill, EnergySkill
                 "Hold right click with a Sword to channel.",
                 "",
                 "While channeling, release a blizzard",
-                "that gives <effect>Slowness III</effect> to anyone hit ",
-                "for <stat>" + slowDuration + "</stat> seconds",
+                "that gives <effect>Slowness " + UtilFormat.getRomanNumeral(slowStrength + 1) + "</effect> to anyone hit ",
+                "for <stat>" + getSlowDuration(level) + "</stat> seconds",
                 "",
                 "Energy: <val>" + getEnergy(level)
         };
     }
+
+    public double getSlowDuration(int level) {
+        return baseSlowDuration + level * slowDurationIncreasePerLevel;
+    }
+
     @Override
     public String getDefaultClassString() {
         return "mage";
@@ -75,7 +87,7 @@ public class Blizzard extends ChannelSkill implements InteractSkill, EnergySkill
     @Override
     public float getEnergy(int level) {
 
-        return energy - ((level - 1));
+        return (float) (energy - ((level - 1) * energyDecreasePerLevel));
     }
 
 
@@ -89,8 +101,10 @@ public class Blizzard extends ChannelSkill implements InteractSkill, EnergySkill
                     damagee.removePotionEffect(PotionEffectType.SLOW);
                 }
 
+                int level = getLevel((Player) event.getDamager());
+
                 damagee.setVelocity(event.getProjectile().getVelocity().multiply(0.1).add(new Vector(0, 0.25, 0)));
-                damagee.addPotionEffect(new PotionEffect(PotionEffectType.SLOW, (int) slowDuration * 20, 2));
+                damagee.addPotionEffect(new PotionEffect(PotionEffectType.SLOW, (int) getSlowDuration(level), slowStrength));
 
                 event.cancel("Snowball");
                 snow.remove(snowball);
@@ -102,26 +116,33 @@ public class Blizzard extends ChannelSkill implements InteractSkill, EnergySkill
 
     @UpdateEvent
     public void onUpdate() {
-        for (Player player : Bukkit.getOnlinePlayers()) {
-            if (active.contains(player.getUniqueId())) {
-                if (player.isHandRaised()) {
-                    int level = getLevel(player);
-                    if (level <= 0) {
-                        active.remove(player.getUniqueId());
-                    } else if (!championsManager.getEnergy().use(player, getName(), getEnergy(level) / 4, true)) {
-                        active.remove(player.getUniqueId());
-                    } else if (!UtilPlayer.isHoldingItem(player, SkillWeapons.SWORDS)) {
-                        active.remove(player.getUniqueId());
-                    } else {
-                        Snowball s = player.launchProjectile(Snowball.class);
-                        s.getLocation().add(0, 1, 0);
-                        s.setVelocity(player.getLocation().getDirection().add(new Vector(UtilMath.randDouble(-0.3, 0.3), UtilMath.randDouble(-0.2, 0.4), UtilMath.randDouble(-0.3, 0.3))));
-                        player.getWorld().playSound(player.getLocation(), Sound.BLOCK_SNOW_STEP, 1f, 0.4f);
-                        snow.put(s, player);
-                    }
-                } else {
-                    active.remove(player.getUniqueId());
-                }
+        final Iterator<UUID> iterator = active.iterator();
+        while (iterator.hasNext()) {
+            Player player = Bukkit.getPlayer(iterator.next());
+            if (player == null) {
+                iterator.remove();
+                continue;
+            }
+
+            Gamer gamer = championsManager.getClientManager().search().online(player).getGamer();
+            if (!gamer.isHoldingRightClick()) {
+                iterator.remove();
+                continue;
+            }
+
+            int level = getLevel(player);
+            if (level <= 0) {
+                iterator.remove();
+            } else if (!championsManager.getEnergy().use(player, getName(), getEnergy(level) / 4, true)) {
+                iterator.remove();
+            } else if (!isHolding(player)) {
+                iterator.remove();
+            } else {
+                Snowball s = player.launchProjectile(Snowball.class);
+                s.getLocation().add(0, 1, 0);
+                s.setVelocity(player.getLocation().getDirection().add(new Vector(UtilMath.randDouble(-0.3, 0.3), UtilMath.randDouble(-0.2, 0.4), UtilMath.randDouble(-0.3, 0.3))));
+                player.getWorld().playSound(player.getLocation(), Sound.BLOCK_SNOW_STEP, 1f, 0.4f);
+                snow.put(s, player);
             }
         }
     }
@@ -137,6 +158,8 @@ public class Blizzard extends ChannelSkill implements InteractSkill, EnergySkill
     }
 
     public void loadSkillConfig() {
-        slowDuration = getConfig("slowDuration", 2.0, Double.class);
+        baseSlowDuration = getConfig("baseSlowDuration", 2.0, Double.class);
+        slowDurationIncreasePerLevel = getConfig("slowDurationIncreasePerLevel", 0.0, Double.class);
+        slowStrength = getConfig("slowStrength", 2, Integer.class);
     }
 }

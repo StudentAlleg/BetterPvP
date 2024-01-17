@@ -23,6 +23,7 @@ import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.bukkit.event.block.Action;
+import org.bukkit.event.block.BlockBreakEvent;
 import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.inventory.EquipmentSlot;
@@ -42,6 +43,7 @@ import java.util.WeakHashMap;
 public class SmokeBomb extends Skill implements ToggleSkill, CooldownSkill, Listener {
 
     private double baseDuration;
+    private double durationIncreasePerLevel;
 
     private double blindDuration;
 
@@ -97,10 +99,16 @@ public class SmokeBomb extends Skill implements ToggleSkill, CooldownSkill, List
         }
 
     }
+
     @Override
     public String getDefaultClassString() {
         return "assassin";
     }
+
+    public void cancel(Player player) {
+        reappear(player);
+    }
+
     private void reappear(Player player) {
         championsManager.getEffects().removeEffect(player, EffectType.INVISIBILITY);
         UtilServer.callEvent(new EffectExpireEvent(player, new Effect(player.getUniqueId().toString(), EffectType.INVISIBILITY, 1, 0))); // Do this incase
@@ -121,6 +129,15 @@ public class SmokeBomb extends Skill implements ToggleSkill, CooldownSkill, List
 
             }
 
+        }
+    }
+
+    @EventHandler
+    public void onBlockBreak(BlockBreakEvent event){
+        Player breaker = event.getPlayer();
+        if(smoked.containsKey(breaker)){
+            reappear(breaker);
+            smoked.remove(breaker);
         }
     }
 
@@ -149,8 +166,8 @@ public class SmokeBomb extends Skill implements ToggleSkill, CooldownSkill, List
                 "Drop your Sword / Axe to activate",
                 "",
                 "Instantly <effect>Vanish</effect> before your foes",
-                "for a maximum of <val>" + (baseDuration + level) + "</val> seconds,",
-                "inflicting <effect>Blindness II</effect> to enemies",
+                "for a maximum of <val>" + getDuration(level) + "</val> seconds,",
+                "inflicting <effect>Blindness</effect> to enemies",
                 "within <stat>" + blindRadius + "</stat> blocks for <stat>" + blindDuration + "</stat> seconds",
                 "",
                 "Hitting an enemy or using abilities",
@@ -168,14 +185,18 @@ public class SmokeBomb extends Skill implements ToggleSkill, CooldownSkill, List
     @Override
     public double getCooldown(int level) {
 
-        return cooldown - ((level - 1) * 2.5);
+        return cooldown - ((level - 1) * cooldownDecreasePerLevel);
+    }
+
+    public double getDuration(int level) {
+        return baseDuration + (level * durationIncreasePerLevel);
     }
 
     @Override
     public void toggle(Player player, int level) {
         player.playSound(player.getLocation(), Sound.BLOCK_CONDUIT_AMBIENT, 2.0f, 1.f);
 
-        championsManager.getEffects().addEffect(player, EffectType.INVISIBILITY, (long) ((baseDuration + level) * 1000L));
+        championsManager.getEffects().addEffect(player, EffectType.INVISIBILITY, (long) (getDuration(level) * 1000L));
         smoked.put(player, (int) (baseDuration + level));
 
 
@@ -188,7 +209,7 @@ public class SmokeBomb extends Skill implements ToggleSkill, CooldownSkill, List
         Particle.EXPLOSION_HUGE.builder().location(player.getLocation()).receivers(30).spawn();
 
         for (Player target : UtilPlayer.getNearbyEnemies(player, player.getLocation(), blindRadius)) {
-            target.addPotionEffect(new PotionEffect(PotionEffectType.BLINDNESS, (int) (blindDuration * 20), 1));
+            target.addPotionEffect(new PotionEffect(PotionEffectType.BLINDNESS, (int) (blindDuration * 20), 0));
         }
 
         UtilServer.callEvent(new EffectClearEvent(player));
@@ -197,6 +218,7 @@ public class SmokeBomb extends Skill implements ToggleSkill, CooldownSkill, List
 
     public void loadSkillConfig() {
         baseDuration = getConfig("baseDuration", 3.0, Double.class);
+        durationIncreasePerLevel = getConfig("durationIncreasePerLevel", 1.0, Double.class);
         blindDuration = getConfig("blindDuration", 1.75, Double.class);
         blindRadius = getConfig("blindRadius", 2.5, Double.class);
     }

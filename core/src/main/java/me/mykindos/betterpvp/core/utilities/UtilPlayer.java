@@ -15,7 +15,6 @@ import me.mykindos.betterpvp.core.utilities.events.GetPlayerRelationshipEvent;
 import org.bukkit.Bukkit;
 import org.bukkit.GameMode;
 import org.bukkit.Location;
-import org.bukkit.Material;
 import org.bukkit.WorldBorder;
 import org.bukkit.attribute.Attribute;
 import org.bukkit.entity.Entity;
@@ -23,7 +22,6 @@ import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 
 @Slf4j
@@ -67,6 +65,7 @@ public class UtilPlayer {
         player.getWorld().getPlayers().stream()
                 .filter(worldPlayer -> {
                     if (worldPlayer.equals(player)) return false;
+                    if (!worldPlayer.getWorld().getName().equalsIgnoreCase(location.getWorld().getName())) return false;
                     return !(worldPlayer.getLocation().distance(location) > radius);
                 })
                 .forEach(ent -> players.add(new KeyValue<>(ent, entityProperty)));
@@ -77,9 +76,13 @@ public class UtilPlayer {
         return fetchNearbyEntityEvent.getEntities();
     }
 
-    public static boolean isPlayerFriendly (Player player, Player target) {
+    public static boolean isPlayerFriendly(Player player, Player target) {
+        return getRelation(player, target) == EntityProperty.FRIENDLY;
+    }
+
+    public static EntityProperty getRelation(Player player, Player target) {
         GetPlayerRelationshipEvent getPlayerRelationshipEvent = UtilServer.callEvent(new GetPlayerRelationshipEvent(player, target));
-        return getPlayerRelationshipEvent.getEntityProperty() == EntityProperty.FRIENDLY;
+        return getPlayerRelationshipEvent.getEntityProperty();
     }
 
     public static int getPing(Player player) {
@@ -91,10 +94,6 @@ public class UtilPlayer {
             return player.getGameMode() == GameMode.CREATIVE || player.getGameMode() == GameMode.SPECTATOR;
         }
         return false;
-    }
-
-    public static boolean isHoldingItem(Player player, Material[] items) {
-        return Arrays.stream(items).anyMatch(item -> item == player.getInventory().getItemInMainHand().getType());
     }
 
     /**
@@ -118,7 +117,7 @@ public class UtilPlayer {
     }
 
     public static double getHealthPercentage(LivingEntity e) {
-        return e.getHealth() / e.getAttribute(Attribute.GENERIC_MAX_HEALTH).getValue() * 100;
+        return e.getHealth() / e.getAttribute(Attribute.GENERIC_MAX_HEALTH).getValue();
     }
 
     public static double getMaxHealth(LivingEntity e) {
@@ -141,8 +140,8 @@ public class UtilPlayer {
 
         final List<WrappedDataValue> wrappedDataValueList = new ArrayList<>();
 
-        for(final WrappedWatchableObject entry : watcher.getWatchableObjects()) {
-            if(entry == null) continue;
+        for (final WrappedWatchableObject entry : watcher.getWatchableObjects()) {
+            if (entry == null) continue;
 
             final WrappedDataWatcher.WrappedDataWatcherObject watcherObject = entry.getWatcherObject();
             wrappedDataValueList.add(

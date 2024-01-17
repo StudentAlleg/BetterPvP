@@ -6,7 +6,6 @@ import org.bukkit.Bukkit;
 import org.jetbrains.annotations.Contract;
 import org.jetbrains.annotations.Nullable;
 
-import java.text.DecimalFormat;
 import java.util.Arrays;
 import java.util.Map;
 import java.util.UUID;
@@ -15,7 +14,6 @@ import java.util.stream.Collectors;
 
 public class UtilFormat {
 
-    private static final DecimalFormat FORMATTER = new DecimalFormat("#,###");
     public static final char COLOR_CHAR = '\u00A7';
     private static final Pattern STRIP_COLOR_PATTERN = Pattern.compile("(?i)" + String.valueOf(COLOR_CHAR) + "[0-9A-FK-ORX]");
 
@@ -35,7 +33,11 @@ public class UtilFormat {
     }
 
     public static String formatNumber(int num) {
-        return FORMATTER.format(num);
+        return String.format("%,d", num);
+    }
+
+    public static String formatNumber(double num) {
+        return String.format("%,.2f", num);
     }
 
     public static String cleanString(String string) {
@@ -74,5 +76,24 @@ public class UtilFormat {
         }
 
         return STRIP_COLOR_PATTERN.matcher(input).replaceAll("");
+    }
+
+    public static String getRomanNumeral(int number) {
+        if (1 <= number && number <= 3) {
+            return "I".repeat(number);
+        }
+        if (number == 4) {
+            return "IV";
+        }
+        if (5 <= number && number <= 8) {
+            return "V" + "I".repeat(number - 5);
+        }
+        if (number == 9) {
+            return "IX";
+        }
+        if (number == 10) {
+            return "X";
+        }
+        return String.valueOf(number);
     }
 }

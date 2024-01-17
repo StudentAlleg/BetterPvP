@@ -31,7 +31,12 @@ public class Vengeance extends Skill implements PassiveSkill, Listener {
     private final WeakHashMap<Player, Integer> playerNumHitsMap = new WeakHashMap<>();
     private final WeakHashMap<Player, BukkitTask> playerTasks = new WeakHashMap<>();
 
-    private double damageIncrease;
+    private double baseDamage;
+    private double damageIncreasePerLevel;
+
+    private double baseMaxDamage;
+
+    private double maxDamageIncreasePerLevel;
 
     @Inject
     public Vengeance(Champions champions, ChampionsManager championsManager) {
@@ -47,13 +52,22 @@ public class Vengeance extends Skill implements PassiveSkill, Listener {
     public String[] getDescription(int level) {
         return new String[]{
                 "For every subsequent hit, your damage",
-                "will increase by <val>" + ((level + 1) * damageIncrease) + "</val>",
+                "will increase by <val>" + getDamage(level) + "</val>",
                 "",
                 "If you take damage, your damage will reset",
                 "",
-                "you can deal a maximum of <val>" + (level + 1) + "</val> extra damage"
+                "you can deal a maximum of <val>" + getMaxDamage(level) + "</val> extra damage"
         };
     }
+
+    public double getDamage(int level) {
+        return baseDamage + level * damageIncreasePerLevel;
+    }
+
+    public double getMaxDamage(int level) {
+        return baseMaxDamage + level * damageIncreasePerLevel;
+    }
+
     @Override
     public String getDefaultClassString() {
         return "knight";
@@ -90,7 +104,7 @@ public class Vengeance extends Skill implements PassiveSkill, Listener {
 
         int level = getLevel(player);
         if (level > 0) {
-            double damageIncrease = Math.min(4, (((numHits - 1) * ((level + 1) * 0.25))));
+            double damageIncrease = Math.min(getMaxDamage(level), (numHits - 1) * getDamage(level));
             if (damageIncrease > 0) {
                 event.setDamage(event.getDamage() + damageIncrease);
                 UtilMessage.simpleMessage(player, "Champions", "%s: <yellow>+%2.2f<gray> Bonus Damage", getName(), damageIncrease);
@@ -126,7 +140,10 @@ public class Vengeance extends Skill implements PassiveSkill, Listener {
 
     @Override
     public void loadSkillConfig() {
-        damageIncrease = getConfig("damageIncrease", 0.25, Double.class);
+        baseDamage = getConfig("baseDamage", 0.25, Double.class);
+        damageIncreasePerLevel = getConfig("damageIncreasePerLevel", 0.25, Double.class);
+        baseMaxDamage = getConfig("baseMaxDamage", 1.0, Double.class);
+        maxDamageIncreasePerLevel = getConfig("damageIncreasePerLevel", 1.0, Double.class);
     }
 
 }

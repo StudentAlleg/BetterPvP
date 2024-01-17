@@ -12,18 +12,22 @@ import me.mykindos.betterpvp.core.components.champions.Role;
 import me.mykindos.betterpvp.core.components.champions.SkillType;
 import me.mykindos.betterpvp.core.utilities.UtilEntity;
 import me.mykindos.betterpvp.core.utilities.UtilVelocity;
+import org.bukkit.Location;
 import org.bukkit.Sound;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.event.block.Action;
 import org.bukkit.util.Vector;
+import org.bukkit.Particle;
 
 import java.util.Set;
 
 @Singleton
 public class Cyclone extends Skill implements InteractSkill, CooldownSkill {
 
-    private int minimumDistance;
+    private double baseDistance;
+
+    private double distanceIncreasePerLevel;
 
     @Inject
     public Cyclone(Champions champions, ChampionsManager championsManager) {
@@ -42,11 +46,16 @@ public class Cyclone extends Skill implements InteractSkill, CooldownSkill {
                 "Right click with a Sword to activate",
                 "",
                 "Pulls all enemies within",
-                "<val>" + (minimumDistance + level) + "</val> blocks towards you",
+                "<val>" + getDistance(level) + "</val> blocks towards you",
                 "",
                 "Cooldown: <val>" + getCooldown(level)
         };
     }
+
+    public double getDistance(int level) {
+        return baseDistance + level * distanceIncreasePerLevel;
+    }
+
     @Override
     public String getDefaultClassString() {
         return "mage";
@@ -60,7 +69,7 @@ public class Cyclone extends Skill implements InteractSkill, CooldownSkill {
     @Override
     public double getCooldown(int level) {
 
-        return cooldown - ((level - 1));
+        return cooldown - ((level - 1) * cooldownDecreasePerLevel);
     }
 
 
@@ -70,7 +79,7 @@ public class Cyclone extends Skill implements InteractSkill, CooldownSkill {
         vector.setY(vector.getY() + 2);
 
 
-        for (LivingEntity target : UtilEntity.getNearbyEnemies(player, player.getLocation(), minimumDistance + level)) {
+        for (LivingEntity target : UtilEntity.getNearbyEnemies(player, player.getLocation(), getDistance(level))) {
             if (!target.getName().equalsIgnoreCase(player.getName())) {
                 if (player.hasLineOfSight(target)) {
 
@@ -82,7 +91,28 @@ public class Cyclone extends Skill implements InteractSkill, CooldownSkill {
             }
         }
         player.getWorld().playSound(player.getLocation(), Sound.ENTITY_ENDERMAN_TELEPORT, 1F, 0.6F);
+        createCyclone(player, level);
+    }
 
+    private void createCyclone(Player player, int level) {
+        Location center = player.getLocation();
+        double radius = getDistance(level);
+        int points = 100;
+        double height = center.getY() + 1.0;
+
+        for (int i = 0; i < points; i++) {
+            double angle = 2 * Math.PI * i / points;
+
+            for (int j = 0; j < 4; j++) {
+                double startAngle = j * Math.PI / 2;
+
+                double x = center.getX() + radius * Math.cos(angle + startAngle) * ((double) i / points);
+                double z = center.getZ() + radius * Math.sin(angle + startAngle) * ((double) i / points);
+
+                Location particleLocation = new Location(center.getWorld(), x, height, z);
+                center.getWorld().spawnParticle(Particle.FIREWORKS_SPARK, particleLocation, 1, 0, 0, 0, 0);
+            }
+        }
     }
 
     @Override
@@ -92,6 +122,7 @@ public class Cyclone extends Skill implements InteractSkill, CooldownSkill {
 
     @Override
     public void loadSkillConfig(){
-        minimumDistance = getConfig("minimumDistance", 7, Integer.class);
+        baseDistance = getConfig("baseDistance", 7.0, Double.class);
+        distanceIncreasePerLevel = getConfig("distanceIncreasePerLevel", 1.0, Double.class);
     }
 }

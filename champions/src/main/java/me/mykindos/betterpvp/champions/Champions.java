@@ -12,6 +12,7 @@ import me.mykindos.betterpvp.champions.commands.ChampionsCommandLoader;
 import me.mykindos.betterpvp.champions.injector.ChampionsInjectorModule;
 import me.mykindos.betterpvp.champions.listeners.ChampionsListenerLoader;
 import me.mykindos.betterpvp.champions.stats.impl.ChampionsFilterManager;
+import me.mykindos.betterpvp.champions.weapons.WeaponManager;
 import me.mykindos.betterpvp.core.Core;
 import me.mykindos.betterpvp.core.config.Config;
 import me.mykindos.betterpvp.core.config.ConfigInjectorModule;
@@ -20,6 +21,7 @@ import me.mykindos.betterpvp.core.framework.BPvPPlugin;
 import me.mykindos.betterpvp.core.framework.ModuleLoadedEvent;
 import me.mykindos.betterpvp.core.framework.updater.UpdateEventExecutor;
 import me.mykindos.betterpvp.core.items.ItemHandler;
+import me.mykindos.betterpvp.core.recipes.RecipeHandler;
 import org.bukkit.Bukkit;
 import org.reflections.Reflections;
 import org.reflections.scanners.Scanners;
@@ -79,7 +81,13 @@ public class Champions extends BPvPPlugin {
             championsFilterManager.reload();
 
             var itemHandler = injector.getInstance(ItemHandler.class);
-            itemHandler.loadItemData("Champions");
+            itemHandler.loadItemData("champions");
+
+            var weaponManager = injector.getInstance(WeaponManager.class);
+            weaponManager.load();
+
+            var recipeHandler = injector.getInstance(RecipeHandler.class);
+            recipeHandler.loadConfig(this.getConfig(), "champions");
 
             updateEventExecutor.loadPlugin(this);
         }

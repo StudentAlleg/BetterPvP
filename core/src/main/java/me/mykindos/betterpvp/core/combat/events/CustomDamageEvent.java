@@ -47,6 +47,7 @@ public class CustomDamageEvent extends CustomCancellableEvent {
         this.projectile = proj;
         this.cause = cause;
         this.damage = damage;
+        this.rawDamage = damage;
         this.knockback = knockback;
 
     }
@@ -80,6 +81,7 @@ public class CustomDamageEvent extends CustomCancellableEvent {
         this.projectile = proj;
         this.cause = cause;
         this.damage = damage;
+        this.rawDamage = damage;
         this.knockback = knockback;
         this.lightning = lightning;
 

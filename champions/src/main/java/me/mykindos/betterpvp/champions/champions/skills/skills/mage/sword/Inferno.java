@@ -6,10 +6,10 @@ import com.google.inject.Singleton;
 import me.mykindos.betterpvp.champions.Champions;
 import me.mykindos.betterpvp.champions.champions.ChampionsManager;
 import me.mykindos.betterpvp.champions.champions.skills.data.SkillActions;
-import me.mykindos.betterpvp.champions.champions.skills.data.SkillWeapons;
 import me.mykindos.betterpvp.champions.champions.skills.types.ChannelSkill;
 import me.mykindos.betterpvp.champions.champions.skills.types.EnergySkill;
 import me.mykindos.betterpvp.champions.champions.skills.types.InteractSkill;
+import me.mykindos.betterpvp.core.client.gamer.Gamer;
 import me.mykindos.betterpvp.core.combat.events.CustomDamageEvent;
 import me.mykindos.betterpvp.core.combat.throwables.events.ThrowableHitEntityEvent;
 import me.mykindos.betterpvp.core.components.champions.Role;
@@ -18,7 +18,6 @@ import me.mykindos.betterpvp.core.framework.updater.UpdateEvent;
 import me.mykindos.betterpvp.core.listener.BPvPListener;
 import me.mykindos.betterpvp.core.utilities.UtilDamage;
 import me.mykindos.betterpvp.core.utilities.UtilMath;
-import me.mykindos.betterpvp.core.utilities.UtilPlayer;
 import me.mykindos.betterpvp.core.utilities.UtilTime;
 import org.bukkit.Bukkit;
 import org.bukkit.Material;
@@ -33,6 +32,8 @@ import org.bukkit.event.entity.EntityDamageEvent.DamageCause;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.util.Vector;
 
+import java.util.Iterator;
+import java.util.UUID;
 import java.util.Set;
 import java.util.WeakHashMap;
 
@@ -42,7 +43,15 @@ public class Inferno extends ChannelSkill implements InteractSkill, EnergySkill 
 
     private final WeakHashMap<LivingEntity, Long> tempImmune = new WeakHashMap<>();
 
-    private int fireTicks;
+    private double baseFireDuration;
+
+    private double fireDurationIncreasePerLevel;
+
+    private double baseDamage;
+
+    private double damageIncreasePerLevel;
+
+    private double immuneTime;
 
     @Inject
     public Inferno(Champions champions, ChampionsManager championsManager) {
@@ -61,11 +70,20 @@ public class Inferno extends ChannelSkill implements InteractSkill, EnergySkill 
                 "Hold right click with a Sword to chennel",
                 "",
                 "You spray fire at high speed igniting",
-                "anything it hits for <stat>" + ((double)fireTicks/ (double)20) + "</stat> seconds",
+                "anything it hits for <stat>" + getFireDuration(level) + "</stat> seconds",
                 "",
                 "Energy / Second: <val>" + getEnergy(level)
         };
     }
+
+    public double getFireDuration(int level) {
+        return baseFireDuration + level * fireDurationIncreasePerLevel;
+    }
+
+    public double getDamage(int level) {
+        return baseDamage + level * damageIncreasePerLevel;
+    }
+
     @Override
     public String getDefaultClassString() {
         return "mage";
@@ -83,14 +101,14 @@ public class Inferno extends ChannelSkill implements InteractSkill, EnergySkill 
                 return;
             }
             if (e.getThrowable().getThrower() instanceof Player damager) {
-
+                int level = getLevel(damager);
                 if (e.getCollision().getFireTicks() <= 0) {
 
-                    e.getCollision().setFireTicks(fireTicks);
+                    e.getCollision().setFireTicks((int) (getFireDuration(level) * 20));
                 }
                 if (!e.getThrowable().getImmunes().contains(e.getCollision())) {
                     if (tempImmune.containsKey(e.getCollision())) return;
-                    CustomDamageEvent cde = new CustomDamageEvent(e.getCollision(), damager, null, DamageCause.FIRE, 1, false, "Inferno");
+                    CustomDamageEvent cde = new CustomDamageEvent(e.getCollision(), damager, null, DamageCause.FIRE, getDamage(level), false, "Inferno");
                     cde.setDamageDelay(0);
                     UtilDamage.doCustomDamage(cde);
                     e.getThrowable().getImmunes().add(e.getCollision());
@@ -103,33 +121,39 @@ public class Inferno extends ChannelSkill implements InteractSkill, EnergySkill 
 
     @UpdateEvent(delay = 125)
     public void updateImmunes() {
-        tempImmune.entrySet().removeIf(entry -> UtilTime.elapsed(entry.getValue(), 450));
+        tempImmune.entrySet().removeIf(entry -> UtilTime.elapsed(entry.getValue(), (long) (immuneTime * 1000L)));
     }
 
     @UpdateEvent
-    public void Update() {
-        for (Player cur : Bukkit.getOnlinePlayers()) {
-            if (!active.contains(cur.getUniqueId())) continue;
+    public void update() {
+        final Iterator<UUID> iterator = active.iterator();
+        while (iterator.hasNext()) {
+            Player cur = Bukkit.getPlayer(iterator.next());
+            if (cur == null) {
+                iterator.remove();
+                continue;
+            }
 
-            if (cur.isHandRaised()) {
-                int level = getLevel(cur);
-                if (level <= 0) {
-                    active.remove(cur.getUniqueId());
-                } else if (!UtilPlayer.isHoldingItem(cur, SkillWeapons.SWORDS)) {
-                    active.remove(cur.getUniqueId());
-                } else if (!championsManager.getEnergy().use(cur, getName(), getEnergy(level) / 2, true)) {
-                    active.remove(cur.getUniqueId());
-                } else {
-                    Item fire = cur.getWorld().dropItem(cur.getEyeLocation(), new ItemStack(Material.BLAZE_POWDER));
-                    championsManager.getThrowables().addThrowable(fire, cur, getName(), 3000L);
+            Gamer gamer = championsManager.getClientManager().search().online(cur).getGamer();
+            if (!gamer.isHoldingRightClick()) {
+                iterator.remove();
+                continue;
+            }
 
-
-                    fire.teleport(cur.getEyeLocation());
-                    fire.setVelocity(cur.getLocation().getDirection().add(new Vector(UtilMath.randDouble(-0.2, 0.2), UtilMath.randDouble(-0.2, 0.3), UtilMath.randDouble(-0.2, 0.2))));
-                    cur.getWorld().playSound(cur.getLocation(), Sound.ENTITY_GHAST_SHOOT, 0.1F, 1.0F);
-                }
+            int level = getLevel(cur);
+            if (level <= 0) {
+                iterator.remove();
+            } else if (!isHolding(cur)) {
+                iterator.remove();
+            } else if (!championsManager.getEnergy().use(cur, getName(), getEnergy(level) / 2, true)) {
+                iterator.remove();
             } else {
-                active.remove(cur.getUniqueId());
+                Item fire = cur.getWorld().dropItem(cur.getEyeLocation(), new ItemStack(Material.BLAZE_POWDER));
+                championsManager.getThrowables().addThrowable(fire, cur, getName(), 5000L);
+
+                fire.teleport(cur.getEyeLocation());
+                fire.setVelocity(cur.getLocation().getDirection().add(new Vector(UtilMath.randDouble(-0.2, 0.2), UtilMath.randDouble(-0.2, 0.3), UtilMath.randDouble(-0.2, 0.2))));
+                cur.getWorld().playSound(cur.getLocation(), Sound.ENTITY_GHAST_SHOOT, 0.1F, 1.0F);
             }
         }
 
@@ -138,7 +162,7 @@ public class Inferno extends ChannelSkill implements InteractSkill, EnergySkill 
     @Override
     public float getEnergy(int level) {
 
-        return energy - ((level - 1));
+        return (float) (energy - ((level - 1) * energyDecreasePerLevel));
     }
 
 
@@ -149,7 +173,12 @@ public class Inferno extends ChannelSkill implements InteractSkill, EnergySkill 
 
     @Override
     public void loadSkillConfig(){
-        fireTicks = getConfig("fireTicks", 50, Integer.class);
+        baseFireDuration = getConfig("baseFireDuration", 2.5, Double.class);
+        fireDurationIncreasePerLevel = getConfig("fireDurationIncreasePerLevel", 0.0, Double.class);
+        baseDamage = getConfig("baseDamage", 1.0, Double.class);
+        damageIncreasePerLevel = getConfig("damageIncreasePerLevel", 0.0, Double.class);
+
+        immuneTime = getConfig("immuneTime", 0.45, Double.class);
     }
 
     @Override

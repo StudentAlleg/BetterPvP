@@ -10,8 +10,6 @@ import me.mykindos.betterpvp.core.config.Config;
 import me.mykindos.betterpvp.core.listener.BPvPListener;
 import me.mykindos.betterpvp.core.utilities.UtilInventory;
 import me.mykindos.betterpvp.core.world.blocks.WorldBlockHandler;
-import net.kyori.adventure.text.Component;
-import net.kyori.adventure.text.format.NamedTextColor;
 import org.bukkit.Material;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.TNTPrimed;
@@ -27,16 +25,16 @@ import org.bukkit.event.block.Action;
 public class TNTCannon extends Weapon implements Listener, InteractWeapon, CooldownWeapon {
 
     @Inject
-    @Config(path = "weapons.tnt-cannon.cooldown", defaultValue = "25.0")
+    @Config(path = "weapons.tnt-cannon.cooldown", defaultValue = "25.0", configName = "weapons/standard")
     private double cooldown;
 
     @Inject
-    @Config(path = "weapons.tnt-cannon.velocity", defaultValue = "2.5")
+    @Config(path = "weapons.tnt-cannon.velocity", defaultValue = "2.5", configName = "weapons/standard")
     private double velocity;
 
     @Inject
     public TNTCannon(ChampionsManager championsManager, WorldBlockHandler blockHandler) {
-        super(Material.CARROT_ON_A_STICK, 1, Component.text("TNT Cannon", NamedTextColor.LIGHT_PURPLE));
+        super("tnt_cannon");
 
     }
 
@@ -58,8 +56,4 @@ public class TNTCannon extends Weapon implements Listener, InteractWeapon, Coold
         return cooldown;
     }
 
-    @Override
-    public Action[] getActions() {
-        return new Action[]{Action.RIGHT_CLICK_AIR};
-    }
 }

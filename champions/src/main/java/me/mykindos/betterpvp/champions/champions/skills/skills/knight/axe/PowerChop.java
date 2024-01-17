@@ -5,7 +5,6 @@ import com.google.inject.Singleton;
 import me.mykindos.betterpvp.champions.Champions;
 import me.mykindos.betterpvp.champions.champions.ChampionsManager;
 import me.mykindos.betterpvp.champions.champions.skills.data.SkillActions;
-import me.mykindos.betterpvp.champions.champions.skills.data.SkillWeapons;
 import me.mykindos.betterpvp.champions.champions.skills.types.CooldownSkill;
 import me.mykindos.betterpvp.champions.champions.skills.types.PrepareSkill;
 import me.mykindos.betterpvp.core.combat.events.CustomDamageEvent;
@@ -14,7 +13,6 @@ import me.mykindos.betterpvp.core.components.champions.SkillType;
 import me.mykindos.betterpvp.core.framework.updater.UpdateEvent;
 import me.mykindos.betterpvp.core.listener.BPvPListener;
 import me.mykindos.betterpvp.core.utilities.UtilMessage;
-import me.mykindos.betterpvp.core.utilities.UtilPlayer;
 import me.mykindos.betterpvp.core.utilities.UtilTime;
 import org.bukkit.Sound;
 import org.bukkit.entity.Player;
@@ -31,6 +29,12 @@ import java.util.WeakHashMap;
 public class PowerChop extends PrepareSkill implements CooldownSkill {
 
     private double timeToHit;
+
+    private double minBonusDamage;
+
+    private double baseBonusDamage;
+
+    private double bonusDamageIncreasePerLevel;
 
     private final WeakHashMap<Player, Long> charge = new WeakHashMap<>();
 
@@ -53,7 +57,7 @@ public class PowerChop extends PrepareSkill implements CooldownSkill {
                 "",
 
                 "Your next axe attack will",
-                "deal <val>" + (Math.max(1, (level + 2))) + "</val> bonus damage.",
+                "deal <val>" + getBonusDamage(level) + "</val> bonus damage.",
                 "",
                 "The attack must be made within",
                 "<stat>" + timeToHit + "</stat> seconds of being used",
@@ -61,6 +65,11 @@ public class PowerChop extends PrepareSkill implements CooldownSkill {
                 "Cooldown: <val>" + getCooldown(level)
         };
     }
+
+    public double getBonusDamage(int level) {
+        return (Math.max(minBonusDamage, baseBonusDamage + level * bonusDamageIncreasePerLevel));
+    }
+
     @Override
     public String getDefaultClassString() {
         return "knight";
@@ -77,12 +86,13 @@ public class PowerChop extends PrepareSkill implements CooldownSkill {
         if (event.getCause() != DamageCause.ENTITY_ATTACK) return;
         if (!(event.getDamager() instanceof Player player)) return;
         if (!charge.containsKey(player)) return;
-        if (!UtilPlayer.isHoldingItem(player, SkillWeapons.AXES)) return;
+        if (!isHolding(player)) return;
 
         int level = getLevel(player);
         if (level > 0) {
-            event.setDamage(event.getDamage() + ((Math.max(0.75, (level + 2)) * 0.75)));
+            event.setDamage(event.getDamage() + getBonusDamage(level));
             player.getWorld().playSound(player.getLocation(), Sound.ENTITY_IRON_GOLEM_HURT, 1.0F, 1.0F);
+            UtilMessage.simpleMessage(player, "Champions", "You hit <alt2>%s</alt2> with <alt>%s</alt>.", event.getDamagee().getName(), getName());
             event.addReason(getName());
             charge.remove(player);
         }
@@ -93,7 +103,7 @@ public class PowerChop extends PrepareSkill implements CooldownSkill {
         charge.entrySet().removeIf(entry -> {
             if (UtilTime.elapsed(entry.getValue(), (long) timeToHit * 1000)) {
                 Player player = entry.getKey();
-                UtilMessage.simpleMessage(player, "Champions", "You failed to use <green>%s<gray>.", getName());
+                UtilMessage.simpleMessage(player, "Champions", "You failed to use <alt>%s</alt>.", getName());
                 player.getWorld().playSound(player.getLocation(), Sound.UI_BUTTON_CLICK, 2.0f, 1.0f);
                 return true;
             }
@@ -105,7 +115,7 @@ public class PowerChop extends PrepareSkill implements CooldownSkill {
 
     @Override
     public double getCooldown(int level) {
-        return cooldown - ((level - 1) * 1.5);
+        return cooldown - ((level - 1) * cooldownDecreasePerLevel);
     }
 
     @Override
@@ -117,6 +127,9 @@ public class PowerChop extends PrepareSkill implements CooldownSkill {
     @Override
     public void loadSkillConfig() {
         timeToHit = getConfig("timeToHit", 1.0, Double.class);
+        baseBonusDamage = getConfig("baseBonusDamage", 2.0, Double.class);
+        bonusDamageIncreasePerLevel = getConfig("bonusDamageIncreasePerLevel", 0.75, Double.class);
+        minBonusDamage = getConfig("minBonusDamage", 0.75, Double.class);
     }
 
     @Override
