@@ -7,7 +7,6 @@ import me.mykindos.betterpvp.champions.Champions;
 import me.mykindos.betterpvp.champions.champions.ChampionsManager;
 import me.mykindos.betterpvp.champions.champions.skills.Skill;
 import me.mykindos.betterpvp.champions.champions.skills.types.PassiveSkill;
-import me.mykindos.betterpvp.core.components.champions.Role;
 import me.mykindos.betterpvp.core.components.champions.SkillType;
 import me.mykindos.betterpvp.core.framework.updater.UpdateEvent;
 import me.mykindos.betterpvp.core.listener.BPvPListener;
@@ -23,7 +22,6 @@ import org.bukkit.potion.PotionEffectType;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Set;
 import java.util.UUID;
 
 @Singleton
@@ -54,7 +52,7 @@ public class SoulHarvest extends Skill implements PassiveSkill {
     public String[] getDescription(int level) {
         return new String[]{
                 "When enemies die, they will drop a soul",
-                "which is only visible to " + getClassType().getName(),
+                "which is only visible to players running this skill",
                 "",
                 "Collected souls give bursts of",
                 "<effect>Speed " + UtilFormat.getRomanNumeral(speedStrength + 1) + "</effect> and <effect>Regeneration " + UtilFormat.getRomanNumeral(regenerationStrength + 1) + "</effect>",

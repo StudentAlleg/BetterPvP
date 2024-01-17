@@ -9,7 +9,6 @@ import me.mykindos.betterpvp.champions.champions.skills.types.CooldownSkill;
 import me.mykindos.betterpvp.champions.champions.skills.types.ToggleSkill;
 import me.mykindos.betterpvp.core.client.gamer.Gamer;
 import me.mykindos.betterpvp.core.combat.events.CustomDamageEvent;
-import me.mykindos.betterpvp.core.components.champions.Role;
 import me.mykindos.betterpvp.core.components.champions.SkillType;
 import me.mykindos.betterpvp.core.framework.updater.UpdateEvent;
 import me.mykindos.betterpvp.core.listener.BPvPListener;
@@ -26,7 +25,6 @@ import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.entity.EntityDamageEvent.DamageCause;
-
 
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
@@ -201,7 +199,7 @@ public class LevelField extends Skill implements ToggleSkill, CooldownSkill, Lis
                 Player player = Bukkit.getPlayer(uuid);
                 if (player != null && player.isOnline()) {
                     player.playSound(player.getLocation(), Sound.UI_BUTTON_CLICK, 2.0f, 1.0f);
-                    UtilMessage.message(player, getClassType().getName(), "Level Field values reset.");
+                    UtilMessage.message(player, "Champions", "Level Field values reset.");
                 }
             }
         });

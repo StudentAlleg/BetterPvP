@@ -7,7 +7,6 @@ import me.mykindos.betterpvp.champions.champions.ChampionsManager;
 import me.mykindos.betterpvp.champions.champions.skills.Skill;
 import me.mykindos.betterpvp.champions.champions.skills.types.CooldownSkill;
 import me.mykindos.betterpvp.champions.champions.skills.types.ToggleSkill;
-import me.mykindos.betterpvp.core.components.champions.Role;
 import me.mykindos.betterpvp.core.components.champions.SkillType;
 import me.mykindos.betterpvp.core.listener.BPvPListener;
 import me.mykindos.betterpvp.core.utilities.UtilBlock;
@@ -89,7 +88,7 @@ public class BloodCompass extends Skill implements ToggleSkill, CooldownSkill {
             }
             player.getWorld().playSound(player.getLocation(), Sound.ENTITY_ENDER_DRAGON_GROWL, 2.0f, 1.0f);
         } else {
-            UtilMessage.message(player, getClassType().getName(), "Blood Compass failed.");
+            UtilMessage.message(player, "Champions", "Blood Compass failed.");
         }
 
         playerMarkersMap.put(player, markers);
@@ -276,7 +275,7 @@ public class BloodCompass extends Skill implements ToggleSkill, CooldownSkill {
                     player.playSound(player.getLocation(), Sound.ENTITY_ARROW_HIT_PLAYER, 1.0f, 1.0f);
                     target.damage(getFinalDamage(level));
 
-                    UtilMessage.message(player, getClassType().getName(), "You hit " + target.getName() + " with Blood Compass.");
+                    UtilMessage.message(player, "Champions", "You hit " + target.getName() + " with Blood Compass.");
 
                     new BukkitRunnable() {
                         @Override
@@ -315,8 +314,8 @@ public class BloodCompass extends Skill implements ToggleSkill, CooldownSkill {
     }
 
     @Override
-    public Role getClassType() {
-        return Role.WARLOCK;
+    public String getDefaultClassString() {
+        return "warlock";
     }
 
     @Override

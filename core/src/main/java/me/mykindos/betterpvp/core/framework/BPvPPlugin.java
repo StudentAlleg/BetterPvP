@@ -66,14 +66,6 @@ public abstract class BPvPPlugin extends JavaPlugin {
         return configs.get(configName);
     }
 
-    public void saveConfig() {
-        try {
-            config.save(configFile);
-        } catch (IOException e) {
-            throw new RuntimeException(e);
-        }
-    }
-
     @Override
     public void reloadConfig() {
         configs.forEach((key, value) -> {

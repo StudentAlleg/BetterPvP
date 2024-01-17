@@ -15,16 +15,11 @@ import me.mykindos.betterpvp.core.client.gamer.Gamer;
 import me.mykindos.betterpvp.core.combat.events.CustomDamageEvent;
 import me.mykindos.betterpvp.core.combat.throwables.ThrowableItem;
 import me.mykindos.betterpvp.core.combat.throwables.events.ThrowableHitEntityEvent;
-import me.mykindos.betterpvp.core.components.champions.Role;
 import me.mykindos.betterpvp.core.components.champions.SkillType;
 import me.mykindos.betterpvp.core.components.champions.events.PlayerCanUseSkillEvent;
 import me.mykindos.betterpvp.core.framework.updater.UpdateEvent;
 import me.mykindos.betterpvp.core.listener.BPvPListener;
-import me.mykindos.betterpvp.core.utilities.UtilDamage;
-import me.mykindos.betterpvp.core.utilities.UtilFormat;
-import me.mykindos.betterpvp.core.utilities.UtilMessage;
-import me.mykindos.betterpvp.core.utilities.UtilServer;
-import me.mykindos.betterpvp.core.utilities.UtilVelocity;
+import me.mykindos.betterpvp.core.utilities.*;
 import me.mykindos.betterpvp.core.utilities.model.ProgressBar;
 import me.mykindos.betterpvp.core.utilities.model.SoundEffect;
 import me.mykindos.betterpvp.core.utilities.model.display.PermanentComponent;
@@ -251,8 +246,8 @@ public class FleshHook extends ChannelSkill implements InteractSkill, CooldownSk
         UtilDamage.doCustomDamage(ev);
 
         // Cues
-        UtilMessage.message(target, getClassType().getName(), "<alt2>" + player.getName() + "</alt2> pulled you with <alt>" + getName() + "</alt>.");
-        UtilMessage.message(player, getClassType().getName(), "You hit <alt2>" + target.getName() + "</alt2> with <alt>" + getName() + "</alt>.");
+        UtilMessage.message(target, "Champions", "<alt2>" + player.getName() + "</alt2> pulled you with <alt>" + getName() + "</alt>.");
+        UtilMessage.message(player, "Champions", "You hit <alt2>" + target.getName() + "</alt2> with <alt>" + getName() + "</alt>.");
         new SoundEffect(Sound.ENTITY_ARROW_HIT_PLAYER, 2f, 2f).play(player);
 
         event.getThrowable().getItem().remove();
