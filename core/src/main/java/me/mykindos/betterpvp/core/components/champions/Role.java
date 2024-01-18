@@ -132,6 +132,7 @@ public class Role {
             }
 
             if (added) {
+                log.info(key + " loaded " + skill.getName());
                 skills.add(skill);
                 skill.addClass(this);
             }
@@ -252,6 +253,11 @@ public class Role {
                 return null;
             }
         }
+    }
+
+    @Override
+    public String toString() {
+        return key + ": " + skills.size();
     }
 
     public double getDamageMultiplier() {

@@ -52,6 +52,8 @@ public class RoleManager extends Manager<Role> {
     }
 
     public Set<Role> getRoles() {
+        Set<Role> roles = repository.getRoles();
+        log.info("loading roles " + roles.toString());
         return repository.getRoles();
     }
     /**
@@ -64,7 +66,7 @@ public class RoleManager extends Manager<Role> {
     }
 
     public void loadRoles() {
-        ExtendedYamlConfiguration config = champions.getConfig();
+        ExtendedYamlConfiguration config = champions.getConfig("roles/roles");
         String path = "class";
         ConfigurationSection customRoleSection = config.getConfigurationSection(path);
         if (customRoleSection == null) {
@@ -81,6 +83,10 @@ public class RoleManager extends Manager<Role> {
             //final ConfigurationSection section = customRoleSection.getConfigurationSection(key);
             if (key.equalsIgnoreCase("GLOBAL")) {
                 log.warn("Role name of 'GLOBAL' is not allowed");
+                continue;
+            }
+            if (key.equalsIgnoreCase("NONE")) {
+                log.warn("Role name of 'NONE' is not allowed");
                 continue;
             }
             final Role loaded = new Role(key);
