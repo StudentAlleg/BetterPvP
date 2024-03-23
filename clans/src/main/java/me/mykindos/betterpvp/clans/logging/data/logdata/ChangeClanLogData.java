@@ -1,10 +1,15 @@
 package me.mykindos.betterpvp.clans.logging.data.logdata;
 
+import lombok.CustomLog;
+import lombok.Getter;
+import me.mykindos.betterpvp.clans.clans.Clan;
 import me.mykindos.betterpvp.clans.logging.data.ClanData;
 import me.mykindos.betterpvp.clans.logging.data.ClanMemberData;
+import me.mykindos.betterpvp.core.client.Client;
+import org.bukkit.entity.Player;
 import org.jetbrains.annotations.Nullable;
 
-
+@CustomLog
 public class ChangeClanLogData {
     public final ClanData clanData;
     public final ClanMemberData clanMemberData;
@@ -28,10 +33,25 @@ public class ChangeClanLogData {
        this(clanData, clanMemberData, time, type, null);
     }
 
+    @Getter
     public enum ChangeClanLogType {
-        JOIN,
-        LEAVE,
-        KICK
+        JOIN(" joined "),
+        LEAVE(" left "),
+        KICK(" kicked ");
+
+        public final String uniqueText;
+
+        ChangeClanLogType(String uniqueText) {
+            this.uniqueText = uniqueText;
+        }
+    }
+
+    public static void generateLog(Player player, @Nullable Client kicker, Clan clan, ChangeClanLogType type) {
+        switch (type) {
+            case KICK -> {
+                log.
+            },
+        }
     }
 }
 

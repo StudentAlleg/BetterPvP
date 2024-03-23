@@ -1,6 +1,7 @@
 package me.mykindos.betterpvp.clans.clans.listeners;
 
 import com.google.inject.Inject;
+import lombok.CustomLog;
 import me.mykindos.betterpvp.clans.Clans;
 import me.mykindos.betterpvp.clans.clans.Clan;
 import me.mykindos.betterpvp.clans.clans.ClanManager;
@@ -58,6 +59,7 @@ import org.bukkit.event.EventPriority;
 import java.util.Optional;
 import java.util.UUID;
 
+@CustomLog
 @BPvPListener
 public class ClanEventListener extends ClanListener {
 
