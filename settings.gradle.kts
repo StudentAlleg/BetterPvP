@@ -64,8 +64,9 @@ dependencyResolutionManagement {
             plugin("kotlin", "org.jetbrains.kotlin.jvm").versionRef("kotlin")
 
             // Library - Tests
-            library("junit-jupiter", "org.junit.jupiter:junit-jupiter:5.9.0")
+            library("junit-jupiter", "org.junit.jupiter:junit-jupiter:5.11.0")
             library("reflections", "org.reflections:reflections:0.10.2")
+            library("mockbukkit", "com.github.seeseemelk:MockBukkit-v1.21:3.107.0")
 
             // Library - Paper
             library("paper-api", "io.papermc.paper", "paper-api").versionRef("paper")
@@ -122,7 +123,7 @@ dependencyResolutionManagement {
 
             // Bundled Libraries
             bundle("kotlin", listOf("kotlin-stdlib", "kotlin-reflect"))
-            bundle("test", listOf("junit-jupiter"))
+            bundle("test", listOf("junit-jupiter", "mockbukkit"))
             bundle("kyori-adventure", listOf("adventure-platform-bukkit", "adventure-text-minimessage"))
             bundle("paper", listOf("paper-api"))
             bundle("utils",
