@@ -98,11 +98,11 @@ public class UtilTime {
 
     public static String getTimeUnit(TimeUnit unit) {
         return switch (unit) {
-            case SECONDS -> "seconds";
-            case MINUTES -> "minutes";
-            case HOURS -> "hours";
-            case DAYS -> "days";
-            case YEARS -> "years";
+            case SECONDS -> "Seconds";
+            case MINUTES -> "Minutes";
+            case HOURS -> "Hours";
+            case DAYS -> "Days";
+            case YEARS -> "Years";
             default -> "";
         };
 
@@ -114,6 +114,9 @@ public class UtilTime {
     }
 
     public static String getTime2(double d, TimeUnit unit, int decPoint) {
+        if (TimeUnit.BEST.equals(unit)) {
+            return getTime(d, decPoint);
+        }
         return UtilTime.convert(d, unit, decPoint) + " "
                 + UtilTime.getTimeUnit(unit);
     }
