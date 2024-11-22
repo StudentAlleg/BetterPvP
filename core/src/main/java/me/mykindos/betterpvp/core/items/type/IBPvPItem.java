@@ -50,4 +50,6 @@ public interface IBPvPItem {
     ShapelessRecipe getShapelessRecipe(int count, String key_suffix, ItemStack... ingredients);
 
     ItemMeta applyLore(ItemStack itemStack, ItemMeta itemMeta, boolean isDisplayLore);
+
+    boolean hasRecipes();
 }

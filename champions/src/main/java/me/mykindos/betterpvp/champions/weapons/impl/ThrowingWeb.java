@@ -60,6 +60,7 @@ public class ThrowingWeb extends Weapon implements Listener, InteractWeapon, Coo
         ShapedRecipe shapedRecipe = getShapedRecipe("*S*", "SSS", "*S*");
         shapedRecipe.setIngredient('S', Material.STRING);
         Bukkit.addRecipe(shapedRecipe);
+        getRecipeKeys().add(shapedRecipe.getKey());
     }
 
     @Override

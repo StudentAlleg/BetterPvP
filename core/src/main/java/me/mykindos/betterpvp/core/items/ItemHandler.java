@@ -219,10 +219,18 @@ public class ItemHandler {
                 .filter(bPvPItem -> !(bPvPItem.getCustomModelData() == 0 &&
                             UtilItem.isTool(bPvPItem.getItemStack())
                             && bPvPItem.getMaxDurability() <= 0))
+
+                //sort items by identifier (sort everything else by identifier)
                 .sorted(Comparator.comparing(BPvPItem::getIdentifier))
+                //put items with recipes behind runes and legends
+                .sorted(Comparator.comparing(
+                        BPvPItem::hasRecipes
+                ))
+                //sort runes to behind legends
                 .sorted(Comparator.comparing(
                         bPvPItem -> !bPvPItem.getSimpleName().startsWith("Rune")
                 ))
+                //sort legends to the front
                 .sorted(Comparator.comparing(LegendaryWeapon.class::isInstance).reversed())
                 .map(bPvPItem -> {
                             ItemStack itemStack = bPvPItem.getItemStack(1, true);

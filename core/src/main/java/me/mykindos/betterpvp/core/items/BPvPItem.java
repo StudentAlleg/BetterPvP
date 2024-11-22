@@ -332,4 +332,12 @@ public class BPvPItem implements IBPvPItem {
             new BPvPRecipeMenu(this, null).show(click.getPlayer());
         }
     }
+
+    /**
+     *
+     * @return if this item has custom recipes or not
+     */
+    public boolean hasRecipes() {
+        return !this.getRecipeKeys().isEmpty();
+    }
 }
