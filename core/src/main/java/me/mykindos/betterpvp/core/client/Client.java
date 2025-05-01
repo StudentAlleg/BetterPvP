@@ -1,9 +1,21 @@
 package me.mykindos.betterpvp.core.client;
 
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import lombok.EqualsAndHashCode;
 import lombok.Getter;
 import lombok.Setter;
 import me.mykindos.betterpvp.core.Core;
+import me.mykindos.betterpvp.core.client.achievements.impl.IAchievement;
+import me.mykindos.betterpvp.core.client.achievements.types.IAchievementType;
 import me.mykindos.betterpvp.core.client.events.ClientIgnoreStatusEvent;
 import me.mykindos.betterpvp.core.client.gamer.Gamer;
 import me.mykindos.betterpvp.core.client.properties.ClientProperty;
@@ -22,15 +34,6 @@ import org.bukkit.entity.Player;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.jetbrains.annotations.NotNull;
 
-import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Optional;
-import java.util.Set;
-import java.util.UUID;
-import java.util.concurrent.CompletableFuture;
-
 @Setter
 @Getter
 @EqualsAndHashCode(callSuper = false, of = {"uuid"})
@@ -43,6 +46,7 @@ public class Client extends PropertyContainer implements IMapListener, CacheObje
     private long connectionTime;
     private final List<Punishment> punishments;
     private final Set<UUID> ignores;
+    private final Map<IAchievementType, IAchievement> achievements;
 
     boolean administrating;
     boolean online;
@@ -56,6 +60,7 @@ public class Client extends PropertyContainer implements IMapListener, CacheObje
         this.connectionTime = System.currentTimeMillis();
         this.punishments = new ArrayList<>();
         this.ignores = new HashSet<>();
+        this.achievements = new HashMap<>();
         properties.registerListener(this);
     }
 
@@ -119,6 +124,15 @@ public class Client extends PropertyContainer implements IMapListener, CacheObje
         });
     }
 
+    /**
+     * Gets the achievement of the specified type
+     * @param type the {@link IAchievementType type} of the {@link IAchievement}
+     * @return the {@link IAchievement}
+     */
+    public IAchievement getAchievement(IAchievementType type) {
+        return achievements.get(type);
+    }
+
 
     @Override
     public String getKey() {
@@ -142,5 +156,7 @@ public class Client extends PropertyContainer implements IMapListener, CacheObje
         this.punishments.addAll(other.punishments);
         this.ignores.clear();
         this.ignores.addAll(other.getIgnores());
+        this.achievements.clear();
+        this.achievements.putAll(other.getAchievements());
     }
 }
