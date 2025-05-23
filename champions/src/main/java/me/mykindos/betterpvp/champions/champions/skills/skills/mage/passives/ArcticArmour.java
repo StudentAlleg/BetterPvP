@@ -2,6 +2,11 @@ package me.mykindos.betterpvp.champions.champions.skills.skills.mage.passives;
 
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Optional;
+import lombok.CustomLog;
 import me.mykindos.betterpvp.champions.Champions;
 import me.mykindos.betterpvp.champions.champions.ChampionsManager;
 import me.mykindos.betterpvp.champions.champions.skills.types.ActiveToggleSkill;
@@ -20,11 +25,13 @@ import me.mykindos.betterpvp.core.listener.BPvPListener;
 import me.mykindos.betterpvp.core.utilities.UtilBlock;
 import me.mykindos.betterpvp.core.utilities.UtilFormat;
 import me.mykindos.betterpvp.core.utilities.UtilLocation;
+import me.mykindos.betterpvp.core.utilities.UtilMath;
 import me.mykindos.betterpvp.core.utilities.UtilMessage;
 import me.mykindos.betterpvp.core.utilities.UtilPlayer;
 import me.mykindos.betterpvp.core.utilities.events.EntityProperty;
 import me.mykindos.betterpvp.core.world.blocks.WorldBlockHandler;
 import me.mykindos.betterpvp.core.world.model.BPvPWorld;
+import org.bukkit.Color;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.Particle;
@@ -32,15 +39,14 @@ import org.bukkit.Sound;
 import org.bukkit.block.Block;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
+import org.bukkit.event.EventPriority;
+import org.bukkit.event.block.BlockPistonExtendEvent;
+import org.bukkit.event.block.BlockPistonRetractEvent;
 import org.bukkit.event.entity.EntityDamageEvent;
-
-import java.util.Collection;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Optional;
 
 @Singleton
 @BPvPListener
+@CustomLog
 public class ArcticArmour extends ActiveToggleSkill implements EnergySkill, DefensiveSkill, TeamSkill, DebuffSkill, BuffSkill, WorldSkill {
 
     private final WorldBlockHandler blockHandler;
@@ -160,6 +166,18 @@ public class ArcticArmour extends ActiveToggleSkill implements EnergySkill, Defe
         playEffects(player, distance, angle + 180f);
 
         convertWaterToIce(player, getDuration(level), distance);
+        debugEffects(player, distance);
+    }
+
+    private void debugEffects(final Player player, int radius) {
+        UtilMath.sphere(player.getLocation(), radius, true).forEach(location -> {
+            Particle.DUST.builder()
+                    .color(Color.RED)
+                    .count(1)
+                    .location(location)
+                    .receivers(60)
+                    .spawn();
+        });
     }
 
     private void playEffects(final Player player, float radius, float angle) {
@@ -182,32 +200,80 @@ public class ArcticArmour extends ActiveToggleSkill implements EnergySkill, Defe
 
         for (Block block : blocks) {
             if (block.getLocation().getY() > player.getLocation().getY()) {
+                if (isWatchedBlock(block)) {
+                    log.info("Watched Block Above").submit();
+                }
                 continue;
             }
 
             final boolean water = UtilBlock.isWater(block);
             if (!water && block.getType() != Material.ICE) {
+                if (isWatchedBlock(block)) {
+                    log.info("Watched Block Not Water").submit();
+                }
                 continue;
             }
 
             final Block top = block.getRelative(0, 1, 0);
             if (UtilBlock.isWater(top)) {
+                if (isWatchedBlock(block)) {
+                    log.info("Watched Block Has Water Above").submit();
+                }
                 continue;
             }
 
-            if(blockHandler.isRestoreBlock(block, "Ice Prison") && !block.getWorld().getName().equalsIgnoreCase(BPvPWorld.MAIN_WORLD_NAME)) {
+            if (blockHandler.isRestoreBlock(block, "Ice Prison") && !block.getWorld().getName().equalsIgnoreCase(BPvPWorld.MAIN_WORLD_NAME)) {
+                if (isWatchedBlock(block)) {
+                    log.info("Watched Block Ice Prison").submit();
+                }
                 continue;
             }
 
             final long expiryOffset = (long) (100 * (inRadius.get(block) * radius));
             final long delay = (long) Math.pow((1 - inRadius.get(block)) * radius, 2);
             blockHandler.scheduleRestoreBlock(player, block, Material.ICE, delay, ((long) duration * 1000) + expiryOffset, false);
-
+            if (isWatchedBlock(block)) {
+                log.info("Watched Block Scheduled").submit();
+            }
             final double chance = Math.random();
             if (chance < 0.025) {
                 Particle.SNOWFLAKE.builder().extra(0).location(block.getLocation()).receivers(60).spawn();
             }
         }
+    }
+
+    private boolean isWatchedBlock(Block block) {
+        return (block.getLocation().getBlockX() == 411 && block.getLocation().getBlockY() == 63 && block.getLocation().getBlockZ() == 244);
+    }
+
+    private boolean isWatchedPiston(Block block) {
+        return (block.getLocation().getBlockX() == 409 && block.getLocation().getBlockY() == 63 && block.getLocation().getBlockZ() == 244);
+    }
+
+
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = false)
+    public void onPistonRetract(BlockPistonRetractEvent event) {
+        if (!isWatchedPiston(event.getBlock())) return;
+        if (event.getBlocks().stream().anyMatch(this::isWatchedBlock)) {
+            log.info("BLOCK").submit();
+        }
+        log.info("Name: " + event.getEventName()).submit();
+        log.info("Cancelled: " + event.isCancelled()).submit();
+        log.info("Block: " + event.getBlock()).submit();
+        log.info("BLOCKS: " + event.getBlocks()).submit();
+        log.info("Direction: " + event.getDirection()).submit();
+    }
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = false)
+    public void onPistonExtend(BlockPistonExtendEvent event) {
+        if (!isWatchedPiston(event.getBlock())) return;
+        if (event.getBlocks().stream().anyMatch(this::isWatchedBlock)) {
+            log.info("BLOCK").submit();
+        }
+        log.info("Name: " + event.getEventName()).submit();
+        log.info("Cancelled: " + event.isCancelled()).submit();
+        log.info("Block: " + event.getBlock()).submit();
+        log.info("BLOCKS: " + event.getBlocks()).submit();
+        log.info("Direction: " + event.getDirection()).submit();
     }
 
     @Override
