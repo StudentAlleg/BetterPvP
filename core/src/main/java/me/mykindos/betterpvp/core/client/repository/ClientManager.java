@@ -6,24 +6,6 @@ import com.github.benmanes.caffeine.cache.RemovalCause;
 import com.github.benmanes.caffeine.cache.Scheduler;
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
-import lombok.CustomLog;
-import lombok.Getter;
-import me.mykindos.betterpvp.core.Core;
-import me.mykindos.betterpvp.core.client.Client;
-import me.mykindos.betterpvp.core.client.Rank;
-import me.mykindos.betterpvp.core.client.events.AsyncClientLoadEvent;
-import me.mykindos.betterpvp.core.client.events.AsyncClientPreLoadEvent;
-import me.mykindos.betterpvp.core.client.events.ClientUnloadEvent;
-import me.mykindos.betterpvp.core.client.gamer.Gamer;
-import me.mykindos.betterpvp.core.redis.Redis;
-import me.mykindos.betterpvp.core.utilities.UtilMessage;
-import me.mykindos.betterpvp.core.utilities.UtilServer;
-import me.mykindos.betterpvp.core.utilities.model.manager.PlayerManager;
-import net.kyori.adventure.text.Component;
-import org.bukkit.Bukkit;
-import org.bukkit.entity.Player;
-import org.jetbrains.annotations.Nullable;
-
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -33,6 +15,24 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
+import lombok.CustomLog;
+import lombok.Getter;
+import me.mykindos.betterpvp.core.Core;
+import me.mykindos.betterpvp.core.client.Client;
+import me.mykindos.betterpvp.core.client.Rank;
+import me.mykindos.betterpvp.core.client.events.AsyncClientLoadEvent;
+import me.mykindos.betterpvp.core.client.events.AsyncClientPreLoadEvent;
+import me.mykindos.betterpvp.core.client.events.ClientUnloadEvent;
+import me.mykindos.betterpvp.core.client.gamer.Gamer;
+import me.mykindos.betterpvp.core.client.stats.StatContainer;
+import me.mykindos.betterpvp.core.redis.Redis;
+import me.mykindos.betterpvp.core.utilities.UtilMessage;
+import me.mykindos.betterpvp.core.utilities.UtilServer;
+import me.mykindos.betterpvp.core.utilities.model.manager.PlayerManager;
+import net.kyori.adventure.text.Component;
+import org.bukkit.Bukkit;
+import org.bukkit.entity.Player;
+import org.jetbrains.annotations.Nullable;
 
 @Singleton
 @CustomLog
@@ -363,6 +363,17 @@ public class ClientManager extends PlayerManager<Client> {
         // Does not need to be async as it doesnt actually execute any SQL queries
         this.sqlLayer.saveGamerProperty(gamer, property, value);
 
+    }
+
+    /**
+     * Saves the stat to the database
+     * @param statContainer
+     * @param period
+     * @param statName
+     * @param stat
+     */
+    public void saveStatContainerProperty(StatContainer statContainer, String period, String statName, Double stat) {
+        this.sqlLayer.saveStatProperty(statContainer, period, statName, stat);
     }
 
     /**
