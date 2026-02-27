@@ -49,8 +49,6 @@ import java.util.WeakHashMap;
 @Singleton
 @BPvPListener
 public class WolfsPounce extends ChargeSkill implements InteractSkill, CooldownSkill, OffensiveSkill, MovementSkill, DamageSkill {
-
-    private final WeakHashMap<Player, ChargeData> charging = new WeakHashMap<>();
     private final WeakHashMap<Player, Pounce> pounces = new WeakHashMap<>();
     private final DisplayObject<Component> actionBarComponent = ChargeData.getActionBar(this,
             charging,
@@ -259,8 +257,6 @@ public class WolfsPounce extends ChargeSkill implements InteractSkill, CooldownS
 
     @Override
     public void loadSkillConfig() {
-        baseCharge = getConfig("baseCharge", 40.0, Double.class);
-        chargeIncreasePerLevel = getConfig("chargeIncreasePerLevel", 10.0, Double.class);
         baseDamage = getConfig("baseDamage", 2.0, Double.class);
         damageIncreasePerLevel = getConfig("damageIncreasePerLevel", 1.0, Double.class);
         baseSlowDuration = getConfig("baseSlowDuration", 3.0, Double.class);

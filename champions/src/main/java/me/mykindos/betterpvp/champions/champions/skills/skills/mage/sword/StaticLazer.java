@@ -42,13 +42,10 @@ import org.bukkit.util.BoundingBox;
 import org.bukkit.util.Vector;
 
 import java.util.List;
-import java.util.WeakHashMap;
 
 @Singleton
 @BPvPListener
 public class StaticLazer extends ChargeSkill implements InteractSkill, EnergyChannelSkill, CooldownSkill, OffensiveSkill, AreaOfEffectSkill {
-
-    private final WeakHashMap<Player, ChargeData> charging = new WeakHashMap<>();
     private final DisplayObject<Component> actionBarComponent = ChargeData.getActionBar(this, charging);
     private double baseDamage;
     private double damageIncreasePerLevel;

@@ -755,8 +755,8 @@ skills:
       maxlevel: 5
       cooldown: 8.0
       cooldownDecreasePerLevel: 1.0
-      baseCharge: 40.0
-      chargeIncreasePerLevel: 10.0
+      baseCharge: 0.40
+      chargeIncreasePerLevel: 0.10
       baseDamage: 2.0
       damageIncreasePerLevel: 1.0
       baseSlowDuration: 3.0

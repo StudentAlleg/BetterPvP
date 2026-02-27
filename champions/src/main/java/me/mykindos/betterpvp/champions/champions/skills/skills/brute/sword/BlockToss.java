@@ -50,10 +50,10 @@ import java.util.WeakHashMap;
 @BPvPListener
 public class BlockToss extends ChargeSkill implements Listener, InteractSkill, CooldownSkill, DamageSkill {
 
-    private final WeakHashMap<Player, BoulderChargeData> charging = new WeakHashMap<>();
+    private final WeakHashMap<Player, BoulderChargeData> chargingMap = new WeakHashMap<>();
     private final WeakHashMap<Player, List<BlockTossObject>> boulders = new WeakHashMap<>();
     private final DisplayObject<Component> actionBarComponent = ChargeData.getActionBar(this,
-            charging,
+            chargingMap,
             gamer -> true);
 
     private double baseDamage;
@@ -139,7 +139,7 @@ public class BlockToss extends ChargeSkill implements Listener, InteractSkill, C
 
     @Override
     public boolean shouldDisplayActionBar(Gamer gamer) {
-        return !charging.containsKey(gamer.getPlayer()) && isHolding(gamer.getPlayer());
+        return !chargingMap.containsKey(gamer.getPlayer()) && isHolding(gamer.getPlayer());
     }
 
     @Override
@@ -163,7 +163,7 @@ public class BlockToss extends ChargeSkill implements Listener, InteractSkill, C
             clonedBlocks.add(Bukkit.createBlockData(Material.STONE));
         }
 
-        if (charging.containsKey(player)) {
+        if (chargingMap.containsKey(player)) {
             return;
         }
 
@@ -171,7 +171,7 @@ public class BlockToss extends ChargeSkill implements Listener, InteractSkill, C
         boulder.spawn(size);
 
         final BoulderChargeData chargeData = new BoulderChargeData((float) getChargePerSecond(level), boulder);
-        charging.put(player, chargeData);
+        chargingMap.put(player, chargeData);
         boulders.computeIfAbsent(player, key -> new ArrayList<>()).add(boulder);
     }
 
@@ -197,10 +197,10 @@ public class BlockToss extends ChargeSkill implements Listener, InteractSkill, C
     @UpdateEvent
     public void updateCharge() {
         // Charge check
-        Iterator<Player> iterator = charging.keySet().iterator();
+        Iterator<Player> iterator = chargingMap.keySet().iterator();
         while (iterator.hasNext()) {
             Player player = iterator.next();
-            BoulderChargeData chargeData = charging.get(player);
+            BoulderChargeData chargeData = chargingMap.get(player);
             if (player == null || !player.isOnline()) {
                 iterator.remove();
                 continue;

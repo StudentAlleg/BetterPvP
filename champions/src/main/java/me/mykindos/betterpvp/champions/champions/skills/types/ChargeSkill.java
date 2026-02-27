@@ -12,7 +12,7 @@ import java.util.WeakHashMap;
 @CustomLog
 public abstract class ChargeSkill extends ChannelSkill {
     protected final WeakHashMap<Player, ChargeData> charging = new WeakHashMap<>();
-    public ChargeSkill(Champions champions, ChampionsManager championsManager) {
+    protected ChargeSkill(Champions champions, ChampionsManager championsManager) {
         super(champions, championsManager);
     }
 
@@ -62,23 +62,7 @@ public abstract class ChargeSkill extends ChannelSkill {
                     iterator.remove();
                 }
             }
-
-            if (forceUse(player, charge, level)) {
-                use(player, charge, level);
-                iterator.remove();
-            }
         }
-    }
-
-    /**
-     * Force the player to use the skill, after canTickCharge
-     * @param player
-     * @param chargeData
-     * @param level
-     * @return
-     */
-    public boolean forceUse(Player player, ChargeData chargeData, int level) {
-        return false;
     }
 
     /**

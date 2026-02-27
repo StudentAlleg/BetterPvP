@@ -128,6 +128,9 @@ public abstract class Skill implements IChampionsSkill {
     @Override
     public Component getTags() {
         Component component = Component.empty();
+        if (this instanceof ChargeSkill) {
+            component = component.append(Component.text("Charge", NamedTextColor.AQUA).appendSpace());
+        }
         if (this instanceof PrepareArrowSkill) {
             component = component.append(Component.text("Arrow", NamedTextColor.DARK_BLUE).appendSpace());
         }
@@ -259,7 +262,6 @@ public abstract class Skill implements IChampionsSkill {
         }
 
         if (this instanceof ChargeSkill) {
-            //todo fix what this breaks in existing channel skills
             baseCharge = getConfig("baseCharge", 0.40, Number.class).doubleValue();
             chargeIncreasePerLevel = getConfig("chargeIncreasePerLevel", 0.10, Number.class).doubleValue();
         }

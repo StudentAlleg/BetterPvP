@@ -38,19 +38,14 @@ import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Random;
-import java.util.WeakHashMap;
 
 import static org.bukkit.entity.AbstractArrow.PickupStatus.DISALLOWED;
 
 @Singleton
 @BPvPListener
 public class Barrage extends BowChargeSkill implements Listener, PassiveSkill, DamageSkill, OffensiveSkill {
-
-    private final WeakHashMap<Player, ChargeData> charging = new WeakHashMap<>();
     private final DisplayObject<Component> actionBarComponent = ChargeData.getActionBar(this, charging);
     private final List<Arrow> arrows = new ArrayList<>();
-    private double baseCharge;
-    private double chargeIncreasePerLevel;
     private double arrowDamage;
     private int numArrowsIncreasePerLevel;
     private int numArrows;
@@ -90,10 +85,6 @@ public class Barrage extends BowChargeSkill implements Listener, PassiveSkill, D
     @Override
     public void invalidatePlayer(Player player, Gamer gamer) {
         gamer.getActionBar().remove(actionBarComponent);
-    }
-
-    public double getChargePerSecond(int level) {
-        return baseCharge + (chargeIncreasePerLevel * (level - 1));
     }
 
     public int getNumArrows(int level) {

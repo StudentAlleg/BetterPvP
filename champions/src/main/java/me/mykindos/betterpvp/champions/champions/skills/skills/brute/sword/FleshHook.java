@@ -52,8 +52,6 @@ import static org.bukkit.event.entity.EntityDamageEvent.DamageCause.PROJECTILE;
 @BPvPListener
 @CustomLog
 public class FleshHook extends ChargeSkill implements InteractSkill, CooldownSkill, ThrowableListener, DamageSkill, CrowdControlSkill {
-
-    private final WeakHashMap<Player, ChargeData> charging = new WeakHashMap<>();
     private final WeakHashMap<Player, Hook> hooks = new WeakHashMap<>();
     private final DisplayObject<Component> actionBarComponent = ChargeData.getActionBar(this, charging);
 
