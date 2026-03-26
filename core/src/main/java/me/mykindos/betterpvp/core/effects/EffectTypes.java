@@ -41,6 +41,7 @@ import me.mykindos.betterpvp.core.effects.types.positive.ResistanceEffect;
 import me.mykindos.betterpvp.core.effects.types.positive.SpeedEffect;
 import me.mykindos.betterpvp.core.effects.types.positive.StrengthEffect;
 import me.mykindos.betterpvp.core.effects.types.positive.VanishEffect;
+import me.mykindos.betterpvp.core.localization.keys.CoreTranslationKeys;
 import me.mykindos.betterpvp.core.utilities.UtilMessage;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.event.ClickEvent;
@@ -117,8 +118,10 @@ public class EffectTypes {
         Component runComponent = Component.text("/protection", NamedTextColor.YELLOW)
                 .clickEvent(ClickEvent.runCommand("/protection"))
                 .hoverEvent(HoverEvent.showText(Component.text("/protection")));
-        Component component = Component.text("Use ").append(runComponent).append(Component.text(" to disable this permanently"));
-        UtilMessage.message(player, "Protection", component);
+        Component component = UtilMessage.deserialize(UtilMessage.translateText(player, CoreTranslationKeys.EFFECT_PROTECTION_DISABLE_REMINDER_BEFORE))
+                .append(runComponent)
+                .append(UtilMessage.deserialize(UtilMessage.translateText(player, CoreTranslationKeys.EFFECT_PROTECTION_DISABLE_REMINDER_AFTER)));
+        UtilMessage.message(player, UtilMessage.translateText(player, CoreTranslationKeys.PREFIX_EFFECT_PROTECTION), component);
     }
 
 }

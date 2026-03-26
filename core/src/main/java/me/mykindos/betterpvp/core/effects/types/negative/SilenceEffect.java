@@ -2,6 +2,8 @@ package me.mykindos.betterpvp.core.effects.types.negative;
 
 import me.mykindos.betterpvp.core.effects.Effect;
 import me.mykindos.betterpvp.core.effects.VanillaEffectType;
+import me.mykindos.betterpvp.core.localization.keys.CoreTranslationKeys;
+import me.mykindos.betterpvp.core.utilities.UtilFormat;
 import me.mykindos.betterpvp.core.utilities.UtilMessage;
 import org.bukkit.Sound;
 import org.bukkit.entity.LivingEntity;
@@ -30,11 +32,14 @@ public class SilenceEffect extends VanillaEffectType {
         super.onReceive(livingEntity, effect);
 
         livingEntity.getWorld().playSound(livingEntity.getLocation(), Sound.ENTITY_BAT_AMBIENT, 2.0F, 1.0F);
-        UtilMessage.simpleMessage(livingEntity, "Silence", "You have been silenced for <alt>%s</alt> seconds.", effect.getRawLength() / 1000d);
+        UtilMessage.simpleMessageKey(livingEntity,
+                UtilMessage.translateText(livingEntity, CoreTranslationKeys.PREFIX_EFFECT_SILENCE),
+                CoreTranslationKeys.EFFECT_SILENCE_RECEIVED,
+                UtilMessage.placeholders("seconds", UtilFormat.formatNumber(effect.getRawLength() / 1000d, 1)));
     }
 
     @Override
     public String getDescription(int level) {
-        return "<white>Silence</white> prevents the use of skills";
+        return UtilMessage.translateDefaultText(CoreTranslationKeys.EFFECT_SILENCE_DESCRIPTION);
     }
 }

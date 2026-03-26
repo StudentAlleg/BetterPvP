@@ -1,0 +1,43 @@
+{
+  "core.resourcepack.title": "<green><bold>Applying resource pack",
+  "core.resourcepack.subtitle": "<gray>Please wait...",
+  "core.resourcepack.required_message": "<red>You must accept the resource pack to play on this server",
+  "core.resourcepack.kick.declined": "<red>You must allow the resource pack",
+  "core.resourcepack.kick.failed_download": "<red>Resource pack failed to load",
+
+  "core.effect.prefix.anti_heal": "Anti Heal",
+  "core.effect.prefix.silence": "Silence",
+  "core.effect.prefix.frozen": "Frozen",
+  "core.effect.prefix.vulnerability": "Vulnerability",
+  "core.effect.prefix.deaths_curse": "Death's Curse",
+  "core.effect.prefix.protection": "Protection",
+  "core.effect.prefix.protected": "Protected",
+
+  "core.effect.anti_heal.received": "You can no longer regenerate health!",
+  "core.effect.anti_heal.expired": "You can now regenerate health!",
+  "core.effect.anti_heal.description": "<white>Anti Heal<reset> stops you from being able to regenerate health",
+
+  "core.effect.silence.received": "You have been silenced for <alt>{seconds}</alt> seconds.",
+  "core.effect.silence.description": "<white>Silence</white> prevents the use of skills",
+
+  "core.effect.frozen.received": "You have been frozen",
+  "core.effect.frozen.expired": "You are unfrozen",
+  "core.effect.frozen.blocked_action": "You cannot do this while frozen",
+  "core.effect.frozen.target_immune": "<yellow>{target}</yellow> is frozen and cannot receive damage!",
+  "core.effect.frozen.attacker_blocked": "You cannot damage anything while you are frozen!",
+  "core.effect.frozen.description": "Freezes the player, preventing movement, damage, and other actions",
+
+  "core.effect.vulnerability.expired": "Your vulnerability has worn off!",
+  "core.effect.vulnerability.description": "<white>Vulnerability {roman} <reset>increases damage taken by <val>{percent}</val>%",
+
+  "core.effect.deaths_curse.expired": "You are no longer cursed to death.",
+  "core.effect.deaths_curse.description": "<white>Death's Curse</white> will take the life of the target upon expiring.",
+
+  "core.effect.protection.expired": "Your protection has expired.",
+  "core.effect.protection.disable_reminder.before": "Use ",
+  "core.effect.protection.disable_reminder.after": " to disable this permanently",
+  "core.effect.protection.pickup_blocked": "You cannot pick up this item with protection",
+  "core.effect.protection.target_protected": "This is a new player and is protected from damage!",
+  "core.effect.protection.attacker_protected": "You cannot damage other players while you have protection!"
+}
+

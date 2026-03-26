@@ -3,6 +3,8 @@ package me.mykindos.betterpvp.core.utilities;
 import lombok.AccessLevel;
 import lombok.NoArgsConstructor;
 import me.mykindos.betterpvp.core.client.Rank;
+import me.mykindos.betterpvp.core.utilities.localization.ITranslationService;
+import me.mykindos.betterpvp.core.utilities.localization.LocalizationSettings;
 import me.mykindos.betterpvp.core.utilities.model.tag.CoinsTag;
 import me.mykindos.betterpvp.core.utilities.model.tag.DamageTag;
 import me.mykindos.betterpvp.core.utilities.model.tag.ExperienceTag;
@@ -26,8 +28,40 @@ import org.bukkit.Bukkit;
 import org.bukkit.Sound;
 import org.bukkit.entity.Player;
 
+import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.Locale;
+import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
 @NoArgsConstructor(access = AccessLevel.PRIVATE)
 public class UtilMessage {
+
+    private static final Pattern NAMED_PLACEHOLDER_PATTERN = Pattern.compile("\\{([a-zA-Z0-9_.-]+)}");
+
+    private static final ITranslationService FALLBACK_TRANSLATION_SERVICE = new ITranslationService() {
+        @Override
+        public Locale resolveLocale(Audience audience) {
+            return LocalizationSettings.DEFAULT_LOCALE;
+        }
+
+        @Override
+        public String resolve(Locale locale, String key) {
+            return key;
+        }
+
+        @Override
+        public void addTranslations(Locale locale, Map<String, String> translations) {
+        }
+
+        @Override
+        public Locale getDefaultLocale() {
+            return LocalizationSettings.DEFAULT_LOCALE;
+        }
+    };
+
+    private static ITranslationService translationService = FALLBACK_TRANSLATION_SERVICE;
 
     public static final TagResolver tagResolver = TagResolver.resolver(
             TagResolver.standard(),
@@ -290,6 +324,97 @@ public class UtilMessage {
         return deserialize(String.format(message, args));
     }
 
+    public static Component translate(Locale locale, String key, Map<String, ?> placeholders) {
+        return deserialize(translateText(locale, key, placeholders));
+    }
+
+    public static Component translate(Locale locale, String key) {
+        return translate(locale, key, Collections.emptyMap());
+    }
+
+    public static Component translate(Audience audience, String key, Map<String, ?> placeholders) {
+        return translate(getLocale(audience), key, placeholders);
+    }
+
+    public static Component translate(Audience audience, String key) {
+        return translate(audience, key, Collections.emptyMap());
+    }
+
+    public static Component translate(Player player, String key, Map<String, ?> placeholders) {
+        return translate((Audience) player, key, placeholders);
+    }
+
+    public static Component translate(Player player, String key) {
+        return translate((Audience) player, key);
+    }
+
+    public static String translateText(Locale locale, String key, Map<String, ?> placeholders) {
+        final String localized = resolveTranslation(locale, key);
+        return interpolateNamedPlaceholders(localized, placeholders);
+    }
+
+    public static String translateText(Locale locale, String key) {
+        return translateText(locale, key, Collections.emptyMap());
+    }
+
+    public static String translateText(Audience audience, String key, Map<String, ?> placeholders) {
+        return translateText(getLocale(audience), key, placeholders);
+    }
+
+    public static String translateText(Audience audience, String key) {
+        return translateText(audience, key, Collections.emptyMap());
+    }
+
+    public static String translateDefaultText(String key, Map<String, ?> placeholders) {
+        return translateText(translationService.getDefaultLocale(), key, placeholders);
+    }
+
+    public static String translateDefaultText(String key) {
+        return translateDefaultText(key, Collections.emptyMap());
+    }
+
+    public static void messageKey(Audience sender, String prefix, String key) {
+        message(sender, prefix, translate(sender, key));
+    }
+
+    public static void messageKey(Audience sender, String prefix, String key, Map<String, ?> placeholders) {
+        message(sender, prefix, translate(sender, key, placeholders));
+    }
+
+    public static void simpleMessageKey(Audience sender, String prefix, String key) {
+        simpleMessage(sender, prefix, translate(sender, key));
+    }
+
+    public static void simpleMessageKey(Audience sender, String prefix, String key, Map<String, ?> placeholders) {
+        simpleMessage(sender, prefix, translate(sender, key, placeholders));
+    }
+
+    public static void simpleMessageKey(Audience sender, String key) {
+        sender.sendMessage(translate(sender, key));
+    }
+
+    public static void simpleMessageKey(Audience sender, String key, Map<String, ?> placeholders) {
+        sender.sendMessage(translate(sender, key, placeholders));
+    }
+
+    public static Map<String, Object> placeholders(Object... keyValuePairs) {
+        if (keyValuePairs.length % 2 != 0) {
+            throw new IllegalArgumentException("Named placeholders require key/value pairs");
+        }
+
+        final Map<String, Object> map = new LinkedHashMap<>();
+        for (int i = 0; i < keyValuePairs.length; i += 2) {
+            final Object key = keyValuePairs[i];
+            if (key == null) {
+                throw new IllegalArgumentException("Placeholder key cannot be null");
+            }
+
+            map.put(String.valueOf(key), keyValuePairs[i + 1]);
+        }
+
+        return map;
+    }
+
     /**
      * Creates a component with a click event that copies text to the clipboard when clicked, and a hover event that shows "Click to Copy"
      * @param commandText The text to show in the message, which will have the hover and click events
@@ -325,6 +450,36 @@ public class UtilMessage {
 
     public static Component normalize(Component component) {
         return component.applyFallbackStyle(NamedTextColor.GRAY);
+    }
+
+    public static void bindTranslationService(ITranslationService translationService) {
+        UtilMessage.translationService = translationService;
+    }
+
+    private static String resolveTranslation(Locale locale, String key) {
+        return translationService.resolve(locale, key);
+    }
+
+    private static String interpolateNamedPlaceholders(String template, Map<String, ?> placeholders) {
+        if (placeholders == null || placeholders.isEmpty()) {
+            return template;
+        }
+
+        final Matcher matcher = NAMED_PLACEHOLDER_PATTERN.matcher(template);
+        final StringBuilder output = new StringBuilder();
+        while (matcher.find()) {
+            final String placeholderName = matcher.group(1);
+            final Object value = placeholders.get(placeholderName);
+            final String replacement = value == null ? matcher.group(0) : String.valueOf(value);
+            matcher.appendReplacement(output, Matcher.quoteReplacement(replacement));
+        }
+        matcher.appendTail(output);
+
+        return output.toString();
+    }
+
+    private static Locale getLocale(Audience sender) {
+        return translationService.resolveLocale(sender);
     }
 
     public static Component getPrefix(String prefix) {

@@ -2,6 +2,7 @@ package me.mykindos.betterpvp.core.effects.types.negative;
 
 import me.mykindos.betterpvp.core.effects.Effect;
 import me.mykindos.betterpvp.core.effects.EffectType;
+import me.mykindos.betterpvp.core.localization.keys.CoreTranslationKeys;
 import me.mykindos.betterpvp.core.utilities.UtilMessage;
 import org.bukkit.GameMode;
 import org.bukkit.entity.LivingEntity;
@@ -21,7 +22,7 @@ public class FrozenEffect extends EffectType {
 
     @Override
     public String getDescription(int level) {
-        return "Freezes the player, preventing movement, damage, and other actions";
+        return UtilMessage.translateDefaultText(CoreTranslationKeys.EFFECT_FROZEN_DESCRIPTION);
     }
 
     @Override
@@ -35,7 +36,9 @@ public class FrozenEffect extends EffectType {
         if (livingEntity instanceof Player player) {
             previousGamemode.putIfAbsent(player.getUniqueId(), player.getGameMode());
             player.setGameMode(GameMode.ADVENTURE);
-            UtilMessage.message(player, "Frozen", "You have been frozen");
+            UtilMessage.messageKey(player,
+                    UtilMessage.translateText(player, CoreTranslationKeys.PREFIX_EFFECT_FROZEN),
+                    CoreTranslationKeys.EFFECT_FROZEN_RECEIVED);
         }
     }
 
@@ -45,7 +48,9 @@ public class FrozenEffect extends EffectType {
         if (livingEntity instanceof Player player) {
             player.setGameMode(previousGamemode.remove(player.getUniqueId()));
             if (notify) {
-                UtilMessage.message(player, "Frozen", "You are unfrozen");
+                UtilMessage.messageKey(player,
+                        UtilMessage.translateText(player, CoreTranslationKeys.PREFIX_EFFECT_FROZEN),
+                        CoreTranslationKeys.EFFECT_FROZEN_EXPIRED);
             }
         }
     }

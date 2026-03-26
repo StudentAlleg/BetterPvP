@@ -11,6 +11,7 @@ import me.mykindos.betterpvp.core.effects.EffectManager;
 import me.mykindos.betterpvp.core.effects.EffectTypes;
 import me.mykindos.betterpvp.core.effects.events.EffectReceiveEvent;
 import me.mykindos.betterpvp.core.listener.BPvPListener;
+import me.mykindos.betterpvp.core.localization.keys.CoreTranslationKeys;
 import me.mykindos.betterpvp.core.utilities.UtilItem;
 import me.mykindos.betterpvp.core.utilities.UtilMessage;
 import me.mykindos.betterpvp.core.utilities.events.FetchNearbyEntityEvent;
@@ -54,7 +55,9 @@ public class ProtectionListener implements Listener {
 
         if (event.getItem().getOwner() == null || !event.getItem().getOwner().equals(player.getUniqueId())) {
             if (cooldownManager.use(player, "protectionitempickup", 5.0, false)) {
-                UtilMessage.message(player, "Protection", "You cannot pick up this item with protection");
+                UtilMessage.messageKey(player,
+                        UtilMessage.translateText(player, CoreTranslationKeys.PREFIX_EFFECT_PROTECTION),
+                        CoreTranslationKeys.EFFECT_PROTECTION_PICKUP_BLOCKED);
                 EffectTypes.disableProtectionReminder(player);
             }
             event.setCancelled(true);
@@ -98,12 +101,16 @@ public class ProtectionListener implements Listener {
         if (event.getDamagee() instanceof Player damagee &&
                 event.getDamager() instanceof Player damager) {
             if (effectManager.hasEffect(damagee, EffectTypes.PROTECTION)) {
-                UtilMessage.message(damager, "Protected", "This is a new player and is protected from damage!");
+                UtilMessage.messageKey(damager,
+                        UtilMessage.translateText(damager, CoreTranslationKeys.PREFIX_EFFECT_PROTECTED),
+                        CoreTranslationKeys.EFFECT_PROTECTION_TARGET_PROTECTED);
                 event.setCancelled(true);
             }
 
             if (effectManager.hasEffect(damager, EffectTypes.PROTECTION)) {
-                UtilMessage.message(damager, "Protected", "You cannot damage other players while you have protection!");
+                UtilMessage.messageKey(damager,
+                        UtilMessage.translateText(damager, CoreTranslationKeys.PREFIX_EFFECT_PROTECTED),
+                        CoreTranslationKeys.EFFECT_PROTECTION_ATTACKER_PROTECTED);
                 EffectTypes.disableProtectionReminder(damager);
                 event.setCancelled(true);
             }
@@ -114,12 +121,16 @@ public class ProtectionListener implements Listener {
     public void onThrowableHit(ThrowableHitEntityEvent event) {
         if (event.getCollision() instanceof Player damagee && event.getThrowable().getThrower() instanceof Player damager) {
             if (effectManager.hasEffect(damagee, EffectTypes.PROTECTION)) {
-                UtilMessage.message(damager, "Protected", "This is a new player and is protected from damage!");
+                UtilMessage.messageKey(damager,
+                        UtilMessage.translateText(damager, CoreTranslationKeys.PREFIX_EFFECT_PROTECTED),
+                        CoreTranslationKeys.EFFECT_PROTECTION_TARGET_PROTECTED);
                 event.setCancelled(true);
             }
 
             if (effectManager.hasEffect(damager, EffectTypes.PROTECTION)) {
-                UtilMessage.message(damager, "Protected", "You cannot damage other players while you have protection!");
+                UtilMessage.messageKey(damager,
+                        UtilMessage.translateText(damager, CoreTranslationKeys.PREFIX_EFFECT_PROTECTED),
+                        CoreTranslationKeys.EFFECT_PROTECTION_ATTACKER_PROTECTED);
                 EffectTypes.disableProtectionReminder(damager);
                 event.setCancelled(true);
             }

@@ -7,10 +7,10 @@ import me.mykindos.betterpvp.core.client.events.ClientJoinEvent;
 import me.mykindos.betterpvp.core.config.Config;
 import me.mykindos.betterpvp.core.framework.updater.UpdateEvent;
 import me.mykindos.betterpvp.core.listener.BPvPListener;
+import me.mykindos.betterpvp.core.localization.keys.CoreTranslationKeys;
+import me.mykindos.betterpvp.core.utilities.UtilMessage;
 import me.mykindos.betterpvp.core.utilities.UtilServer;
 import net.kyori.adventure.text.Component;
-import net.kyori.adventure.text.format.NamedTextColor;
-import net.kyori.adventure.text.format.TextDecoration;
 import net.kyori.adventure.title.Title;
 import net.kyori.adventure.util.Ticks;
 import org.bukkit.Bukkit;
@@ -28,9 +28,6 @@ public class ResourcePackListener implements Listener {
     private final ResourcePackHandler resourcePackHandler;
 
     private static final Title.Times TIME = Title.Times.times(Ticks.duration(0), Ticks.duration(10), Ticks.duration(0));
-    private static final Title TITLE = Title.title(Component.text("Applying resource pack", NamedTextColor.GREEN, TextDecoration.BOLD),
-            Component.text("Please wait...", NamedTextColor.GRAY), TIME);
-
     @Inject
     @Config(path = "core.resourcepack.enabled", defaultValue = "true")
     private boolean enabled;
@@ -49,7 +46,7 @@ public class ResourcePackListener implements Listener {
             ResourcePack mainPack = resourcePackHandler.getResourcePack("main").join();
             if (mainPack == null) return;
 
-            Component message = Component.text("You must accept the resource pack to play on this server", NamedTextColor.RED);
+            Component message = UtilMessage.translate(player, CoreTranslationKeys.RESOURCE_PACK_REQUIRED_MESSAGE);
             player.setResourcePack(mainPack.getUuid(), mainPack.getUrl(), mainPack.getHashBytes(), message, true);
         });
 
@@ -65,9 +62,9 @@ public class ResourcePackListener implements Listener {
 
         if (event.getID().equals(mainPack.getUuid())) {
             if (event.getStatus() == PlayerResourcePackStatusEvent.Status.DECLINED) {
-                event.getPlayer().kick(Component.text("You must allow the resource pack"));
+                event.getPlayer().kick(UtilMessage.translate(event.getPlayer(), CoreTranslationKeys.RESOURCE_PACK_KICK_DECLINED));
             } else if (event.getStatus() == PlayerResourcePackStatusEvent.Status.FAILED_DOWNLOAD) {
-                event.getPlayer().kick(Component.text("Resource pack failed to load"));
+                event.getPlayer().kick(UtilMessage.translate(event.getPlayer(), CoreTranslationKeys.RESOURCE_PACK_KICK_FAILED_DOWNLOAD));
             }
         }
 
@@ -86,8 +83,10 @@ public class ResourcePackListener implements Listener {
         if (!enabled) return;
         for (Player player : Bukkit.getOnlinePlayers()) {
             if (player.getResourcePackStatus() != PlayerResourcePackStatusEvent.Status.SUCCESSFULLY_LOADED) {
-
-                player.showTitle(TITLE);
+                player.showTitle(Title.title(
+                        UtilMessage.translate(player, CoreTranslationKeys.RESOURCE_PACK_TITLE),
+                        UtilMessage.translate(player, CoreTranslationKeys.RESOURCE_PACK_SUBTITLE),
+                        TIME));
             }
         }
     }

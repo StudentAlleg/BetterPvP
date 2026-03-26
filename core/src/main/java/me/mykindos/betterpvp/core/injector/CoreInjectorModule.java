@@ -9,7 +9,8 @@ import me.mykindos.betterpvp.core.chat.ignore.IIgnoreService;
 import me.mykindos.betterpvp.core.chat.ignore.impl.DefaultIgnoreService;
 import me.mykindos.betterpvp.core.database.connection.IDatabaseConnection;
 import me.mykindos.betterpvp.core.database.connection.PostgresDatabaseConnection;
-import org.bukkit.Bukkit;
+import me.mykindos.betterpvp.core.utilities.localization.DefaultTranslationService;
+import me.mykindos.betterpvp.core.utilities.localization.ITranslationService;
 
 @CustomLog
 public class CoreInjectorModule extends AbstractModule {
@@ -28,6 +29,7 @@ public class CoreInjectorModule extends AbstractModule {
         bind(IDatabaseConnection.class).to(PostgresDatabaseConnection.class);
         bind(IFilterService.class).to(DatabaseFilterService.class);
         bind(IIgnoreService.class).to(DefaultIgnoreService.class);
+        bind(ITranslationService.class).to(DefaultTranslationService.class);
         log.info("Using default integrations").submit();
 
     }

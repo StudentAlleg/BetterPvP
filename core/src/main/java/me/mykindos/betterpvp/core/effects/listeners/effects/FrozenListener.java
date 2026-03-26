@@ -5,6 +5,7 @@ import com.google.inject.Singleton;
 import me.mykindos.betterpvp.core.effects.EffectManager;
 import me.mykindos.betterpvp.core.effects.EffectTypes;
 import me.mykindos.betterpvp.core.listener.BPvPListener;
+import me.mykindos.betterpvp.core.localization.keys.CoreTranslationKeys;
 import me.mykindos.betterpvp.core.utilities.UtilMessage;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
@@ -66,7 +67,9 @@ public class FrozenListener implements Listener {
             event.setCancelled(true);
             event.setUseInteractedBlock(Event.Result.DENY);
             event.setUseItemInHand(Event.Result.DENY);
-            UtilMessage.message(event.getPlayer(), "Frozen", "You cannot do this while frozen");
+            UtilMessage.messageKey(event.getPlayer(),
+                    UtilMessage.translateText(event.getPlayer(), CoreTranslationKeys.PREFIX_EFFECT_FROZEN),
+                    CoreTranslationKeys.EFFECT_FROZEN_BLOCKED_ACTION);
         }
     }
 
@@ -83,14 +86,19 @@ public class FrozenListener implements Listener {
     public void entDamage(EntityDamageByEntityEvent event) {
         if (event.getEntity() instanceof LivingEntity damagee) {
             if (effectManager.hasEffect(damagee, EffectTypes.FROZEN)) {
-                UtilMessage.message(event.getDamager(), "Frozen", "<yellow>%s</yellow> is frozen and cannot receive damage!", damagee.getName());
+                UtilMessage.messageKey(event.getDamager(),
+                        UtilMessage.translateText(event.getDamager(), CoreTranslationKeys.PREFIX_EFFECT_FROZEN),
+                        CoreTranslationKeys.EFFECT_FROZEN_TARGET_IMMUNE,
+                        UtilMessage.placeholders("target", damagee.getName()));
                 event.setCancelled(true);
             }
         }
 
         if (event.getDamager() instanceof LivingEntity damager) {
             if (effectManager.hasEffect(damager, EffectTypes.FROZEN)) {
-                UtilMessage.message(damager, "Frozen", "You cannot damage anything while you are Frozen!");
+                UtilMessage.messageKey(damager,
+                        UtilMessage.translateText(damager, CoreTranslationKeys.PREFIX_EFFECT_FROZEN),
+                        CoreTranslationKeys.EFFECT_FROZEN_ATTACKER_BLOCKED);
                 event.setCancelled(true);
             }
         }

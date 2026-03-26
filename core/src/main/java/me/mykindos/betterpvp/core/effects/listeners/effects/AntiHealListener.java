@@ -6,6 +6,7 @@ import me.mykindos.betterpvp.core.effects.EffectManager;
 import me.mykindos.betterpvp.core.effects.EffectTypes;
 import me.mykindos.betterpvp.core.effects.events.EffectReceiveEvent;
 import me.mykindos.betterpvp.core.listener.BPvPListener;
+import me.mykindos.betterpvp.core.localization.keys.CoreTranslationKeys;
 import me.mykindos.betterpvp.core.utilities.UtilMessage;
 import org.bukkit.Sound;
 import org.bukkit.entity.LivingEntity;
@@ -46,7 +47,9 @@ public class AntiHealListener implements Listener {
         if (event.isCancelled()) return;
         if (event.getEffect().getEffectType() == EffectTypes.ANTI_HEAL) {
             event.getTarget().getWorld().playSound(event.getTarget().getLocation(), Sound.BLOCK_GLASS_BREAK, 2.0f, 2.0f );
-            UtilMessage.message(event.getTarget(), "Anti Heal", "You can no longer regenerate health!");
+            UtilMessage.messageKey(event.getTarget(),
+                    UtilMessage.translateText(event.getTarget(), CoreTranslationKeys.PREFIX_EFFECT_ANTI_HEAL),
+                    CoreTranslationKeys.EFFECT_ANTI_HEAL_RECEIVED);
         }
     }
 

@@ -6,6 +6,7 @@ import me.mykindos.betterpvp.core.combat.damagelog.DamageLog;
 import me.mykindos.betterpvp.core.combat.damagelog.DamageLogManager;
 import me.mykindos.betterpvp.core.effects.Effect;
 import me.mykindos.betterpvp.core.effects.VanillaEffectType;
+import me.mykindos.betterpvp.core.localization.keys.CoreTranslationKeys;
 import me.mykindos.betterpvp.core.utilities.UtilMessage;
 import me.mykindos.betterpvp.core.utilities.UtilServer;
 import me.mykindos.betterpvp.core.utilities.model.SoundEffect;
@@ -95,14 +96,16 @@ public class DeathsCurseEffect extends VanillaEffectType {
             }, 1L);
         } else {
             if (notify) {
-                UtilMessage.message(livingEntity, "Death's Curse", "You are no longer cursed to death.");
+                UtilMessage.messageKey(livingEntity,
+                        UtilMessage.translateText(livingEntity, CoreTranslationKeys.PREFIX_EFFECT_DEATHS_CURSE),
+                        CoreTranslationKeys.EFFECT_DEATHS_CURSE_EXPIRED);
             }
         }
     }
 
     @Override
     public String getDescription(int level) {
-        return "<white>Death's Curse</white> will take the life of the target upon expiring.";
+        return UtilMessage.translateDefaultText(CoreTranslationKeys.EFFECT_DEATHS_CURSE_DESCRIPTION);
     }
 
 }

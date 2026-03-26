@@ -2,6 +2,7 @@ package me.mykindos.betterpvp.core.effects.types.positive;
 
 import me.mykindos.betterpvp.core.effects.Effect;
 import me.mykindos.betterpvp.core.effects.EffectType;
+import me.mykindos.betterpvp.core.localization.keys.CoreTranslationKeys;
 import me.mykindos.betterpvp.core.utilities.UtilMessage;
 import org.bukkit.entity.LivingEntity;
 
@@ -24,7 +25,9 @@ public class ProtectionEffect extends EffectType {
     public void onExpire(LivingEntity livingEntity, Effect effect, boolean notify) {
         super.onExpire(livingEntity, effect, notify);
         if (notify) {
-            UtilMessage.message(livingEntity, "Protection", "Your protection has expired.");
+            UtilMessage.messageKey(livingEntity,
+                    UtilMessage.translateText(livingEntity, CoreTranslationKeys.PREFIX_EFFECT_PROTECTION),
+                    CoreTranslationKeys.EFFECT_PROTECTION_EXPIRED);
         }
     }
 

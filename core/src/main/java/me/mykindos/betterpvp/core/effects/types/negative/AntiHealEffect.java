@@ -2,6 +2,7 @@ package me.mykindos.betterpvp.core.effects.types.negative;
 
 import me.mykindos.betterpvp.core.effects.Effect;
 import me.mykindos.betterpvp.core.effects.VanillaEffectType;
+import me.mykindos.betterpvp.core.localization.keys.CoreTranslationKeys;
 import me.mykindos.betterpvp.core.utilities.UtilMessage;
 import org.bukkit.Location;
 import org.bukkit.Particle;
@@ -28,12 +29,14 @@ public class AntiHealEffect extends VanillaEffectType {
     @Override
     public void onExpire(LivingEntity livingEntity, Effect effect, boolean notify) {
         super.onExpire(livingEntity, effect, notify);
-        UtilMessage.message(livingEntity, "Anti Heal", "You can now regenerate health!");
+        UtilMessage.messageKey(livingEntity,
+                UtilMessage.translateText(livingEntity, CoreTranslationKeys.PREFIX_EFFECT_ANTI_HEAL),
+                CoreTranslationKeys.EFFECT_ANTI_HEAL_EXPIRED);
     }
 
     @Override
     public String getDescription(int level) {
-        return "<white>" + getName() + "<reset> stops you from being able to regenerate health";
+        return UtilMessage.translateDefaultText(CoreTranslationKeys.EFFECT_ANTI_HEAL_DESCRIPTION);
     }
 
     @Override

@@ -12,6 +12,7 @@ import java.io.IOException;
 import java.io.Reader;
 import java.nio.charset.Charset;
 import java.util.HashMap;
+import java.util.Locale;
 import java.util.Map;
 import java.util.function.Function;
 
@@ -20,6 +21,7 @@ public class Languages {
     private static final Languages INSTANCE = new Languages();
     private final Map<String, Map<String, String>> translations = new HashMap<>();
     private Function<Player, String> languageProvider = Player::getLocale;
+    private String defaultLanguage = "en_us";
     private boolean serverSideTranslations = true;
     
     private Languages() {
@@ -38,7 +40,7 @@ public class Languages {
      * @param translations The translations of the language.
      */
     public void addLanguage(@NotNull String lang, @NotNull Map<@NotNull String, @NotNull String> translations) {
-        this.translations.put(lang, translations);
+        this.translations.put(normalizeLangCode(lang), translations);
     }
     
     /**
@@ -89,10 +91,22 @@ public class Languages {
      * @return The format string or null if there is no such language or key.
      */
     public @Nullable String getFormatString(@NotNull String lang, @NotNull String key) {
-        var map = translations.get(lang);
-        if (map == null)
+        var normalizedLang = normalizeLangCode(lang);
+
+        var map = translations.get(normalizedLang);
+        if (map != null) {
+            var value = map.get(key);
+            if (value != null) {
+                return value;
+            }
+        }
+
+        var fallbackMap = translations.get(defaultLanguage);
+        if (fallbackMap == null) {
             return null;
-        return map.get(key);
+        }
+
+        return fallbackMap.get(key);
     }
     
     /**
@@ -112,7 +126,25 @@ public class Languages {
      * @return The language of the player.
      */
     public @NotNull String getLanguage(@NotNull Player player) {
-        return languageProvider.apply(player);
+        return normalizeLangCode(languageProvider.apply(player));
+    }
+
+    /**
+     * Sets the default language used as fallback when a key is missing for a locale.
+     *
+     * @param defaultLanguage The fallback language.
+     */
+    public void setDefaultLanguage(@NotNull String defaultLanguage) {
+        this.defaultLanguage = normalizeLangCode(defaultLanguage);
+    }
+
+    /**
+     * Gets the fallback language code.
+     *
+     * @return The configured fallback language.
+     */
+    public @NotNull String getDefaultLanguage() {
+        return defaultLanguage;
     }
     
     /**
@@ -131,6 +163,10 @@ public class Languages {
      */
     public boolean doesServerSideTranslations() {
         return serverSideTranslations;
+    }
+
+    private @NotNull String normalizeLangCode(@NotNull String langCode) {
+        return langCode.toLowerCase(Locale.ROOT).replace('-', '_');
     }
     
 }
