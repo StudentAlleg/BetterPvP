@@ -88,7 +88,7 @@ public class StoreChestNPC extends ModeledNPC implements HubNPC, Ticked {
                     .spawn();
         }, 25L);
 
-        UtilMessage.message(runner, "Store", "Our store is located at <yellow><click:open_url:'https://store.betterpvp.net'>https://store.betterpvp.net</click>");
+        UtilMessage.message(runner, "Store", "Our store is located at <yellow><click:open_url:'https://betterpvp.net/store'>https://betterpvp.net/store</click>");
     }
 
     @Override
