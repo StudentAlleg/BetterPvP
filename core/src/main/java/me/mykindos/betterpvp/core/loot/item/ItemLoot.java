@@ -2,6 +2,7 @@ package me.mykindos.betterpvp.core.loot.item;
 
 import lombok.CustomLog;
 import lombok.EqualsAndHashCode;
+import lombok.Getter;
 import me.mykindos.betterpvp.core.Core;
 import me.mykindos.betterpvp.core.item.BaseItem;
 import me.mykindos.betterpvp.core.item.ItemFactory;
@@ -19,6 +20,7 @@ import java.util.function.Predicate;
  * Loot that drops an item at the location of the given {@link LootContext}.
  */
 @CustomLog
+@Getter
 @EqualsAndHashCode(callSuper = true)
 public abstract sealed class ItemLoot<T> extends Loot<ItemInstance, T> permits GivenItemLoot, DroppedItemLoot {
 

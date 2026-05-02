@@ -1,6 +1,7 @@
 package me.mykindos.betterpvp.core.loot.economy;
 
 import lombok.EqualsAndHashCode;
+import lombok.Getter;
 import me.mykindos.betterpvp.core.framework.economy.CoinItem;
 import me.mykindos.betterpvp.core.loot.Loot;
 import me.mykindos.betterpvp.core.loot.LootContext;
@@ -11,6 +12,7 @@ import net.kyori.adventure.text.format.TextColor;
 
 import java.util.function.Predicate;
 
+@Getter
 @EqualsAndHashCode(callSuper = true)
 public abstract class CoinLoot<R> extends Loot<Integer, R> {
 
