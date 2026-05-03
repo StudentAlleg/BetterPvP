@@ -112,6 +112,8 @@ subprojects {
 
         doLast {
             val builtJar = archiveFile.get().asFile
+            if (builtJar.name.contains("jmh", ignoreCase = true)) return@doLast
+
             outputBuckets.forEach { (bucket, projects) ->
                 if (project.path in projects) {
                     copy {
