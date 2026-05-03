@@ -723,7 +723,7 @@ skills:
       maxStacks: 3
       baseDuration: 5.0
       durationIncreasePerLevel: 1.0
-      health: 4.0
+      health: 10.0
     fortify:
       enabled: true
       maxlevel: 3
@@ -1015,8 +1015,8 @@ skills:
       maxlevel: 3
       cooldown: 5.0
       cooldownDecreasePerLevel: 0.5
-      baseFriendlyHealthRestoredOnHit: 2.5
-      friendlyHealthRestoredOnHitIncreasedPerLevel: 2.5
+      baseFriendlyHealthRestoredOnHit: 6.0
+      friendlyHealthRestoredOnHitIncreasedPerLevel: 6.0
       baseNaturalRegenerationDisabledDuration: 3.0
       increaseNaturalRegenerationDisabledDurationPerLevel: 1.0
     stormsphere:
