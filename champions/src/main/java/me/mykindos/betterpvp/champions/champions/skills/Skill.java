@@ -219,7 +219,6 @@ public abstract class Skill implements IChampionsSkill {
         return maxLevel;
     }
 
-
     public void reload() {
         try {
             loadConfig();
