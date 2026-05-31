@@ -150,6 +150,7 @@ public class Core extends BPvPPlugin {
         var uuidManager = injector.getInstance(UUIDManager.class);
         uuidManager.loadObjectsFromNamespace("core");
 
+
         try {
             scoreboardLibrary = ScoreboardLibrary.loadScoreboardLibrary(this);
         } catch (NoPacketAdapterAvailableException e) {

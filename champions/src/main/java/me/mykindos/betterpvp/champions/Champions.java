@@ -14,7 +14,7 @@ import me.mykindos.betterpvp.champions.commands.ChampionsCommandLoader;
 import me.mykindos.betterpvp.champions.injector.ChampionsInjectorModule;
 import me.mykindos.betterpvp.champions.item.component.storage.ArmorStorageComponentSerializer;
 import me.mykindos.betterpvp.champions.listeners.ChampionsListenerLoader;
-import me.mykindos.betterpvp.champions.stats.repository.GrafanaConfigSyncService;
+import me.mykindos.betterpvp.champions.stats.repository.ChampionsGrafanaConfigContributor;
 import me.mykindos.betterpvp.champions.tips.ChampionsTipLoader;
 import me.mykindos.betterpvp.core.Core;
 import me.mykindos.betterpvp.core.config.Config;
@@ -89,10 +89,6 @@ public class Champions extends BPvPPlugin {
             var skillManager = injector.getInstance(ChampionsSkillManager.class);
             skillManager.loadSkills();
 
-            // Sync all game config to Grafana tables (weapons, armor, skills, runes, roles, energy)
-            var configSyncService = injector.getInstance(GrafanaConfigSyncService.class);
-            configSyncService.syncAll();
-
             var championsTipManager = injector.getInstance(ChampionsTipLoader.class);
             championsTipManager.loadTips(PACKAGE);
 
@@ -107,6 +103,9 @@ public class Champions extends BPvPPlugin {
             var uuidManager = injector.getInstance(UUIDManager.class);
             uuidManager.loadObjectsFromNamespace("champions");
 
+            final ChampionsGrafanaConfigContributor grafanaConfigContributor = injector.getInstance(ChampionsGrafanaConfigContributor.class);
+            grafanaConfigContributor.reload();
+
             adapters.loadAdapters(reflections.getTypesAnnotatedWith(PluginAdapter.class));
             adapters.loadAdapters(reflections.getTypesAnnotatedWith(PluginAdapters.class));
 
@@ -115,14 +114,6 @@ public class Champions extends BPvPPlugin {
 
             // Register champions translation bundle
             TranslationService.registerBundle(this, "translations.champions");
-
-            // Schedule periodic Grafana snapshots (default: every hour = 72 000 ticks).
-            var snapshotRepository = injector.getInstance(GrafanaSnapshotRepository.class);
-            int snapshotIntervalTicks = getConfig().getOrSaveInt("grafana.snapshot.interval-ticks", 72000);
-            UtilServer.runTaskTimerAsync(this, () ->
-                    snapshotRepository.takeSnapshot(Core.getCurrentRealm().getId()),
-                    0L, snapshotIntervalTicks);
-        }
     }
 
     private void registerSerializer() {
