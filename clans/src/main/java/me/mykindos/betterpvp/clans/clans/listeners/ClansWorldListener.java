@@ -928,6 +928,18 @@ public class ClansWorldListener extends ClanListener {
         UtilMessage.message(event.getPlayer(), "core.prefix.clans", "clans.world.bucket-broke-styled", Component.text("Bucket", NamedTextColor.YELLOW));
     }
 
+    @EventHandler
+    public void onLavaPlace(PlayerInteractEvent event) {
+        if (event.getItem() == null) return;
+        if (!event.getItem().getType().equals(Material.LAVA_BUCKET)) return;
+        final Client client = this.clientManager.search().online(event.getPlayer());
+        if (client.isAdministrating()) return;
+
+        event.setUseItemInHand(Event.Result.DENY);
+        event.getPlayer().getInventory().remove(Material.LAVA_BUCKET);
+        UtilMessage.message(event.getPlayer(), "Clans", "Your <yellow>Bucket</yellow> broke!");
+    }
+
     private final ConcurrentLinkedQueue<Clan> clanPdcQueue = new ConcurrentLinkedQueue<>();
 
     @EventHandler
