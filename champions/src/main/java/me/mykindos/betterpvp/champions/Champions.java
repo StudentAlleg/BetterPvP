@@ -29,6 +29,7 @@ import me.mykindos.betterpvp.core.item.ItemKey;
 import me.mykindos.betterpvp.core.item.ItemLoader;
 import me.mykindos.betterpvp.core.item.component.impl.uuid.UUIDManager;
 import me.mykindos.betterpvp.core.item.component.serialization.ComponentSerializationRegistry;
+import me.mykindos.betterpvp.core.locale.TranslationService;
 import org.bukkit.Bukkit;
 import org.reflections.Reflections;
 import org.reflections.scanners.Scanners;
@@ -111,6 +112,7 @@ public class Champions extends BPvPPlugin {
 
             // Register champions translation bundle
             TranslationService.registerBundle(this, "translations.champions");
+        }
     }
 
     private void registerSerializer() {
