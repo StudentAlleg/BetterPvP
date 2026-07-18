@@ -1,10 +1,13 @@
-package me.mykindos.betterpvp.core.metal;
+package me.mykindos.betterpvp.core.metal.impl;
 
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
 import me.mykindos.betterpvp.core.item.ItemFactory;
 import me.mykindos.betterpvp.core.item.ItemKey;
 import me.mykindos.betterpvp.core.item.ItemRarity;
+import me.mykindos.betterpvp.core.metal.MetalBlock;
+import me.mykindos.betterpvp.core.metal.MetalBlockItem;
+import me.mykindos.betterpvp.core.metal.MetalItem;
 import me.mykindos.betterpvp.core.recipe.RecipeIngredient;
 import me.mykindos.betterpvp.core.recipe.crafting.CraftingRecipeRegistry;
 import me.mykindos.betterpvp.core.recipe.crafting.ShapedCraftingRecipe;

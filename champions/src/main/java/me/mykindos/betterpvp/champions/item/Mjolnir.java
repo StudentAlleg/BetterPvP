@@ -23,7 +23,7 @@ import me.mykindos.betterpvp.core.item.impl.Rope;
 import me.mykindos.betterpvp.core.item.impl.StormInABottle;
 import me.mykindos.betterpvp.core.item.impl.VoidglassCore;
 import me.mykindos.betterpvp.core.item.model.WeaponItem;
-import me.mykindos.betterpvp.core.metal.Runesteel;
+import me.mykindos.betterpvp.core.metal.impl.Runesteel;
 import me.mykindos.betterpvp.core.recipe.RecipeIngredient;
 import me.mykindos.betterpvp.core.recipe.crafting.CraftingRecipeRegistry;
 import me.mykindos.betterpvp.core.recipe.crafting.ShapedCraftingRecipe;

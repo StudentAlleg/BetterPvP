@@ -1,9 +1,12 @@
-package me.mykindos.betterpvp.core.metal;
+package me.mykindos.betterpvp.core.metal.impl;
 
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
 import me.mykindos.betterpvp.core.item.ItemKey;
 import me.mykindos.betterpvp.core.item.ItemRarity;
+import me.mykindos.betterpvp.core.metal.MetalBlock;
+import me.mykindos.betterpvp.core.metal.MetalBlockItem;
+import me.mykindos.betterpvp.core.metal.MetalItem;
 
 public class FissureQuartz {
 
