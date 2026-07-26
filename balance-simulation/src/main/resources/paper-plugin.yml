@@ -1,0 +1,16 @@
+author: Mykindos
+main: me.mykindos.betterpvp.balancesim.BalanceSimulation
+name: BalanceSimulation
+load: POSTWORLD
+version: '1.0'
+api-version: '1.21'
+dependencies:
+  server:
+    Core:
+      load: BEFORE
+      required: true
+      join-classpath: true
+    Champions:
+      load: BEFORE
+      required: true
+      join-classpath: true

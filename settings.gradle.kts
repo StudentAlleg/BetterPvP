@@ -15,6 +15,10 @@ include(":orchestration")
 include(":orchestration-service")
 include(":proxy")
 
+// Dev-only balance simulation engine. Deliberately absent from every output bucket in
+// build.gradle.kts so production deploys do not ship simulation code on the classpath.
+include(":balance-simulation")
+
 if (File("./private/").exists()) {
     include(":private:events")
     include(":private:dungeons")

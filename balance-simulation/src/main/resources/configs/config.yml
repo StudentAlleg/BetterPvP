@@ -1,0 +1,25 @@
+# Balance simulation engine.
+#
+# This plugin drives the *real* combat pipeline with headless fake players, so it must
+# never run on a production realm. The jar being absent is the primary isolation
+# mechanism; this flag is defence in depth and defaults to false.
+champions:
+  simulation:
+    enabled: false
+    # Dedicated flat-void world the duels happen in. Created on demand when the gate is
+    # open, unloaded and deleted at run teardown.
+    worldName: bpvp_sim
+    # Monte-Carlo iterations per matchup, to average out damage min/max rolls and crits.
+    iterations: 100
+    # How many duels the orchestrator runs at once. All combat state is keyed per player
+    # UUID, so this is bounded by tick budget rather than correctness.
+    maxConcurrentDuels: 64
+    # Hard stop for a single duel, so a matchup that can never kill does not stall a run.
+    duelTimeoutSeconds: 30.0
+    # Re-run automatically after /reload, skipped when the config hash is unchanged.
+    runOnConfigReload: false
+
+command:
+  simulate:
+    enabled: true
+    requiredRank: DEVELOPER
