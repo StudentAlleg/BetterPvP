@@ -232,7 +232,7 @@ Existing hand-built SQL dashboards are retired after parity is verified.
 | Phase | Scope | Exit criteria |
 |-------|-------|--------------|
 | 1 | Fake-player infra (spawn/teardown, ephemeral clients, stats exclusion), sim void world, sim gate flag, schema + repository, `/simulate` skeleton | Two fake players duel with plain weapons in the sim void world on a dev server; rows land in `sim_result` |
-| 2 | `BalanceCatalog` build enumeration (roles × slots × budget-feasible level vectors × weapons incl. boosters × runes × armor), duel orchestration at scale, Monte-Carlo iterations, passives measured correctly | Parity with `ttk_all_valid_builds` where the old SQL was right; documented deltas where it was wrong |
+| 2 | `BalanceCatalog` build enumeration (roles × slots × budget-feasible level vectors × weapons incl. boosters × runes × armor), duel orchestration at scale, Monte-Carlo iterations, passives measured correctly, **fake-player fidelity raised enough to let sim combatants really die** (open question 8) | Parity with `ttk_all_valid_builds` where the old SQL was right; documented deltas where it was wrong; sim deaths run the real `PlayerDeathEvent` path with the phase 1 kill-suppression removed |
 | 3 | Active-skill rotation policy (synthesized inputs, energy/cooldown-aware), thin dashboards (explorer + patch-diff + empirical overlay) | Actives contribute to DPS/TTK; dashboards read only `sim_*` tables |
 | 4 | Retire old SQL dashboards; optional reload-triggered auto-runs on dev | Old dashboards deleted |
 
@@ -292,10 +292,25 @@ programmatic control, revisit.
    of the attacker's, since armor items carry runes/gems). The recorder still logs
    the full `getAppliedModifiers()` breakdown per hit so mitigation stays
    observable rather than assumed.
-2. **Ephemeral clients** — how far the `ClientManager` join flow can be bypassed:
-   fake players must get a `Client`/`Gamer` + role + build without touching the
-   `clients` table, and join listeners (client load is async + DB-backed) must
-   not fire for them or must be short-circuited by the sim flag.
+2. ~~**Ephemeral clients**~~ — **resolved (2026-07-25, phase 1): the join flow can
+   be bypassed entirely.** What the rest of the codebase actually calls is
+   `clientManager.search().online(player)`, and `PlayerManager.search()`
+   (`PlayerManager.java:87-93`) wires that to `getStoredExact` — a lookup in the
+   in-memory Caffeine cache, *not* `Bukkit.getPlayer`. So constructing a
+   `Client`/`Gamer` by hand and publishing it with the public
+   `ClientManager.load` makes it indistinguishable from a logged-in client to
+   `RoleManager`, `BuildManager` and the skill listeners, while never reaching
+   `ClientSQLLayer`. No row is written to `clients`, because `create`/`save` are
+   never called. See `SimClientFactory`.
+
+   Join listeners are sidestepped rather than short-circuited: sim combatants are
+   **not** registered with `PlayerList` (no `placeNewPlayer`, so no
+   `PlayerJoinEvent`), only added to the level via `ServerLevel.addNewPlayer`.
+   That also means they are absent from `Bukkit.getOnlinePlayers()`, so every
+   per-player sweep on the server skips them for free — including
+   `ClientManager.getOnline()`, which filters on `Client.isLoaded()` →
+   `Bukkit.getPlayer(uuid) != null` → false for a fake player. The stat flush in
+   `processStatUpdates` therefore never sees them either.
 3. **Active-skill activation paths (plural)** — there is no single "use skill"
    entry point. `champions/.../skills/types/` defines several activation
    archetypes, each consuming a *different* input, and the rotation policy needs
@@ -317,9 +332,26 @@ programmatic control, revisit.
    lands). Suggested approach: per-archetype policy with a declared hold/charge
    duration, and treat `PrepareSkill` DPS as conditional-on-hit rather than
    free. Needs a trace through one skill per archetype, not just one sword active.
-4. **Stats exclusion surface** — enumerate every persistence path a duel death
-   triggers (`KILLS`, `CHAMPIONS_KILLS`, `COMBAT_STATS`, achievements, logs) and
-   guard each with the sim-entity flag.
+4. **Stats exclusion surface** — *partially resolved (2026-07-25, phase 1).* The
+   kill/combat-stats chain is closed at a single chokepoint:
+   `KillEventListener.onDeath` is the only producer of `KillContributionEvent`,
+   which is what both `CombatStatsListener` subclasses (global + champions) and
+   the leaderboards consume, so one guard there excludes simulated deaths from
+   `KILLS`, `CHAMPIONS_KILLS`, `COMBAT_STATS` and rating at once. The flag itself
+   is `core/.../framework/simulation/SimulatedEntity` (Bukkit metadata, so it
+   dies with the entity and cannot leave a stale UUID that later suppresses a
+   real player's stats); it lives in `core` because `core` cannot depend on a
+   plugin that is absent from production builds.
+
+   **Still to audit:** achievements, damage/kill logging, and any progression or
+   quest hooks that observe `PlayerDeathEvent` or `DamageEvent` directly rather
+   than via `KillContributionEvent`. Phase 1 combatants never die to anything but
+   each other in an isolated world, but this must be swept before the sweep scales
+   up. Note that being absent from `Bukkit.getOnlinePlayers()` (open question 2)
+   already excludes fake players from every "for each online player" persistence
+   path, which is a large fraction of this surface. See also open question 8,
+   which is the same problem seen from the other side: phase 1 stops sim deaths
+   from reaching those listeners at all.
 5. **jOOQ codegen dependency** — generated table classes require the local
    Postgres (`localhost:5002/betterpvp`) + codegen task. Fallback: string-based
    `DSL.table(...)` in the repository until codegen is run.
@@ -336,6 +368,76 @@ programmatic control, revisit.
    name/flag rather than by distance heuristics. Remaining detail is only
    mechanical: create it on demand when the sim gate is on, flat void generator,
    a solid platform per duel arena, and teardown/unload at run end.
+8. **Fake-player fidelity vs. `PlayerDeathEvent`** — *phase 1 workaround in place;
+   the real fix is phase 2 scope.*
+
+   **What happened (2026-07-27).** The first `/simulate` run on a dev server
+   produced the sweep correctly but flooded the log with NPEs from
+   `SkillStatListener.incrementStats` (`SkillStatListener.java:116`). Cause:
+   `Objects.requireNonNull(client.getGamer().getPlayer())`, and `Gamer.getPlayer()`
+   is `Bukkit.getPlayer(uuid)` — null for a combatant that was never registered
+   with `PlayerList`. The isolation win from open question 2 is the same fact that
+   breaks these listeners. The next line would have failed too:
+   `buildManager.getObject(uuid).orElseThrow()`, since a UUID that never logged in
+   has no `GamerBuilds`.
+
+   This generalises. **41 files listen to `PlayerDeathEvent`**, and they
+   reasonably assume a real, logged-in, database-loaded player. Guarding each one
+   would scatter simulation awareness across champions, clans, core, hub and game
+   — precisely what §3 forbids.
+
+   **Phase 1 workaround: a fake player never actually dies.**
+   `DamageEventProcessor` calls `finalizer.finalizeEvent(...)` *after*
+   `UtilServer.callEvent(damageEvent)` returns, so a `MONITOR` listener is the
+   last point at which a kill can be stopped. `SimRecorder` runs the same
+   arithmetic `applyFinalDamage` is about to (`health − modifiedDamage <= 0`);
+   on a lethal blow it records the hit at its true value, marks
+   `Recording.killed`, and cancels the event. The processor then returns before
+   the finalizer, so no health is applied and no death fires. All of it lives in
+   the simulation module. A duel now resolves off the recording rather than off
+   entity health, which also de-quantises TTK — it comes from the lethal hit's own
+   timestamp instead of whichever sweep tick noticed.
+
+   **What this costs, and why it must not survive phase 1.** On-death mechanics
+   never fire for sim combatants: `SoulHarvestAbility`, `BloodBarrier` and
+   `Vengeance` expiry all hang off `PlayerDeathEvent`. That is harmless while
+   builds carry no skills, and silently wrong the moment the phase 2 catalog does
+   — a build whose value is partly realised on kill would be under-measured with
+   no error to signal it.
+
+   **Fidelity work that turned out to be needed immediately (2026-07-27).**
+   Suppressing the death moved the failure earlier rather than removing it: the
+   next sweep threw on *spawn*, from `RoleChangeEvent` (fired by
+   `RoleManager.equipRole`) — `RoleStatListener.onUpdate:46` on the same null
+   `getPlayer()`, and `SkillStatListener.onRoleChange:53` on
+   `buildManager.getObject(uuid).orElseThrow()`. Both were fixed in the sim module:
+   - **`SimGamer extends Gamer`** overrides `getPlayer()` to return the fake player
+     directly. This fixes every `client.getGamer().getPlayer()` call site at once,
+     and — the important part — **costs no isolation**, because `Client.isLoaded()`
+     asks `Bukkit.getPlayer` *directly* rather than through the gamer. Simulated
+     clients still report as not loaded and stay out of `ClientManager.getOnline()`
+     and the stat flush.
+   - **`SimClientFactory.registerBuilds`** publishes one empty active `RoleBuild`
+     per role into `BuildManager`. `BuildManager.loadBuilds` is unusable here: it
+     reads from the database, and its `loadDefaultBuilds` fallback both *writes*
+     the generated builds back (`BuildRepository.save`, line 247) and equips a real
+     skill loadout — which would arm Sever, Leap and Vengeance on combatants whose
+     purpose is to measure plain melee.
+
+   **What this means for the phase 2 plan.** Registering combatants with
+   `PlayerList` was expected to be required and turned out **not** to be — the
+   `Gamer` override covers the observed call sites without giving up the "absent
+   from `Bukkit.getOnlinePlayers()`" exclusion. Prefer keeping it that way. The
+   remaining phase 2 work is therefore:
+   - populate the registered `RoleBuild`s from the matchup's `SimBuildSpec` rather
+     than leaving them empty, which is what makes the catalog's skill axis reach
+     the pipeline at all;
+   - delete the kill suppression in `SimRecorder` and let combatants really die,
+     re-auditing the open question 4 surface first;
+   - only fall back to `PlayerList` registration if a listener is found that calls
+     `Bukkit.getPlayer` directly and cannot be satisfied otherwise — and if so,
+     expect to need the `SimulatedEntity` guard at more chokepoints, since that
+     trades the free isolation away.
 
 ## 6. Key code references
 

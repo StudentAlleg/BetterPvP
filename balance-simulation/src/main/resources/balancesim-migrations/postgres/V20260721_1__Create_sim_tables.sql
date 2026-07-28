@@ -11,7 +11,7 @@ CREATE TABLE IF NOT EXISTS sim_run
     realm          INTEGER     NOT NULL,
     started_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     finished_at    TIMESTAMPTZ,
-    -- What kicked the run off: COMMAND, CONFIG_RELOAD, SCHEDULED.
+    -- What kicked the run off: COMMAND, SCHEDULED.
     trigger        TEXT        NOT NULL,
     -- Bumped whenever the engine's measurement semantics change, so old runs are not
     -- silently diffed against new ones.

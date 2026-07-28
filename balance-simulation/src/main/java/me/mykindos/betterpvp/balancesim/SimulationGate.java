@@ -40,8 +40,4 @@ public class SimulationGate {
     @Config(path = "champions.simulation.duelTimeoutSeconds", defaultValue = "30.0")
     private double duelTimeoutSeconds;
 
-    @Inject
-    @Config(path = "champions.simulation.runOnConfigReload", defaultValue = "false")
-    private boolean runOnConfigReload;
-
 }

@@ -16,8 +16,6 @@ champions:
     maxConcurrentDuels: 64
     # Hard stop for a single duel, so a matchup that can never kill does not stall a run.
     duelTimeoutSeconds: 30.0
-    # Re-run automatically after /reload, skipped when the config hash is unchanged.
-    runOnConfigReload: false
 
 command:
   simulate:

@@ -9,9 +9,6 @@ public enum SimulationTrigger {
     /** {@code /simulate}, run by hand. */
     COMMAND,
 
-    /** Fired after {@code /reload}, so dashboards are never stale. Skipped when the config hash is unchanged. */
-    CONFIG_RELOAD,
-
     /** An {@code @UpdateEvent} schedule, e.g. a nightly all-vectors sweep. */
     SCHEDULED
 }

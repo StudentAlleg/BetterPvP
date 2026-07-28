@@ -5,8 +5,8 @@ import me.mykindos.betterpvp.core.combat.damagelog.DamageLog;
 import me.mykindos.betterpvp.core.combat.damagelog.DamageLogManager;
 import me.mykindos.betterpvp.core.combat.events.KillContributionEvent;
 import me.mykindos.betterpvp.core.combat.stats.model.Contribution;
+import me.mykindos.betterpvp.core.framework.simulation.SimulatedEntity;
 import me.mykindos.betterpvp.core.listener.BPvPListener;
-import static me.mykindos.betterpvp.core.utilities.SnowflakeIdGenerator.ID_GENERATOR;
 import me.mykindos.betterpvp.core.utilities.UtilServer;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
@@ -20,6 +20,8 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.ConcurrentLinkedDeque;
 
+import static me.mykindos.betterpvp.core.utilities.SnowflakeIdGenerator.ID_GENERATOR;
+
 @BPvPListener
 public class KillEventListener implements Listener {
 
@@ -32,8 +34,23 @@ public class KillEventListener implements Listener {
 
     @EventHandler(priority = EventPriority.MONITOR)
     public void onDeath(PlayerDeathEvent event) {
+        // Simulated duels run through the real combat pipeline, so a fake player's death arrives
+        // here exactly like a real one. This listener is the chokepoint that turns a death into
+        // the KillContributionEvent every stats and leaderboard listener consumes, so dropping
+        // simulated deaths here excludes them from the whole persistence chain at once -- rather
+        // than needing a guard duplicated in each downstream listener.
+        if (SimulatedEntity.isSimulated(event.getPlayer())) {
+            return;
+        }
+
         final DamageLog lastDamager = logManager.getLastDamager(event.getPlayer());
         if (lastDamager == null || !(lastDamager.getDamager() instanceof Player killer)) {
+            return;
+        }
+
+        // A simulated killer is excluded too: a fake player that somehow lands the killing blow on
+        // a real one must not be credited with a kill or entered into a leaderboard.
+        if (SimulatedEntity.isSimulated(killer)) {
             return;
         }
 

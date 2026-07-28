@@ -12,6 +12,7 @@ import org.bukkit.entity.LivingEntity;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -99,6 +100,36 @@ public class SimRecorder implements Listener {
                 event.getDamage(),
                 event.getModifiedDamage(),
                 List.of(event.getReasons())));
+
+        // Same arithmetic DamageEventFinalizer.applyFinalDamage is about to do. It runs after the
+        // event returns, so this is the last point at which the kill can be stopped.
+        if (!event.isDamageeLiving()) {
+            return;
+        }
+        final LivingEntity living = event.getLivingDamagee();
+        if (living == null || living.getHealth() - event.getModifiedDamage() > 0.0) {
+            return;
+        }
+
+        // A fake player must never actually die. PlayerDeathEvent has upwards of forty listeners
+        // across the plugins, and they reasonably assume a real logged-in player: Gamer.getPlayer()
+        // resolves through Bukkit.getPlayer, which returns null for a combatant that was never
+        // added to the PlayerList, and BuildManager has no GamerBuilds for a UUID that never
+        // logged in. Guarding each listener would mean scattering simulation awareness across the
+        // codebase, which is exactly what this project is not allowed to do -- so the kill is
+        // stopped here instead, in the simulator.
+        //
+        // Cancelling makes DamageEventProcessor return before the finalizer, so no health is
+        // applied. The hit is already recorded above at its true value, and the duel is resolved
+        // from that record rather than from the entity's health.
+        //
+        // TODO(phase 2): remove this. Suppressing the death also suppresses every on-death
+        // mechanic -- SoulHarvest, BloodBarrier, Vengeance expiry -- which is harmless while
+        // builds carry no skills and silently under-measures them once the catalog does. See
+        // docs/balance-simulation/DESIGN.md open question 8: phase 2 raises fake-player fidelity
+        // (PlayerList registration, synthesised GamerBuilds) so combatants can really die.
+        recording.markKilled(damagee.getUniqueId(), System.nanoTime() - recording.startNanos);
+        event.setCancelled(true);
     }
 
     /**
@@ -129,6 +160,17 @@ public class SimRecorder implements Listener {
         private final long startNanos = System.nanoTime();
         private final List<HitRecord> hits = new ArrayList<>();
 
+        /**
+         * Whoever took a blow that would have been lethal, or null while both are alive. This is
+         * the duel's notion of death -- the entity itself never dies, see
+         * {@link SimRecorder#onDamage}.
+         */
+        @Nullable
+        private volatile UUID killed;
+
+        /** Nanoseconds from duel start to the lethal blow. Only meaningful once {@link #killed} is set. */
+        private volatile long killedElapsedNanos;
+
         private Recording(UUID combatantA, UUID combatantB) {
             this.combatantA = combatantA;
             this.combatantB = combatantB;
@@ -136,6 +178,14 @@ public class SimRecorder implements Listener {
 
         private synchronized void record(HitRecord hit) {
             hits.add(hit);
+        }
+
+        private void markKilled(UUID victim, long elapsedNanos) {
+            // First lethal blow wins; a duel is over the moment one side would have dropped.
+            if (killed == null) {
+                killed = victim;
+                killedElapsedNanos = elapsedNanos;
+            }
         }
 
         /** An immutable snapshot of the hits dealt by {@code damager} to {@code damagee}. */

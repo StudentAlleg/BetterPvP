@@ -5,38 +5,36 @@ import com.google.inject.Singleton;
 import lombok.CustomLog;
 import me.mykindos.betterpvp.balancesim.catalog.SimBuildSpec;
 import me.mykindos.betterpvp.balancesim.catalog.SimSkillAllocation;
+import me.mykindos.betterpvp.balancesim.database.jooq.tables.records.SimResultRecord;
 import me.mykindos.betterpvp.balancesim.engine.SimulationTrigger;
 import me.mykindos.betterpvp.core.database.Database;
+import org.jetbrains.annotations.Nullable;
 import org.jooq.DSLContext;
-import org.jooq.Field;
 import org.jooq.JSONB;
-import org.jooq.Name;
-import org.jooq.Table;
 import org.jooq.impl.DSL;
-import org.jooq.impl.SQLDataType;
 
+import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+
+import static me.mykindos.betterpvp.balancesim.database.jooq.Tables.SIM_BUILD;
+import static me.mykindos.betterpvp.balancesim.database.jooq.Tables.SIM_RUN;
 
 /**
  * Persists simulation output, mirroring {@code GrafanaSnapshotRepository}: async jOOQ inside a
  * single transaction, realm-scoped.
  *
- * <p>Tables and columns are referenced by name via {@link DSL#table(Name)} rather than through
- * generated classes, so this module builds without running jOOQ codegen against a live
- * Postgres. Swapping to generated classes later is mechanical.
+ * <p>Tables and columns come from the generated classes, so the schema in
+ * {@code balancesim-migrations} and the code that writes it are checked against each other at
+ * compile time. Regenerate with {@code ./gradlew :balance-simulation:generateJooq} after changing
+ * a migration; that task needs the dev Postgres up, since it reads the live schema.
  */
 @Singleton
 @CustomLog
 public class SimResultRepository {
-
-    private static final Table<?> SIM_RUN = DSL.table(DSL.name("sim_run"));
-    private static final Table<?> SIM_BUILD = DSL.table(DSL.name("sim_build"));
-    private static final Table<?> SIM_RESULT = DSL.table(DSL.name("sim_result"));
-
-    private static final Field<Long> ID = DSL.field(DSL.name("id"), Long.class);
 
     private final Database database;
 
@@ -58,22 +56,15 @@ public class SimResultRepository {
                                            String scenarioJson) {
         return database.getAsyncDslContext().executeAsync(ctx -> ctx
                 .insertInto(SIM_RUN)
-                .columns(field("realm", Integer.class),
-                        field("started_at", OffsetDateTime.class),
-                        field("trigger", String.class),
-                        field("engine_version", String.class),
-                        field("config_hash", String.class),
-                        jsonbField("scenario"),
-                        field("status", String.class))
-                .values(DSL.val(realm),
-                        DSL.val(OffsetDateTime.now(ZoneOffset.UTC)),
-                        DSL.val(trigger.name()),
-                        DSL.val(engineVersion),
-                        DSL.val(configHash),
-                        jsonb(scenarioJson),
-                        DSL.val("RUNNING"))
-                .returning(ID)
-                .fetchOne(ID));
+                .set(SIM_RUN.REALM, realm)
+                .set(SIM_RUN.STARTED_AT, OffsetDateTime.now(ZoneOffset.UTC))
+                .set(SIM_RUN.TRIGGER, trigger.name())
+                .set(SIM_RUN.ENGINE_VERSION, engineVersion)
+                .set(SIM_RUN.CONFIG_HASH, configHash)
+                .set(SIM_RUN.SCENARIO, jsonb(scenarioJson))
+                .set(SIM_RUN.STATUS, "RUNNING")
+                .returning(SIM_RUN.ID)
+                .fetchOne(SIM_RUN.ID));
     }
 
     /**
@@ -84,9 +75,9 @@ public class SimResultRepository {
     public CompletableFuture<Void> closeRun(long runId, String status) {
         return database.getAsyncDslContext().executeAsyncVoid(ctx -> ctx
                 .update(SIM_RUN)
-                .set(field("finished_at", OffsetDateTime.class), OffsetDateTime.now(ZoneOffset.UTC))
-                .set(field("status", String.class), status)
-                .where(ID.eq(runId))
+                .set(SIM_RUN.FINISHED_AT, OffsetDateTime.now(ZoneOffset.UTC))
+                .set(SIM_RUN.STATUS, status)
+                .where(SIM_RUN.ID.eq(runId))
                 .execute());
     }
 
@@ -100,24 +91,16 @@ public class SimResultRepository {
     public CompletableFuture<Long> insertBuild(long runId, SimBuildSpec build, String runesJson, String skillsJson) {
         return database.getAsyncDslContext().executeAsync(ctx -> ctx
                 .insertInto(SIM_BUILD)
-                .columns(field("run_id", Long.class),
-                        field("role", String.class),
-                        field("weapon", String.class),
-                        jsonbField("runes"),
-                        jsonbField("skills"),
-                        field("points_spent", Integer.class),
-                        field("booster", Boolean.class),
-                        field("fingerprint", String.class))
-                .values(DSL.val(runId),
-                        DSL.val(build.role()),
-                        DSL.val(build.weaponKey()),
-                        jsonb(runesJson),
-                        jsonb(skillsJson),
-                        DSL.val(build.pointsSpent()),
-                        DSL.val(build.booster()),
-                        DSL.val(build.fingerprint()))
-                .returning(ID)
-                .fetchOne(ID));
+                .set(SIM_BUILD.RUN_ID, runId)
+                .set(SIM_BUILD.ROLE, build.role())
+                .set(SIM_BUILD.WEAPON, build.weaponKey())
+                .set(SIM_BUILD.RUNES, jsonb(runesJson, "[]"))
+                .set(SIM_BUILD.SKILLS, jsonb(skillsJson))
+                .set(SIM_BUILD.POINTS_SPENT, build.pointsSpent())
+                .set(SIM_BUILD.BOOSTER, build.booster())
+                .set(SIM_BUILD.FINGERPRINT, build.fingerprint())
+                .returning(SIM_BUILD.ID)
+                .fetchOne(SIM_BUILD.ID));
     }
 
     /**
@@ -133,44 +116,34 @@ public class SimResultRepository {
 
         return database.getAsyncDslContext().executeAsyncVoid(ctx -> ctx.transaction(configuration -> {
             DSLContext trx = DSL.using(configuration);
-            var insert = trx.insertInto(SIM_RESULT)
-                    .columns(field("run_id", Long.class),
-                            field("build_id", Long.class),
-                            field("target_role", String.class),
-                            field("target_armor", String.class),
-                            field("target_hp", Double.class),
-                            jsonbField("target_skills"),
-                            field("target_points", Integer.class),
-                            field("dmg_per_hit", Double.class),
-                            field("dps_sustained", Double.class),
-                            field("dps_burst", Double.class),
-                            field("ttk_s", Double.class),
-                            field("hits_to_kill", Double.class),
-                            field("energy_limited", Boolean.class),
-                            jsonbField("extras"));
+            final List<SimResultRecord> records = new ArrayList<>(rows.size());
 
             for (SimResultRow row : rows) {
-                insert = insert.values(DSL.val(runId),
-                        DSL.val(row.buildId()),
-                        DSL.val(row.target().role()),
-                        DSL.val(row.target().armorSetId()),
-                        DSL.val(row.target().hp()),
-                        // The defender's build affects the outcome via its DefensiveSkill passives
-                        // and resistance effects, so it is stored alongside the measurement.
-                        jsonb(skillsToJson(row.target().skills())),
-                        DSL.val(row.target().pointsSpent()),
-                        // Nullable: a matchup that timed out has no TTK. Bind with an explicit
-                        // type so a null does not lose its SQL type.
-                        DSL.val(row.dmgPerHit(), SQLDataType.DOUBLE),
-                        DSL.val(row.dpsSustained(), SQLDataType.DOUBLE),
-                        DSL.val(row.dpsBurst(), SQLDataType.DOUBLE),
-                        DSL.val(row.ttkSeconds(), SQLDataType.DOUBLE),
-                        DSL.val(row.hitsToKill(), SQLDataType.DOUBLE),
-                        DSL.val(row.energyLimited()),
-                        jsonb(row.extrasJson()));
+                final SimResultRecord record = new SimResultRecord();
+                record.setRunId(runId);
+                record.setBuildId(row.buildId());
+                record.setTargetRole(row.target().role());
+                record.setTargetArmor(row.target().armorSetId());
+                record.setTargetHp(BigDecimal.valueOf(row.target().hp()));
+                // The defender's build affects the outcome via its DefensiveSkill passives and
+                // resistance effects, so it is stored alongside the measurement.
+                record.setTargetSkills(jsonb(skillsToJson(row.target().skills()), "[]"));
+                record.setTargetPoints(row.target().pointsSpent());
+                // Nullable: a matchup that timed out has no TTK, and the figures derived from it
+                // are null with it.
+                record.setDmgPerHit(decimal(row.dmgPerHit()));
+                record.setDpsSustained(decimal(row.dpsSustained()));
+                record.setDpsBurst(decimal(row.dpsBurst()));
+                record.setTtkS(decimal(row.ttkSeconds()));
+                record.setHitsToKill(decimal(row.hitsToKill()));
+                record.setEnergyLimited(row.energyLimited());
+                record.setExtras(jsonb(row.extrasJson()));
+                records.add(record);
             }
 
-            insert.execute();
+            // Every record sets the same columns and leaves the identity unset, so this is one
+            // JDBC batch of a single insert statement rather than one statement per row.
+            trx.batchInsert(records).execute();
         })).exceptionally(ex -> {
             log.error("Failed to insert {} sim results for run {}", rows.size(), runId, ex).submit();
             return null;
@@ -181,16 +154,30 @@ public class SimResultRepository {
     // Private helpers
     // -------------------------------------------------------------------------
 
-    private static <T> Field<T> field(String name, Class<T> type) {
-        return DSL.field(DSL.name(name), type);
+    private static JSONB jsonb(String json) {
+        return jsonb(json, "{}");
     }
 
-    private static Field<JSONB> jsonbField(String name) {
-        return DSL.field(DSL.name(name), SQLDataType.JSONB);
+    /**
+     * @param fallback what an absent value means for this column -- {@code "{}"} for the object
+     *                 columns, {@code "[]"} for the list ones. The columns are {@code NOT NULL}
+     *                 with matching defaults, so an empty run must still write valid JSON of the
+     *                 shape the dashboards expect to unpack.
+     */
+    private static JSONB jsonb(String json, String fallback) {
+        return JSONB.valueOf(json == null || json.isBlank() ? fallback : json);
     }
 
-    private static Field<JSONB> jsonb(String json) {
-        return DSL.val(JSONB.valueOf(json == null || json.isBlank() ? "{}" : json), SQLDataType.JSONB);
+    /**
+     * Converts a measured figure to the column's {@code NUMERIC} type, preserving null.
+     *
+     * <p>{@code BigDecimal.valueOf(double)} goes through {@code Double.toString}, so the value
+     * that lands in Postgres is the shortest decimal that round-trips to the same double rather
+     * than the exact binary expansion.
+     */
+    @Nullable
+    private static BigDecimal decimal(@Nullable Double value) {
+        return value == null ? null : BigDecimal.valueOf(value);
     }
 
     /**
