@@ -8,8 +8,10 @@ import me.mykindos.betterpvp.balancesim.engine.DuelOrchestrator;
 import me.mykindos.betterpvp.balancesim.engine.SimulationTrigger;
 import me.mykindos.betterpvp.core.client.Client;
 import me.mykindos.betterpvp.core.command.Command;
+import me.mykindos.betterpvp.core.command.IConsoleCommand;
 import me.mykindos.betterpvp.core.framework.annotations.WithReflection;
 import me.mykindos.betterpvp.core.utilities.UtilMessage;
+import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 
 /**
@@ -22,7 +24,7 @@ import org.bukkit.entity.Player;
 @Singleton
 @WithReflection
 @CustomLog
-public class SimulateCommand extends Command {
+public class SimulateCommand extends Command implements IConsoleCommand {
 
     private final SimulationGate gate;
     private final DuelOrchestrator orchestrator;
@@ -45,18 +47,23 @@ public class SimulateCommand extends Command {
 
     @Override
     public void execute(Player player, Client client, String... args) {
+        execute(player, args);
+    }
+
+    @Override
+    public void execute(CommandSender sender, String[] args) {
         if (!gate.isEnabled()) {
-            UtilMessage.message(player, "core.prefix.command", "balancesim.command.simulate.disabled");
+            UtilMessage.message(sender, "core.prefix.command", "balancesim.command.simulate.disabled");
             return;
         }
 
-        UtilMessage.message(player, "core.prefix.command", "balancesim.command.simulate.started");
+        UtilMessage.message(sender, "core.prefix.command", "balancesim.command.simulate.started");
         orchestrator.run(SimulationTrigger.COMMAND)
-                .thenRun(() -> UtilMessage.message(player, "core.prefix.command",
+                .thenRun(() -> UtilMessage.message(sender, "core.prefix.command",
                         "balancesim.command.simulate.finished"))
                 .exceptionally(ex -> {
                     log.error("Simulation run failed", ex).submit();
-                    UtilMessage.message(player, "core.prefix.command", "balancesim.command.simulate.failed");
+                    UtilMessage.message(sender, "core.prefix.command", "balancesim.command.simulate.failed");
                     return null;
                 });
     }

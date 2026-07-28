@@ -27,7 +27,12 @@ val outputBuckets = mapOf(
         ":game",
         ":lunar",
         ":private:store",
-        ":private:compatability"
+        ":private:compatability",
+    ),
+    "devsimulation" to setOf(
+        ":champions",
+        ":core",
+        ":balance-simulation",
     ),
 )
 
