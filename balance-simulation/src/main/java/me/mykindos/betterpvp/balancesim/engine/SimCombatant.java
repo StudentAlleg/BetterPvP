@@ -7,6 +7,7 @@ import me.mykindos.betterpvp.champions.champions.roles.RoleManager;
 import me.mykindos.betterpvp.core.client.Client;
 import me.mykindos.betterpvp.core.components.champions.Role;
 import me.mykindos.betterpvp.core.framework.simulation.SimulatedEntity;
+import me.mykindos.betterpvp.core.utilities.UtilPlayer;
 import org.bukkit.Location;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.Plugin;
@@ -94,6 +95,15 @@ public class SimCombatant {
         // Plain weapon for phase 1. The weapon axis -- including boosters, which raise a skill's
         // effective level through the real accessor -- is part of the phase 2 catalog sweep.
         context.roleManager().equipWeapons(player);
+
+        // Start the duel at full health. equipRole raises the MAX_HEALTH attribute to the role's
+        // value but does not touch current health; for a real player that reconciliation is done
+        // by HealthListener.updateHealth, which runs on PlayerJoinEvent -- an event a fake player
+        // never fires, because it is deliberately not in the PlayerList. Without this every
+        // combatant fought at the vanilla default of 20 regardless of role, so a 29 HP assassin
+        // and a 40 HP brute both died to the same four hits and target_hp on the row described a
+        // durability the entity did not have.
+        player.setHealth(UtilPlayer.getMaxHealth(player));
     }
 
     /**
@@ -131,10 +141,10 @@ public class SimCombatant {
             return;
         }
         handle.attack(opponent.handle);
-        // Vanilla scales damage by attack-strength charge. Resetting the ticker keeps every
-        // simulated swing a fully-charged one, so swing timing is governed by the real
-        // DEFAULT_DELAY / (1 + attackSpeed) cadence the orchestrator drives rather than by a
-        // partial-charge multiplier the sim never intended to model.
+        // Combat here is 1.8-style: damage is constant and there is no attack-strength charge to
+        // wait out. The ticker is reset anyway so that if vanilla scaling is ever in play, a
+        // simulated swing is a fully-charged one rather than a partially-charged one, and swing
+        // timing stays governed by the pipeline's damage delay alone.
         handle.resetAttackStrengthTicker();
     }
 

@@ -7,6 +7,7 @@ import lombok.Getter;
 import me.mykindos.betterpvp.balancesim.world.SimWorldManager;
 import me.mykindos.betterpvp.core.combat.events.DamageEvent;
 import me.mykindos.betterpvp.core.listener.BPvPListener;
+import org.bukkit.Bukkit;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.event.EventHandler;
@@ -96,7 +97,7 @@ public class SimRecorder implements Listener {
         recording.record(new HitRecord(
                 damager.getUniqueId(),
                 damagee.getUniqueId(),
-                System.nanoTime() - recording.startNanos,
+                Bukkit.getCurrentTick() - recording.startTick,
                 event.getDamage(),
                 event.getModifiedDamage(),
                 List.of(event.getReasons())));
@@ -128,7 +129,7 @@ public class SimRecorder implements Listener {
         // builds carry no skills and silently under-measures them once the catalog does. See
         // docs/balance-simulation/DESIGN.md open question 8: phase 2 raises fake-player fidelity
         // (PlayerList registration, synthesised GamerBuilds) so combatants can really die.
-        recording.markKilled(damagee.getUniqueId(), System.nanoTime() - recording.startNanos);
+        recording.markKilled(damagee.getUniqueId(), Bukkit.getCurrentTick() - recording.startTick);
         event.setCancelled(true);
     }
 
@@ -137,14 +138,19 @@ public class SimRecorder implements Listener {
      * {@code finalDamage} is {@link DamageEvent#getModifiedDamage()} -- what the entity actually
      * lost -- and {@code reasons} is the pipeline's own breakdown of what contributed.
      *
-     * @param damager     who dealt the hit
-     * @param damagee     who took it
-     * @param elapsedNanos nanoseconds since the duel started
-     * @param rawDamage   pre-modifier damage
-     * @param finalDamage post-modifier damage applied
-     * @param reasons     the pipeline's reason/modifier labels for this hit
+     * <p>Time is counted in server ticks, not wall clock. That is the resolution combat actually
+     * has -- the damage delay, cooldowns and skill durations are all tick-quantised -- so a
+     * measurement in ticks is exact where one in nanoseconds only looked precise, carrying
+     * scheduler jitter and GC pauses into figures that should be reproducible between runs.
+     *
+     * @param damager      who dealt the hit
+     * @param damagee      who took it
+     * @param elapsedTicks server ticks since the duel started
+     * @param rawDamage    pre-modifier damage
+     * @param finalDamage  post-modifier damage applied
+     * @param reasons      the pipeline's reason/modifier labels for this hit
      */
-    public record HitRecord(UUID damager, UUID damagee, long elapsedNanos,
+    public record HitRecord(UUID damager, UUID damagee, int elapsedTicks,
                             double rawDamage, double finalDamage, List<String> reasons) {
     }
 
@@ -157,7 +163,7 @@ public class SimRecorder implements Listener {
 
         private final UUID combatantA;
         private final UUID combatantB;
-        private final long startNanos = System.nanoTime();
+        private final int startTick = Bukkit.getCurrentTick();
         private final List<HitRecord> hits = new ArrayList<>();
 
         /**
@@ -168,8 +174,8 @@ public class SimRecorder implements Listener {
         @Nullable
         private volatile UUID killed;
 
-        /** Nanoseconds from duel start to the lethal blow. Only meaningful once {@link #killed} is set. */
-        private volatile long killedElapsedNanos;
+        /** Ticks from duel start to the lethal blow. Only meaningful once {@link #killed} is set. */
+        private volatile int killedElapsedTicks;
 
         private Recording(UUID combatantA, UUID combatantB) {
             this.combatantA = combatantA;
@@ -180,11 +186,11 @@ public class SimRecorder implements Listener {
             hits.add(hit);
         }
 
-        private void markKilled(UUID victim, long elapsedNanos) {
+        private void markKilled(UUID victim, int elapsedTicks) {
             // First lethal blow wins; a duel is over the moment one side would have dropped.
             if (killed == null) {
                 killed = victim;
-                killedElapsedNanos = elapsedNanos;
+                killedElapsedTicks = elapsedTicks;
             }
         }
 

@@ -1,6 +1,7 @@
 plugins {
     id("org.flywaydb.flyway")
     id("io.papermc.paperweight.userdev")
+    id("jooqdynamic")
 }
 
 version = "1.0.0"
@@ -14,10 +15,6 @@ dependencies {
 
     compileOnly(project(":core"))
     compileOnly(project(":champions"))
-
-    // The `jooqdynamic` convention plugin is intentionally not applied: the sim_* repository
-    // uses string-based DSL.table(...) so it builds without a live Postgres for codegen.
-    compileOnly(libs.jooq)
 
     annotationProcessor(libs.lombok)
     compileOnly(libs.lombok)
