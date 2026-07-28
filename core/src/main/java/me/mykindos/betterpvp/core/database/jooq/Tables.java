@@ -17,9 +17,16 @@ import me.mykindos.betterpvp.core.database.jooq.tables.ClientRewards;
 import me.mykindos.betterpvp.core.database.jooq.tables.ClientStats;
 import me.mykindos.betterpvp.core.database.jooq.tables.Clients;
 import me.mykindos.betterpvp.core.database.jooq.tables.CombatStats;
+import me.mykindos.betterpvp.core.database.jooq.tables.Content;
+import me.mykindos.betterpvp.core.database.jooq.tables.ContentLinks;
+import me.mykindos.betterpvp.core.database.jooq.tables.ContentSnapshots;
 import me.mykindos.betterpvp.core.database.jooq.tables.FilteredWords;
 import me.mykindos.betterpvp.core.database.jooq.tables.GameData;
+import me.mykindos.betterpvp.core.database.jooq.tables.GameItems;
+import me.mykindos.betterpvp.core.database.jooq.tables.GameNpcFactories;
+import me.mykindos.betterpvp.core.database.jooq.tables.GameProfessions;
 import me.mykindos.betterpvp.core.database.jooq.tables.GameTeams;
+import me.mykindos.betterpvp.core.database.jooq.tables.GameZones;
 import me.mykindos.betterpvp.core.database.jooq.tables.GamerProperties;
 import me.mykindos.betterpvp.core.database.jooq.tables.GetAchievementCompletions;
 import me.mykindos.betterpvp.core.database.jooq.tables.GetClientAchievementRanks;
@@ -46,6 +53,14 @@ import me.mykindos.betterpvp.core.database.jooq.tables.OfflineMessages;
 import me.mykindos.betterpvp.core.database.jooq.tables.PlayerActivitySnapshots;
 import me.mykindos.betterpvp.core.database.jooq.tables.PropertyMap;
 import me.mykindos.betterpvp.core.database.jooq.tables.Punishments;
+import me.mykindos.betterpvp.core.database.jooq.tables.PurityDistributions;
+import me.mykindos.betterpvp.core.database.jooq.tables.PurityReforgeBias;
+import me.mykindos.betterpvp.core.database.jooq.tables.PurityRuneSlotDistributions;
+import me.mykindos.betterpvp.core.database.jooq.tables.QuestFlags;
+import me.mykindos.betterpvp.core.database.jooq.tables.QuestInstances;
+import me.mykindos.betterpvp.core.database.jooq.tables.QuestNpcs;
+import me.mykindos.betterpvp.core.database.jooq.tables.QuestObjectiveProgress;
+import me.mykindos.betterpvp.core.database.jooq.tables.QuestPrimitives;
 import me.mykindos.betterpvp.core.database.jooq.tables.Realms;
 import me.mykindos.betterpvp.core.database.jooq.tables.Seasons;
 import me.mykindos.betterpvp.core.database.jooq.tables.Servers;
@@ -53,6 +68,8 @@ import me.mykindos.betterpvp.core.database.jooq.tables.SmartBlockData;
 import me.mykindos.betterpvp.core.database.jooq.tables.Uuiditems;
 import me.mykindos.betterpvp.core.database.jooq.tables.WorldLogs;
 import me.mykindos.betterpvp.core.database.jooq.tables.WorldLogsMetadata;
+import me.mykindos.betterpvp.core.database.jooq.tables.ZoneDiscoveries;
+import me.mykindos.betterpvp.core.database.jooq.tables.Zones;
 import me.mykindos.betterpvp.core.database.jooq.tables.records.GetAchievementCompletionsRecord;
 import me.mykindos.betterpvp.core.database.jooq.tables.records.GetClientAchievementRanksRecord;
 import me.mykindos.betterpvp.core.database.jooq.tables.records.GetClientStatsRecord;
@@ -145,6 +162,21 @@ public class Tables {
     public static final CombatStats COMBAT_STATS = CombatStats.COMBAT_STATS;
 
     /**
+     * The table <code>public.content</code>.
+     */
+    public static final Content CONTENT = Content.CONTENT;
+
+    /**
+     * The table <code>public.content_links</code>.
+     */
+    public static final ContentLinks CONTENT_LINKS = ContentLinks.CONTENT_LINKS;
+
+    /**
+     * The table <code>public.content_snapshots</code>.
+     */
+    public static final ContentSnapshots CONTENT_SNAPSHOTS = ContentSnapshots.CONTENT_SNAPSHOTS;
+
+    /**
      * The table <code>public.filtered_words</code>.
      */
     public static final FilteredWords FILTERED_WORDS = FilteredWords.FILTERED_WORDS;
@@ -155,9 +187,29 @@ public class Tables {
     public static final GameData GAME_DATA = GameData.GAME_DATA;
 
     /**
+     * The table <code>public.game_items</code>.
+     */
+    public static final GameItems GAME_ITEMS = GameItems.GAME_ITEMS;
+
+    /**
+     * The table <code>public.game_npc_factories</code>.
+     */
+    public static final GameNpcFactories GAME_NPC_FACTORIES = GameNpcFactories.GAME_NPC_FACTORIES;
+
+    /**
+     * The table <code>public.game_professions</code>.
+     */
+    public static final GameProfessions GAME_PROFESSIONS = GameProfessions.GAME_PROFESSIONS;
+
+    /**
      * The table <code>public.game_teams</code>.
      */
     public static final GameTeams GAME_TEAMS = GameTeams.GAME_TEAMS;
+
+    /**
+     * The table <code>public.game_zones</code>.
+     */
+    public static final GameZones GAME_ZONES = GameZones.GAME_ZONES;
 
     /**
      * The table <code>public.gamer_properties</code>.
@@ -900,6 +952,46 @@ public class Tables {
     public static final Punishments PUNISHMENTS = Punishments.PUNISHMENTS;
 
     /**
+     * The table <code>public.purity_distributions</code>.
+     */
+    public static final PurityDistributions PURITY_DISTRIBUTIONS = PurityDistributions.PURITY_DISTRIBUTIONS;
+
+    /**
+     * The table <code>public.purity_reforge_bias</code>.
+     */
+    public static final PurityReforgeBias PURITY_REFORGE_BIAS = PurityReforgeBias.PURITY_REFORGE_BIAS;
+
+    /**
+     * The table <code>public.purity_rune_slot_distributions</code>.
+     */
+    public static final PurityRuneSlotDistributions PURITY_RUNE_SLOT_DISTRIBUTIONS = PurityRuneSlotDistributions.PURITY_RUNE_SLOT_DISTRIBUTIONS;
+
+    /**
+     * The table <code>public.quest_flags</code>.
+     */
+    public static final QuestFlags QUEST_FLAGS = QuestFlags.QUEST_FLAGS;
+
+    /**
+     * The table <code>public.quest_instances</code>.
+     */
+    public static final QuestInstances QUEST_INSTANCES = QuestInstances.QUEST_INSTANCES;
+
+    /**
+     * The table <code>public.quest_npcs</code>.
+     */
+    public static final QuestNpcs QUEST_NPCS = QuestNpcs.QUEST_NPCS;
+
+    /**
+     * The table <code>public.quest_objective_progress</code>.
+     */
+    public static final QuestObjectiveProgress QUEST_OBJECTIVE_PROGRESS = QuestObjectiveProgress.QUEST_OBJECTIVE_PROGRESS;
+
+    /**
+     * The table <code>public.quest_primitives</code>.
+     */
+    public static final QuestPrimitives QUEST_PRIMITIVES = QuestPrimitives.QUEST_PRIMITIVES;
+
+    /**
      * The table <code>public.realms</code>.
      */
     public static final Realms REALMS = Realms.REALMS;
@@ -933,4 +1025,14 @@ public class Tables {
      * The table <code>public.world_logs_metadata</code>.
      */
     public static final WorldLogsMetadata WORLD_LOGS_METADATA = WorldLogsMetadata.WORLD_LOGS_METADATA;
+
+    /**
+     * The table <code>public.zone_discoveries</code>.
+     */
+    public static final ZoneDiscoveries ZONE_DISCOVERIES = ZoneDiscoveries.ZONE_DISCOVERIES;
+
+    /**
+     * The table <code>public.zones</code>.
+     */
+    public static final Zones ZONES = Zones.ZONES;
 }

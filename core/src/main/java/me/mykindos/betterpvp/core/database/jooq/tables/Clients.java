@@ -4,10 +4,6 @@
 package me.mykindos.betterpvp.core.database.jooq.tables;
 
 
-import java.util.Arrays;
-import java.util.Collection;
-import java.util.List;
-
 import me.mykindos.betterpvp.core.database.jooq.Indexes;
 import me.mykindos.betterpvp.core.database.jooq.Keys;
 import me.mykindos.betterpvp.core.database.jooq.Public;
@@ -27,8 +23,9 @@ import me.mykindos.betterpvp.core.database.jooq.tables.KillContributions.KillCon
 import me.mykindos.betterpvp.core.database.jooq.tables.Kills.KillsPath;
 import me.mykindos.betterpvp.core.database.jooq.tables.OfflineMessages.OfflineMessagesPath;
 import me.mykindos.betterpvp.core.database.jooq.tables.Punishments.PunishmentsPath;
+import me.mykindos.betterpvp.core.database.jooq.tables.ZoneDiscoveries.ZoneDiscoveriesPath;
+import me.mykindos.betterpvp.core.database.jooq.tables.Zones.ZonesPath;
 import me.mykindos.betterpvp.core.database.jooq.tables.records.ClientsRecord;
-
 import org.jooq.Condition;
 import org.jooq.Field;
 import org.jooq.ForeignKey;
@@ -50,6 +47,10 @@ import org.jooq.UniqueKey;
 import org.jooq.impl.DSL;
 import org.jooq.impl.SQLDataType;
 import org.jooq.impl.TableImpl;
+
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.List;
 
 
 /**
@@ -370,6 +371,19 @@ public class Clients extends TableImpl<ClientsRecord> {
         return _punishments;
     }
 
+    private transient ZoneDiscoveriesPath _zoneDiscoveries;
+
+    /**
+     * Get the implicit to-many join path to the
+     * <code>public.zone_discoveries</code> table
+     */
+    public ZoneDiscoveriesPath zoneDiscoveries() {
+        if (_zoneDiscoveries == null)
+            _zoneDiscoveries = new ZoneDiscoveriesPath(this, null, Keys.ZONE_DISCOVERIES__ZONE_DISCOVERIES_CLIENT_FKEY.getInverseKey());
+
+        return _zoneDiscoveries;
+    }
+
     /**
      * Get the implicit many-to-many join path to the
      * <code>public.game_data</code> table
@@ -384,6 +398,14 @@ public class Clients extends TableImpl<ClientsRecord> {
      */
     public KillsPath kills() {
         return killContributions().kills();
+    }
+
+    /**
+     * Get the implicit many-to-many join path to the <code>public.zones</code>
+     * table
+     */
+    public ZonesPath zones() {
+        return zoneDiscoveries().zones();
     }
 
     @Override

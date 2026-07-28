@@ -4,9 +4,6 @@
 package me.mykindos.betterpvp.clans.database.jooq;
 
 
-import java.util.Arrays;
-import java.util.List;
-
 import me.mykindos.betterpvp.clans.database.jooq.tables.ClanAlliances;
 import me.mykindos.betterpvp.clans.database.jooq.tables.ClanEnemies;
 import me.mykindos.betterpvp.clans.database.jooq.tables.ClanInsurance;
@@ -16,17 +13,18 @@ import me.mykindos.betterpvp.clans.database.jooq.tables.ClanProperties;
 import me.mykindos.betterpvp.clans.database.jooq.tables.ClanTerritory;
 import me.mykindos.betterpvp.clans.database.jooq.tables.Clans;
 import me.mykindos.betterpvp.clans.database.jooq.tables.ClansDominanceScale;
-import me.mykindos.betterpvp.clans.database.jooq.tables.ClansFieldsOres;
 import me.mykindos.betterpvp.clans.database.jooq.tables.ClansKills;
 import me.mykindos.betterpvp.clans.database.jooq.tables.GetClanKillLogs;
 import me.mykindos.betterpvp.clans.database.jooq.tables.records.GetClanKillLogsRecord;
-
 import org.jooq.Catalog;
 import org.jooq.Configuration;
 import org.jooq.Field;
 import org.jooq.Result;
 import org.jooq.Table;
 import org.jooq.impl.SchemaImpl;
+
+import java.util.Arrays;
+import java.util.List;
 
 
 /**
@@ -86,11 +84,6 @@ public class Public extends SchemaImpl {
      * The table <code>public.clans_dominance_scale</code>.
      */
     public final ClansDominanceScale CLANS_DOMINANCE_SCALE = ClansDominanceScale.CLANS_DOMINANCE_SCALE;
-
-    /**
-     * The table <code>public.clans_fields_ores</code>.
-     */
-    public final ClansFieldsOres CLANS_FIELDS_ORES = ClansFieldsOres.CLANS_FIELDS_ORES;
 
     /**
      * The table <code>public.clans_kills</code>.
@@ -161,7 +154,6 @@ public class Public extends SchemaImpl {
             ClanTerritory.CLAN_TERRITORY,
             Clans.CLANS,
             ClansDominanceScale.CLANS_DOMINANCE_SCALE,
-            ClansFieldsOres.CLANS_FIELDS_ORES,
             ClansKills.CLANS_KILLS,
             GetClanKillLogs.GET_CLAN_KILL_LOGS
         );

@@ -13,7 +13,6 @@ import me.mykindos.betterpvp.balancesim.repository.SimResultRow;
 import me.mykindos.betterpvp.balancesim.world.SimWorldManager;
 import me.mykindos.betterpvp.champions.champions.roles.RoleManager;
 import me.mykindos.betterpvp.core.Core;
-import me.mykindos.betterpvp.core.combat.cause.DamageCause;
 import me.mykindos.betterpvp.core.utilities.UtilServer;
 import org.bukkit.Bukkit;
 import org.bukkit.scheduler.BukkitTask;
@@ -36,9 +35,9 @@ import java.util.concurrent.ConcurrentHashMap;
  * than hours. Per tick the orchestrator performs due melee swings and (from phase 3) lets the
  * {@link RotationPolicy} synthesise skill inputs.
  *
- * <p><b>Phase 1 scope.</b> Melee only, one iteration per matchup, and a fixed swing cadence of
- * {@link DamageCause#DEFAULT_DELAY} rather than one read from the weapon's attack-speed stat.
- * That is enough to prove the pipeline end to end -- fake players, real damage events, rows in
+ * <p><b>Phase 1 scope.</b> Melee only, one iteration per matchup, and the attacker swinging every
+ * tick rather than on a cadence read from the weapon's attack-speed stat -- the pipeline's own
+ * damage delay is what decides which swings land. That is enough to prove the pipeline end to end -- fake players, real damage events, rows in
  * {@code sim_result} -- which is what the phase 1 exit criterion asks for. Monte-Carlo iteration
  * ({@code gate.getIterations()}), per-weapon attack speed and active-skill rotations are phase 2
  * and 3; until then results are single-sample and must not be read as distributions.
@@ -219,6 +218,14 @@ public class DuelOrchestrator {
                 + ":" + gate.getMaxConcurrentDuels() + ":" + ENGINE_VERSION).hashCode());
     }
 
+    /**
+     * Ticks are the sim's unit of time; seconds exist only for the columns dashboards read.
+     * Kept exact rather than approximated, so a value always lands on a 0.05 boundary.
+     */
+    private static double ticksToSeconds(long ticks) {
+        return ticks * MILLIS_PER_TICK / 1000.0;
+    }
+
     private String scenarioJson() {
         return "{\"phase\":1,\"iterations\":1,\"melee_only\":true,\"timeout_s\":"
                 + gate.getDuelTimeoutSeconds() + "}";
@@ -312,20 +319,14 @@ public class DuelOrchestrator {
         private final SimCombatant defender;
         private final long startTick;
         private final long timeoutTicks;
-        private final long swingIntervalTicks;
 
         private SimRecorder.Recording recording;
-        private long nextSwingTick;
 
         private Duel(Matchup matchup, int arenaIndex, long startTick) {
             this.matchup = matchup;
             this.arena = worldManager.prepareArena(arenaIndex);
             this.startTick = startTick;
             this.timeoutTicks = (long) (gate.getDuelTimeoutSeconds() * 1000L / MILLIS_PER_TICK);
-            // Phase 1 uses the pipeline's base delay directly. DamageDelayManager enforces the same
-            // floor, so swinging faster than this would be silently dropped rather than measured.
-            this.swingIntervalTicks = Math.max(1L, DamageCause.DEFAULT_DELAY / MILLIS_PER_TICK);
-            this.nextSwingTick = startTick;
 
             final UUID attackerId = UUID.randomUUID();
             final UUID defenderId = UUID.randomUUID();
@@ -368,10 +369,17 @@ public class DuelOrchestrator {
             if (currentTick - startTick >= timeoutTicks) {
                 return true;
             }
-            if (currentTick >= nextSwingTick) {
-                attacker.swingAt(defender);
-                nextSwingTick = currentTick + swingIntervalTicks;
-            }
+            // Swing every tick and let the pipeline decide what lands. The sim previously paced
+            // itself at DamageCause.DEFAULT_DELAY, on the assumption that matching the floor
+            // exactly would land every swing -- but a swing scheduled on the 400 ms boundary
+            // arrives a hair early as often as not, DamageDelayManager rejects it, and the next
+            // attempt is a further 8 ticks out. That aliasing is what stretched a 4-hit kill
+            // across ~89 ticks instead of ~24. There is no attack-strength charge to husband
+            // here (1.8-style combat, constant damage), so the only cost of a rejected swing is
+            // the call itself, and rejections are invisible to the measurement:
+            // processPreEventDelay returns before DamageEventProcessor fires DamageEvent, so the
+            // recorder only ever sees hits that actually landed.
+            attacker.swingAt(defender);
             return false;
         }
 
@@ -382,10 +390,19 @@ public class DuelOrchestrator {
                     recording.hitsFrom(attacker.getUuid(), defender.getUuid());
 
             final boolean killed = defender.getUuid().equals(recording.getKilled());
-            final double elapsedSeconds = Math.max(1, endTick - startTick) * MILLIS_PER_TICK / 1000.0;
-            // Time to kill comes from the lethal hit's own timestamp rather than the tick the loop
-            // happened to notice on, so it is not quantised to the sweep's polling interval.
-            final Double ttk = killed ? recording.getKilledElapsedNanos() / 1_000_000_000.0 : null;
+
+            // The fight is measured from the first landed hit, not from when the duel object was
+            // built. Setting a duel up costs real main-thread time -- spawning two ServerPlayers,
+            // equipping roles and weapons -- and fill() does that for the whole concurrency batch
+            // back to back, while the first swing of every duel in the batch lands on the same
+            // tick afterwards. Anchoring on the recording's start therefore folded each duel's
+            // position in the batch into its TTK: identical matchups came out staggered by the
+            // per-duel setup cost, decreasing down the batch. Hit timestamps share that tick
+            // base, so subtracting the first one cancels the offset entirely.
+            final Integer engagementStartTick = hits.isEmpty() ? null : hits.get(0).elapsedTicks();
+            final Integer ttkTicks = killed && engagementStartTick != null
+                    ? recording.getKilledElapsedTicks() - engagementStartTick
+                    : null;
 
             Double dmgPerHit = null;
             Double dpsSustained = null;
@@ -393,7 +410,14 @@ public class DuelOrchestrator {
             if (!hits.isEmpty()) {
                 final double total = hits.stream().mapToDouble(SimRecorder.HitRecord::finalDamage).sum();
                 dmgPerHit = total / hits.size();
-                dpsSustained = total / elapsedSeconds;
+                // Same window as the TTK when there is one, so the figures on a row stay
+                // consistent with each other: dmg_per_hit * hits_to_kill / ttk_s == dps_sustained.
+                // A duel that timed out has no lethal hit to bound the window, so it falls back to
+                // the loop's own elapsed ticks.
+                final long windowTicks = ttkTicks != null && ttkTicks > 0
+                        ? ttkTicks
+                        : Math.max(1, endTick - startTick);
+                dpsSustained = total / ticksToSeconds(windowTicks);
                 // Only meaningful when the target actually died; otherwise the hit count is just
                 // "however many landed before the timeout" and would read as a real figure.
                 hitsToKill = killed ? (double) hits.size() : null;
@@ -407,10 +431,15 @@ public class DuelOrchestrator {
                     // Burst DPS needs a windowed maximum over a rotation; melee-only phase 1 has no
                     // burst to distinguish, so it is left null rather than duplicating sustained.
                     null,
-                    ttk,
+                    // ttk_s is a rendering of the tick count for dashboards, not a second
+                    // measurement: it is always an exact multiple of 0.05.
+                    ttkTicks == null ? null : ticksToSeconds(ttkTicks),
                     hitsToKill,
                     false,
-                    "{\"iterations\":1,\"hits\":" + hits.size() + ",\"killed\":" + killed + "}");
+                    // The tick count rides in extras so the unit the sim actually measured in is
+                    // recoverable from the row without a schema change.
+                    "{\"iterations\":1,\"hits\":" + hits.size() + ",\"killed\":" + killed
+                            + ",\"ttk_ticks\":" + ttkTicks + "}");
         }
 
         private void teardown() {

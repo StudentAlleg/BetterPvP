@@ -13,7 +13,6 @@ import me.mykindos.betterpvp.clans.database.jooq.tables.ClanProperties;
 import me.mykindos.betterpvp.clans.database.jooq.tables.ClanTerritory;
 import me.mykindos.betterpvp.clans.database.jooq.tables.Clans;
 import me.mykindos.betterpvp.clans.database.jooq.tables.ClansDominanceScale;
-import me.mykindos.betterpvp.clans.database.jooq.tables.ClansFieldsOres;
 import me.mykindos.betterpvp.clans.database.jooq.tables.ClansKills;
 import me.mykindos.betterpvp.clans.database.jooq.tables.records.ClanAlliancesRecord;
 import me.mykindos.betterpvp.clans.database.jooq.tables.records.ClanEnemiesRecord;
@@ -23,10 +22,8 @@ import me.mykindos.betterpvp.clans.database.jooq.tables.records.ClanMetadataReco
 import me.mykindos.betterpvp.clans.database.jooq.tables.records.ClanPropertiesRecord;
 import me.mykindos.betterpvp.clans.database.jooq.tables.records.ClanTerritoryRecord;
 import me.mykindos.betterpvp.clans.database.jooq.tables.records.ClansDominanceScaleRecord;
-import me.mykindos.betterpvp.clans.database.jooq.tables.records.ClansFieldsOresRecord;
 import me.mykindos.betterpvp.clans.database.jooq.tables.records.ClansKillsRecord;
 import me.mykindos.betterpvp.clans.database.jooq.tables.records.ClansRecord;
-
 import org.jooq.ForeignKey;
 import org.jooq.TableField;
 import org.jooq.UniqueKey;
@@ -58,7 +55,6 @@ public class Keys {
     public static final UniqueKey<ClansRecord> CLANS_PKEY = Internal.createUniqueKey(Clans.CLANS, DSL.name("clans_pkey"), new TableField[] { Clans.CLANS.ID }, true);
     public static final UniqueKey<ClansRecord> CLANS_REALM_NAME_KEY = Internal.createUniqueKey(Clans.CLANS, DSL.name("clans_realm_name_key"), new TableField[] { Clans.CLANS.REALM, Clans.CLANS.NAME }, true);
     public static final UniqueKey<ClansDominanceScaleRecord> CLANS_DOMINANCE_SCALE_PKEY = Internal.createUniqueKey(ClansDominanceScale.CLANS_DOMINANCE_SCALE, DSL.name("clans_dominance_scale_pkey"), new TableField[] { ClansDominanceScale.CLANS_DOMINANCE_SCALE.CLAN_SIZE }, true);
-    public static final UniqueKey<ClansFieldsOresRecord> CLANS_FIELDS_ORES_PKEY = Internal.createUniqueKey(ClansFieldsOres.CLANS_FIELDS_ORES, DSL.name("clans_fields_ores_pkey"), new TableField[] { ClansFieldsOres.CLANS_FIELDS_ORES.REALM, ClansFieldsOres.CLANS_FIELDS_ORES.WORLD, ClansFieldsOres.CLANS_FIELDS_ORES.X, ClansFieldsOres.CLANS_FIELDS_ORES.Y, ClansFieldsOres.CLANS_FIELDS_ORES.Z }, true);
     public static final UniqueKey<ClansKillsRecord> CLANS_KILLS_PKEY = Internal.createUniqueKey(ClansKills.CLANS_KILLS, DSL.name("clans_kills_pkey"), new TableField[] { ClansKills.CLANS_KILLS.KILL_ID }, true);
 
     // -------------------------------------------------------------------------

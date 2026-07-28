@@ -13,11 +13,9 @@ import me.mykindos.betterpvp.clans.database.jooq.tables.ClanProperties;
 import me.mykindos.betterpvp.clans.database.jooq.tables.ClanTerritory;
 import me.mykindos.betterpvp.clans.database.jooq.tables.Clans;
 import me.mykindos.betterpvp.clans.database.jooq.tables.ClansDominanceScale;
-import me.mykindos.betterpvp.clans.database.jooq.tables.ClansFieldsOres;
 import me.mykindos.betterpvp.clans.database.jooq.tables.ClansKills;
 import me.mykindos.betterpvp.clans.database.jooq.tables.GetClanKillLogs;
 import me.mykindos.betterpvp.clans.database.jooq.tables.records.GetClanKillLogsRecord;
-
 import org.jooq.Configuration;
 import org.jooq.Field;
 import org.jooq.Result;
@@ -73,11 +71,6 @@ public class Tables {
      * The table <code>public.clans_dominance_scale</code>.
      */
     public static final ClansDominanceScale CLANS_DOMINANCE_SCALE = ClansDominanceScale.CLANS_DOMINANCE_SCALE;
-
-    /**
-     * The table <code>public.clans_fields_ores</code>.
-     */
-    public static final ClansFieldsOres CLANS_FIELDS_ORES = ClansFieldsOres.CLANS_FIELDS_ORES;
 
     /**
      * The table <code>public.clans_kills</code>.
