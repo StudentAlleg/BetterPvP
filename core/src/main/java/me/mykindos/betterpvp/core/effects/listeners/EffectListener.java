@@ -137,7 +137,7 @@ public class EffectListener implements Listener {
     private boolean shouldRemoveByPredicate(Effect effect, LivingEntity livingEntity) {
         return effect.getRemovalPredicate() != null
                 && effect.getRemovalPredicate().test(livingEntity)
-                && effect.getLength() - System.currentTimeMillis() < 0;
+                && effect.getRemainingDuration() < 0;
     }
 
     /**

@@ -29,6 +29,49 @@ public class UtilTime {
         return System.currentTimeMillis() - from > required;
     }
 
+    /** Milliseconds in one server tick at the target rate of 20 TPS. */
+    public static final long MILLIS_PER_TICK = 50L;
+
+    /** Server ticks in one second at the target rate of 20 TPS. */
+    public static final long TICKS_PER_SECOND = 20L;
+
+    /**
+     * Converts a duration in seconds to whole server ticks.
+     *
+     * <p>Game-logic durations belong in ticks rather than wall clock. Anything that only advances
+     * while a tick is being processed -- cooldowns, damage delays, out-of-combat windows, charge
+     * accrual -- measured in milliseconds is really measured in "however many ticks fit in that
+     * many milliseconds", which is a number that shrinks as the server falls behind. The same fight
+     * then plays out differently at 20 TPS and at 18, and a simulation of it is only as accurate as
+     * the tick rate it happened to run at. See {@code DelayData} for the case that first surfaced
+     * this.
+     *
+     * <p>Rounded to nearest rather than up, so a converted duration stays as close as possible to
+     * the value configured instead of systematically lengthening. Any positive duration floors at
+     * one tick, so a heavily reduced duration still gates for a tick rather than vanishing.
+     *
+     * @param seconds the duration in seconds; zero or negative yields zero ticks
+     * @return the duration in server ticks
+     */
+    public static long toTicks(double seconds) {
+        if (seconds <= 0) {
+            return 0L;
+        }
+        return Math.max(1L, Math.round(seconds * TICKS_PER_SECOND));
+    }
+
+    /**
+     * Converts a duration in milliseconds to whole server ticks.
+     *
+     * @see #toTicks(double)
+     */
+    public static long millisToTicks(long millis) {
+        if (millis <= 0) {
+            return 0L;
+        }
+        return Math.max(1L, Math.round((double) millis / MILLIS_PER_TICK));
+    }
+
     public static double trim(double untrimmed, int d) {
         // Create a NumberFormat instance for the default locale
         NumberFormat numberFormat = NumberFormat.getNumberInstance(Locale.getDefault());

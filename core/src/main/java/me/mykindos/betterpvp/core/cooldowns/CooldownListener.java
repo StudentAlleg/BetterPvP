@@ -43,7 +43,7 @@ public class CooldownListener implements Listener {
         if(event.isCancelled()) return;
 
         effectManager.getEffect(event.getPlayer(), EffectTypes.COOLDOWN_REDUCTION).ifPresent(effect -> {
-            event.getCooldown().setSeconds(event.getCooldown().getSeconds() * (1 - (effect.getAmplifier() / 100d)));
+            event.getCooldown().setDurationSeconds(event.getCooldown().getDurationSeconds() * (1 - (effect.getAmplifier() / 100d)));
         });
     }
 

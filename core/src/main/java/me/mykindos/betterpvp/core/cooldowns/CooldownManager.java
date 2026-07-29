@@ -19,6 +19,7 @@ import me.mykindos.betterpvp.core.item.ItemInstance;
 import me.mykindos.betterpvp.core.locale.Translations;
 import me.mykindos.betterpvp.core.utilities.UtilMessage;
 import me.mykindos.betterpvp.core.utilities.UtilServer;
+import me.mykindos.betterpvp.core.utilities.UtilTime;
 import me.mykindos.betterpvp.core.utilities.model.ProgressBar;
 import me.mykindos.betterpvp.core.utilities.model.display.component.TimedComponent;
 import net.kyori.adventure.text.Component;
@@ -265,7 +266,7 @@ public class CooldownManager extends Manager<String, ConcurrentHashMap<String, C
                     return Component.join(JoinConfiguration.separator(Component.space()), cooldownName.decorate(TextDecoration.BOLD).color(NamedTextColor.GREEN), Translations.component("core.cooldown.recharged-bar").decorate(TextDecoration.BOLD).color(NamedTextColor.GREEN));
                 }
 
-                final double max = cooldown.getSeconds() / 1000;
+                final double max = cooldown.getDurationSeconds();
                 final double progress = Math.min(1f, Math.max(0, (max - cooldown.getRemaining()) / max));
                 final ProgressBar progressBar = ProgressBar.withProgress((float) progress);
 
@@ -301,7 +302,7 @@ public class CooldownManager extends Manager<String, ConcurrentHashMap<String, C
                 return false;
             }
 
-            Cooldown cooldown = new Cooldown(ability, duration, System.currentTimeMillis(), removeOnDeath, inform, cancellable);
+            Cooldown cooldown = new Cooldown(ability, duration, removeOnDeath, inform, cancellable);
             if (onExpire != null) {
                 cooldown.setOnExpire(onExpire);
             }
@@ -372,14 +373,14 @@ public class CooldownManager extends Manager<String, ConcurrentHashMap<String, C
             ConcurrentHashMap<String, Cooldown> cooldowns = cooldownOptional.get();
             Cooldown cooldown = cooldowns.get(ability);
             if (cooldown != null) {
-                long reductionMillis = (long) (reductionSeconds * 1000);
-                long newSystemTime = cooldown.getSystemTime() - reductionMillis;
+                // Shifting the start tick backwards is what makes the cooldown finish sooner.
+                // Clamped at no shift so a negative reduction cannot extend it, which is what the
+                // original guard was reaching for.
+                final int shiftTicks = (int) Math.max(0, UtilTime.toTicks(reductionSeconds));
+                final int newStartTick = cooldown.getStartTick() - shiftTicks;
 
-                if (newSystemTime > cooldown.getSystemTime()) {
-                    newSystemTime = cooldown.getSystemTime();
-                }
-
-                Cooldown newCooldown = new Cooldown(ability, cooldown.getSeconds() / 1000.0, newSystemTime, cooldown.isRemoveOnDeath(), cooldown.isInform(), cooldown.isCancellable());
+                Cooldown newCooldown = new Cooldown(ability, cooldown.getDurationSeconds(), newStartTick,
+                        cooldown.isRemoveOnDeath(), cooldown.isInform(), cooldown.isCancellable(), cooldown.getOnExpire());
 
                 cooldowns.put(ability, newCooldown);
             }
@@ -556,7 +557,7 @@ public class CooldownManager extends Manager<String, ConcurrentHashMap<String, C
                     Translations.component("core.cooldown.recharged-bar").decorate(TextDecoration.BOLD).color(NamedTextColor.GREEN));
         }
 
-        final double max = cooldown.getSeconds() / 1000;
+        final double max = cooldown.getDurationSeconds();
         final double progress = Math.min(1f, Math.max(0, (max - cooldown.getRemaining()) / max));
         final ProgressBar progressBar = ProgressBar.withProgress((float) progress);
         final TextComponent bar = progressBar.build();

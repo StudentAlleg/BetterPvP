@@ -48,7 +48,9 @@ public class LunarCooldownListener implements Listener {
 
         final Cooldown.CooldownBuilder builder = Cooldown.builder()
                 .name(cooldown.getName())
-                .duration(Duration.ofMillis((long) cooldown.getSeconds()));
+                // Apollo's cooldown display is wall-clock, so the tick-based duration is converted
+                // back out here rather than the client being told a tick count.
+                .duration(Duration.ofMillis((long) (cooldown.getDurationSeconds() * 1000)));
 
         final ItemStack item = event.getPlayer().getInventory().getItemInMainHand();
         if (!item.getType().equals(Material.AIR)) {

@@ -3,6 +3,7 @@ package me.mykindos.betterpvp.core.cooldowns;
 
 import lombok.Data;
 import me.mykindos.betterpvp.core.utilities.UtilTime;
+import org.bukkit.Bukkit;
 
 import java.util.function.Consumer;
 
@@ -16,17 +17,29 @@ public class Cooldown {
      */
     private final String name;
     /**
-     * Represents the duration of the cooldown in seconds.
-     * This value is stored as a double to allow for fractional seconds
-     * and is internally converted to milliseconds for processing.
+     * The duration of the cooldown, in <em>server ticks</em>.
+     *
+     * <p>A double so that a reduction (the cooldown-reduction effect, the diamond gem) can scale it
+     * by a fraction without quantising to a whole tick on every application.
+     *
+     * <p>This replaced a field named {@code seconds} that in fact held milliseconds -- the
+     * constructor multiplied its seconds argument by 1000 on the way in, so every reader had to
+     * remember to divide by 1000 again, and the two that render the progress bar did. The public
+     * accessors here are named for the unit they actually return.
      */
-    private double seconds;
+    private double durationTicks;
     /**
-     * Represents the system time in milliseconds when the cooldown was initialized.
-     * This value is typically used to calculate the remaining time for the cooldown.
-     * It is a fixed value set during the creation of the {@code Cooldown} instance and does not change.
+     * The server tick this cooldown was started on.
+     *
+     * <p>Ticks rather than a wall-clock stamp. A cooldown is a piece of game logic: it only counts
+     * down while the server is ticking, and everything it gates -- ability use, charge accrual --
+     * only happens on a tick. Measured in milliseconds, "5 seconds" silently means "however many
+     * ticks fit in 5 seconds", which is 100 on a healthy server and fewer on a loaded one, so
+     * abilities came off cooldown in fewer game ticks exactly when the server was struggling. In
+     * ticks the gate is exact and a fight replays identically regardless of tick rate, which is
+     * what makes a simulation of it trustworthy.
      */
-    private final long systemTime;
+    private final int startTick;
     /**
      * Indicates whether this cooldown should be removed automatically when the associated
      * entity experiences a death-related event. If set to true, the cooldown will be cleared
@@ -58,8 +71,8 @@ public class Cooldown {
      * @param removeOnDeath whether the cooldown should be removed upon death
      * @param inform whether to inform when the cooldown is initialized or modified
      */
-    public Cooldown(String name, double d, long systime, boolean removeOnDeath, boolean inform) {
-        this(name, d, systime, removeOnDeath, inform, false, null);
+    public Cooldown(String name, double d, boolean removeOnDeath, boolean inform) {
+        this(name, d, removeOnDeath, inform, false, null);
     }
 
     /**
@@ -72,8 +85,8 @@ public class Cooldown {
      * @param inform whether to inform about the cooldown's state
      * @param cancellable whether the cooldown is cancellable
      */
-    public Cooldown(String name, double d, long systime, boolean removeOnDeath, boolean inform, boolean cancellable) {
-        this(name, d, systime, removeOnDeath, inform, cancellable, null);
+    public Cooldown(String name, double d, boolean removeOnDeath, boolean inform, boolean cancellable) {
+        this(name, d, removeOnDeath, inform, cancellable, null);
     }
 
     /**
@@ -87,31 +100,68 @@ public class Cooldown {
      * @param cancellable a flag indicating whether the cooldown can be canceled before it expires
      * @param onExpire a consumer that will be executed when the cooldown expires
      */
-    public Cooldown(String name, double d, long systime, boolean removeOnDeath, boolean inform, boolean cancellable, Consumer<Cooldown> onExpire) {
+    public Cooldown(String name, double d, boolean removeOnDeath, boolean inform, boolean cancellable, Consumer<Cooldown> onExpire) {
+        this(name, d, Bukkit.getCurrentTick(), removeOnDeath, inform, cancellable, onExpire);
+    }
+
+    /**
+     * Creates a cooldown that started on a specific tick.
+     *
+     * <p>Only for rebuilding a cooldown whose start needs shifting, as
+     * {@code CooldownManager.reduceCooldown} does. Everything else should start it now.
+     *
+     * @param startTick the server tick the cooldown started on
+     */
+    public Cooldown(String name, double d, int startTick, boolean removeOnDeath, boolean inform, boolean cancellable, Consumer<Cooldown> onExpire) {
         this.name = name;
-        this.seconds = d * 1000.0; // Convert to milliseconds
-        this.systemTime = systime;
+        this.durationTicks = d * UtilTime.TICKS_PER_SECOND;
+        this.startTick = startTick;
         this.removeOnDeath = removeOnDeath;
         this.inform = inform;
         this.cancellable = cancellable;
         this.onExpire = onExpire;
     }
 
-
-    /**
-     * Calculates the remaining time in seconds until the cooldown expires.
-     *
-     * The remaining time is computed by taking the sum of the cooldown's initial duration
-     * (in milliseconds) and the system time when the cooldown was created,
-     * subtracting the current system time, and converting the result to seconds
-     * with one decimal place.
-     *
-     * @return The remaining time in seconds as a double, rounded to one decimal place.
-     *         If the cooldown has expired, the value will be zero or negative.
-     */
-    public double getRemaining() {
-        return UtilTime.convert((getSeconds() + getSystemTime()) - System.currentTimeMillis(), UtilTime.TimeUnit.SECONDS, 1);
+    /** The cooldown's full duration in seconds, as it was configured. */
+    public double getDurationSeconds() {
+        return durationTicks / (double) UtilTime.TICKS_PER_SECOND;
     }
 
+    /**
+     * Rescales the cooldown's duration.
+     *
+     * <p>Takes seconds because that is the unit every caller of this thinks in -- the
+     * cooldown-reduction effect and the diamond gem both scale the configured duration.
+     */
+    public void setDurationSeconds(double seconds) {
+        this.durationTicks = seconds * UtilTime.TICKS_PER_SECOND;
+    }
+
+    /** How many ticks the cooldown still has to run; zero once it has expired. */
+    public double getRemainingTicks() {
+        return Math.max(0.0, durationTicks - (Bukkit.getCurrentTick() - (double) startTick));
+    }
+
+    /**
+     * The remaining time in seconds until the cooldown expires, rounded to one decimal place.
+     *
+     * <p>Still seconds, and still rounded, because this feeds the cooldown bar and the "not ready"
+     * messages; only the basis underneath it changed. Note it no longer goes negative -- an expired
+     * cooldown reads exactly 0 rather than an ever-growing negative, which every existing caller
+     * already treated identically by clamping with {@code Math.max(0, ...)} or testing {@code <= 0}.
+     *
+     * @return the remaining time in seconds, zero if the cooldown has expired
+     */
+    public double getRemaining() {
+        // Rounded arithmetically rather than through UtilTime.trim, which allocates a locale
+        // NumberFormat and round-trips the value through a String. This is called for every
+        // cooldown of every player on every tick by processCooldowns and again by the action bar.
+        return Math.round(getRemainingTicks() / (double) UtilTime.TICKS_PER_SECOND * 10.0) / 10.0;
+    }
+
+    /** Whether the cooldown has finished. */
+    public boolean hasExpired() {
+        return getRemainingTicks() <= 0;
+    }
 
 }

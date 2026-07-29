@@ -1,6 +1,7 @@
 package me.mykindos.betterpvp.core.effects;
 
 import lombok.Data;
+import org.bukkit.Bukkit;
 import org.bukkit.entity.LivingEntity;
 
 import java.lang.ref.WeakReference;
@@ -9,12 +10,31 @@ import java.util.function.Predicate;
 @Data
 public class Effect {
 
+    private static final long MILLIS_PER_TICK = 50L;
+
     private final String uuid;
     private WeakReference<LivingEntity> applier;
     private final EffectType effectType;
     private final String name;
-    private long length;
-    private long rawLength;
+    /**
+     * The server tick the effect was applied on.
+     *
+     * <p>Ticks rather than wall clock, for the reason {@code DelayData} and {@link
+     * me.mykindos.betterpvp.core.cooldowns.Cooldown} document: an effect only does anything on a
+     * tick, so a duration in milliseconds is really "however many ticks fit in that many
+     * milliseconds" -- a count that falls as the server falls behind. A 5-second wither ticked
+     * fewer times on a loaded server than a healthy one, which is exactly the kind of load-dependent
+     * outcome that makes a simulated fight untrustworthy.
+     */
+    private int startTick;
+    /**
+     * The effect's duration in server ticks, including the one-tick grace the constructor adds.
+     *
+     * <p>Signed on purpose. A sufficiently negative duration never expires, which is how callers
+     * request an effect that only ends when something removes it; the old code expressed the same
+     * thing as {@code rawLength >= 0} over a millisecond value.
+     */
+    private long durationTicks;
     private int amplifier;
     private boolean permanent;
     private boolean showParticles;
@@ -39,8 +59,8 @@ public class Effect {
         this.applier = new WeakReference<>(applier);
         this.effectType = effectType;
         this.name = name;
-        this.rawLength = length + 50;
-        this.length = System.currentTimeMillis() + length + 50;
+        this.durationTicks = toDurationTicks(length);
+        this.startTick = Bukkit.getCurrentTick();
         this.amplifier = amplifier;
         this.permanent = permanent;
         this.showParticles = showParticles;
@@ -48,15 +68,40 @@ public class Effect {
     }
 
     /**
-     * Updates the length of the effect. The raw length is adjusted by adding 50
-     * milliseconds to the given value, and the length is set to the current system
-     * time plus the given value plus 50 milliseconds.
+     * Updates the length of the effect and restarts it from now.
+     *
+     * <p>Still takes milliseconds: every caller across the codebase configures effect durations in
+     * milliseconds, and only the representation underneath changed.
      *
      * @param length the base length of the effect in milliseconds
      */
     public void setLength(long length) {
-        this.rawLength = length + 50;
-        this.length = System.currentTimeMillis() + length + 50;
+        this.durationTicks = toDurationTicks(length);
+        this.startTick = Bukkit.getCurrentTick();
+    }
+
+    /**
+     * Converts a caller's millisecond duration to ticks, preserving the one-tick grace the original
+     * implementation added as {@code + 50} milliseconds, and preserving the sign so a very negative
+     * duration still means "does not expire".
+     */
+    private static long toDurationTicks(long millis) {
+        return Math.round((millis + MILLIS_PER_TICK) / (double) MILLIS_PER_TICK);
+    }
+
+    /** Ticks elapsed since the effect was applied. */
+    private long elapsedTicks() {
+        return Math.max(0L, (long) Bukkit.getCurrentTick() - startTick);
+    }
+
+    /**
+     * The effect's full duration in milliseconds.
+     *
+     * <p>Retained under its original name and unit so callers that scale a duration -- Resilience's
+     * reduction, Silence's readout -- keep working unchanged.
+     */
+    public long getRawLength() {
+        return durationTicks * MILLIS_PER_TICK;
     }
 
     /**
@@ -67,7 +112,7 @@ public class Effect {
      *         and the remaining time has elapsed; false otherwise.
      */
     public boolean hasExpired() {
-        return rawLength >= 0 && length - System.currentTimeMillis() <= 0 && !permanent;
+        return durationTicks >= 0 && elapsedTicks() >= durationTicks && !permanent;
     }
 
     /**
@@ -78,7 +123,7 @@ public class Effect {
      * @return the remaining duration of the effect in milliseconds
      */
     public long getRemainingDuration() {
-        return length - System.currentTimeMillis();
+        return (durationTicks - elapsedTicks()) * MILLIS_PER_TICK;
     }
 
     /**
@@ -89,7 +134,9 @@ public class Effect {
      * @return the vanilla duration in ticks, or -1 if the effect is permanent
      */
     public int getVanillaDuration() {
-        return permanent ? -1 : (int) Math.ceil((rawLength / 1000d) * 20d);
+        // Vanilla potion durations were always ticks; this used to round-trip through milliseconds
+        // to get back to the number the effect is now stored in.
+        return permanent ? -1 : (int) durationTicks;
     }
 
     /**
@@ -100,6 +147,6 @@ public class Effect {
      * @return The remaining duration in vanilla ticks, or -1 if the effect is permanent.
      */
     public int getRemainingVanillaDuration() {
-        return permanent ? -1 : (int) Math.ceil((getRemainingDuration() / 1000d) * 20d);
+        return permanent ? -1 : (int) (durationTicks - elapsedTicks());
     }
 }

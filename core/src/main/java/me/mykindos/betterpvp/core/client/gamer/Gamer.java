@@ -16,8 +16,6 @@ import me.mykindos.betterpvp.core.framework.customtypes.IMapListener;
 import me.mykindos.betterpvp.core.framework.inviting.Invitable;
 import me.mykindos.betterpvp.core.framework.sidebar.Sidebar;
 import me.mykindos.betterpvp.core.properties.PropertyContainer;
-import net.kyori.adventure.text.Component;
-import net.kyori.adventure.text.format.NamedTextColor;
 import me.mykindos.betterpvp.core.utilities.UtilItem;
 import me.mykindos.betterpvp.core.utilities.UtilMessage;
 import me.mykindos.betterpvp.core.utilities.UtilServer;
@@ -31,6 +29,8 @@ import me.mykindos.betterpvp.core.utilities.model.display.experience.ExperienceB
 import me.mykindos.betterpvp.core.utilities.model.display.experience.ExperienceLevel;
 import me.mykindos.betterpvp.core.utilities.model.display.playerlist.PlayerList;
 import me.mykindos.betterpvp.core.utilities.model.display.title.TitleQueue;
+import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.format.NamedTextColor;
 import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
@@ -52,6 +52,14 @@ import java.util.UUID;
 @EqualsAndHashCode(callSuper = false, of = {"uuid"})
 public class Gamer extends PropertyContainer implements Invitable, Unique, IMapListener {
 
+    private static final long MILLIS_PER_TICK = 50L;
+
+    /** Sentinel for "has never been damaged", chosen so no current tick can read as recent. */
+    private static final int NEVER_DAMAGED = Integer.MIN_VALUE;
+
+    /** The combat tag window, {@link DamageLog#EXPIRY} expressed in server ticks. */
+    private static final long COMBAT_TICKS = DamageLog.EXPIRY / MILLIS_PER_TICK;
+
     private final long id;
     private final String uuid;
     private ActionBar actionBar = new ActionBar();
@@ -66,7 +74,21 @@ public class Gamer extends PropertyContainer implements Invitable, Unique, IMapL
     private @NotNull IChatChannel chatChannel = ServerChatChannel.getInstance();
     private final NavigableMap<Integer, OffhandExecutor> offhandExecutors = new TreeMap<>(Comparator.reverseOrder());
 
-    private long lastDamaged = -1;
+    /**
+     * The server tick this gamer was last damaged on, or {@link #NEVER_DAMAGED}.
+     *
+     * <p>Ticks rather than wall clock, for the reason {@code DelayData} documents for damage
+     * delays: combat only advances while a tick is being processed, so "N milliseconds since the
+     * last hit" really means "however many ticks happened to fit in N milliseconds", and that count
+     * moves with server load. Every out-of-combat mechanic keyed off this -- Tranquility's regen,
+     * Swordsmanship's and Deflection's charge accrual -- would otherwise come back sooner, in game
+     * time, on a struggling server than on a healthy one. Ticks make the window exact.
+     *
+     * <p>Not a wall-clock epoch any more, so it is deliberately not readable as one: callers ask
+     * {@link #isInCombat()} or {@link #hasBeenOutOfCombatFor(long)} rather than doing arithmetic on
+     * the stamp.
+     */
+    private int lastDamagedTick = NEVER_DAMAGED;
     private long lastDeath = -1;
     private long lastSafe = -1;
     private long lastTip = -1;
@@ -210,24 +232,58 @@ public class Gamer extends PropertyContainer implements Invitable, Unique, IMapL
         return UUID.fromString(uuid);
     }
 
-    public void setLastDamaged(long lastDamaged) {
+    /**
+     * Stamps this gamer as having just been damaged.
+     *
+     * <p>Takes no argument: the stamp is always "now", and the representation is this class's
+     * business. Callers previously passed {@code System.currentTimeMillis()}, which is the one
+     * value that is now wrong.
+     */
+    public void markDamaged() {
         if (!UtilTime.elapsed(lastDeath, 10_000)) {
             //don't set lastDamaged if the player has recently died
             return;
         }
-        this.lastDamaged = lastDamaged;
+        this.lastDamagedTick = Bukkit.getCurrentTick();
+    }
+
+    /** Forgets any combat, so the gamer reads as never having been damaged. Used on respawn. */
+    public void clearCombat() {
+        this.lastDamagedTick = NEVER_DAMAGED;
+    }
+
+    /**
+     * How many ticks have passed since this gamer was last damaged.
+     *
+     * @return the elapsed ticks, or {@link Long#MAX_VALUE} if they have never been damaged
+     */
+    public long getTicksSinceDamaged() {
+        if (lastDamagedTick == NEVER_DAMAGED) {
+            return Long.MAX_VALUE;
+        }
+        return Math.max(0L, (long) Bukkit.getCurrentTick() - lastDamagedTick);
+    }
+
+    /**
+     * Whether this gamer has gone at least {@code ticks} server ticks without taking damage.
+     *
+     * @param ticks the out-of-combat window, in server ticks
+     */
+    public boolean hasBeenOutOfCombatFor(long ticks) {
+        return getTicksSinceDamaged() >= ticks;
     }
 
     public boolean isInCombat() {
-        return !UtilTime.elapsed(lastDamaged, DamageLog.EXPIRY);
+        return getTicksSinceDamaged() < COMBAT_TICKS;
     }
 
     public long getRemainingCombatMillis() {
-        if (!isInCombat()) {
+        final long since = getTicksSinceDamaged();
+        if (since >= COMBAT_TICKS) {
             return 0L;
         }
 
-        return Math.max(0L, DamageLog.EXPIRY - (System.currentTimeMillis() - lastDamaged));
+        return (COMBAT_TICKS - since) * MILLIS_PER_TICK;
     }
 
     public void setChatChannel(@NotNull ChatChannel chatChannel) {

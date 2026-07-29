@@ -158,7 +158,7 @@ public class EffectManager extends Manager<String, ConcurrentHashMap<String, Lis
                 Effect overwriteEffect = getEffect(target, type, effect.getName()).orElse(null);
                 if (overwriteEffect != null) {
                     overwriteEffect.setAmplifier(effect.getAmplifier());
-                    overwriteEffect.setLength(effect.getLength() - System.currentTimeMillis());
+                    overwriteEffect.setLength(effect.getRemainingDuration());
 
                     //if (effect.getEffectType() instanceof VanillaEffectType vanillaEffectType) {
                     //    vanillaEffectType.checkActive(target, effect);

@@ -13,9 +13,9 @@ import me.mykindos.betterpvp.core.components.champions.SkillType;
 import me.mykindos.betterpvp.core.effects.EffectTypes;
 import me.mykindos.betterpvp.core.framework.updater.UpdateEvent;
 import me.mykindos.betterpvp.core.listener.BPvPListener;
+import me.mykindos.betterpvp.core.locale.Translations;
 import me.mykindos.betterpvp.core.utilities.UtilFormat;
 import me.mykindos.betterpvp.core.utilities.UtilTime;
-import me.mykindos.betterpvp.core.locale.Translations;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import org.bukkit.Bukkit;
@@ -72,7 +72,7 @@ public class Tranquility extends Skill implements PassiveSkill, Listener, BuffSk
             int level = getLevel(cur);
             if (level > 0) {
                 Gamer gamer = championsManager.getClientManager().search().online(cur).getGamer();
-                if (UtilTime.elapsed(gamer.getLastDamaged(), (long) getTimeOutOfCombat(level) * 1000)) {
+                if (gamer.hasBeenOutOfCombatFor(UtilTime.toTicks(getTimeOutOfCombat(level)))) {
                     championsManager.getEffects().addEffect(cur, EffectTypes.REGENERATION, regenerationStrength, 300L);
                 }
             }

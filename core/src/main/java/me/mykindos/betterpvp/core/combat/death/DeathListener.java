@@ -76,7 +76,7 @@ public class DeathListener implements Listener {
     public void onRespawn(PlayerRespawnEvent event) {
         final Client client = clientManager.search().online(event.getPlayer());
         final Gamer gamer = client.getGamer();
-        gamer.setLastDamaged(0);
+        gamer.clearCombat();
         gamer.setLastDeath(System.currentTimeMillis());
     }
 

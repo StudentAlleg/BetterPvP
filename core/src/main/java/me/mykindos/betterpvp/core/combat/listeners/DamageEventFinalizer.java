@@ -96,11 +96,11 @@ public class DamageEventFinalizer {
 
         // Update last damaged
         if (event.getDamagee() instanceof Player player && event.getDamager() != null) {
-            clientManager.search().online(player).getGamer().setLastDamaged(System.currentTimeMillis());
+            clientManager.search().online(player).getGamer().markDamaged();
         }
         if (event.getDamager() instanceof Player player) {
             final Gamer gamer = clientManager.search().online(player).getGamer();
-            gamer.setLastDamaged(System.currentTimeMillis());
+            gamer.markDamaged();
             gamer.setLastDealtDamageValue(event.getModifiedDamage());
         }
 
