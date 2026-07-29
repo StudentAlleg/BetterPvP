@@ -12,6 +12,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.Comparator;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -145,14 +146,62 @@ public class ItemRegistry {
         return Map.copyOf(sortedItems);
     }
 
+    /**
+     * The reverse of {@link #items}, by instance identity, so a registered item's key is a map
+     * lookup rather than a walk of the whole registry.
+     *
+     * <p>Identity rather than {@code equals}: {@link BaseItem#hashCode()} clones the model stack
+     * and hashes its serialized bytes plus every component, so a hash map keyed on value equality
+     * would frequently cost more than the scan it replaced. Identity is also what actually matches
+     * the call sites -- {@code ItemFactory.fromItemStack} resolves the {@code BaseItem} out of this
+     * very registry, so the object handed back to {@link #getKey} is the registered instance.
+     *
+     * <p>Rebuilt when it disagrees with {@link #items} on size rather than maintained at every
+     * mutation point, because registration is not confined to {@link #registerItem}:
+     * {@code BukkitMaterialAdapter.registerDefaults} populates the backing maps directly. A stale
+     * index can only ever cause a miss, and a miss falls through to the original scan.
+     */
+    private volatile Map<BaseItem, NamespacedKey> keysByItem = Map.of();
+    private volatile int keysByItemSize = -1;
+
+    /**
+     * The key {@code item} is registered under, or null if it is not registered.
+     *
+     * <p>Hot: {@code ItemAccessListener} calls this for every damage event and every interaction.
+     * A 641-second profile of a melee-heavy workload attributed 3.0% of the entire server thread
+     * to this method's linear scan, which is why the identity index above exists. The scan is kept
+     * as the fallback so the answer is unchanged for a {@code BaseItem} that is equal to, but not,
+     * the registered instance.
+     */
     @Nullable
     public NamespacedKey getKey(@NotNull BaseItem item) {
+        Map<BaseItem, NamespacedKey> index = keysByItem;
+        if (keysByItemSize != items.size()) {
+            index = rebuildKeyIndex();
+        }
+
+        final NamespacedKey indexed = index.get(item);
+        if (indexed != null) {
+            return indexed;
+        }
+
         for (Map.Entry<NamespacedKey, BaseItem> entry : items.entrySet()) {
             if (entry.getValue().equals(item)) {
                 return entry.getKey();
             }
         }
         return null;
+    }
+
+    private synchronized Map<BaseItem, NamespacedKey> rebuildKeyIndex() {
+        final int size = items.size();
+        final Map<BaseItem, NamespacedKey> rebuilt = new IdentityHashMap<>(size);
+        for (Map.Entry<NamespacedKey, BaseItem> entry : items.entrySet()) {
+            rebuilt.putIfAbsent(entry.getValue(), entry.getKey());
+        }
+        keysByItem = rebuilt;
+        keysByItemSize = size;
+        return rebuilt;
     }
 
     public boolean isRegistered(@NotNull BaseItem baseItem) {

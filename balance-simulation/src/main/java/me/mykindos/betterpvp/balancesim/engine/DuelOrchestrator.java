@@ -99,6 +99,7 @@ public class DuelOrchestrator {
                             SimRecorder recorder,
                             SimClientFactory clientFactory,
                             SimEquipment equipment,
+                            SimStatePurge statePurge,
                             BalanceSimulation plugin) {
         this.gate = gate;
         this.worldManager = worldManager;
@@ -126,7 +127,8 @@ public class DuelOrchestrator {
                 clientFactory,
                 championsInjector.getInstance(RoleManager.class),
                 championsInjector.getInstance(ChampionsSkillManager.class),
-                equipment);
+                equipment,
+                statePurge);
     }
 
     /**

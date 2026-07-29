@@ -258,8 +258,15 @@ public class SimCombatant {
      * <p>Despawn happens before the client is dropped so the sequence matches a real logout, and
      * the entity is discarded rather than killed so teardown emits no death event. Leaves no row
      * in {@code clients} because none was ever written.
+     *
+     * <p>The {@link SimStatePurge} runs last, once the entity is gone and the client is dropped,
+     * and is what stands in for the {@code PlayerQuitEvent} a fake player never fires. Without it
+     * the managers keyed on this combatant's UUID keep its entry for the life of the server, and
+     * since those maps are walked in full every tick a sweep's throughput decays as it runs --
+     * see that class for the measurements.
      */
     public void despawn(SimContext context) {
+        final UUID departed = uuid;
         if (handle != null) {
             if (player != null) {
                 context.roleManager().cleanUp(player);
@@ -272,6 +279,7 @@ public class SimCombatant {
             client = null;
         }
         player = null;
+        context.statePurge().purge(departed);
     }
 
     /**
@@ -314,11 +322,13 @@ public class SimCombatant {
      * @param roleManager   applies role and standard weapons through the real code path
      * @param skillManager  resolves skill names and reads effective levels back
      * @param equipment     materialises weapons and armour from the live item registry
+     * @param statePurge    drops the per-UUID state no {@code PlayerQuitEvent} will ever clear
      */
     public record SimContext(Plugin plugin,
                              SimClientFactory clientFactory,
                              RoleManager roleManager,
                              ChampionsSkillManager skillManager,
-                             SimEquipment equipment) {
+                             SimEquipment equipment,
+                             SimStatePurge statePurge) {
     }
 }

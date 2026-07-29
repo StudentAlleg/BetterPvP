@@ -96,7 +96,34 @@ public class SimWorldManager {
         }
 
         world.setAutoSave(false);
+        shrinkTrackingDistances(world);
         return world;
+    }
+
+    /**
+     * Collapses the world's view and simulation distances to the minimum.
+     *
+     * <p>Nobody is looking at a sim combatant: {@link me.mykindos.betterpvp.balancesim.engine.SimPlayer}
+     * writes its packets into an {@code EmbeddedChannel} that nothing reads, and the fake players
+     * are absent from {@code Bukkit.getOnlinePlayers()} so no real client tracks them either. The
+     * default distances therefore buy nothing and cost a great deal: Moonrise keeps a per-player
+     * area map whose update cost scales with the square of the view distance, and the sweep adds
+     * and removes two players from the level for every duel it runs.
+     *
+     * <p>A 641-second profile of a 128-concurrency sweep put 6.2% of the entire server thread in
+     * {@code NearbyPlayers.addPlayer} under {@code SimPlayer.spawn} and a further 7.2% in
+     * {@code NearbyPlayers.removePlayer} under {@code SimPlayer.despawn} -- 13% of all main-thread
+     * time spent maintaining a view of the world that has no viewer. At the default distance of 10
+     * each add or remove walks 21x21 chunks; at 2 it walks 5x5.
+     *
+     * <p>Two rather than one because the arenas are 256 blocks apart -- 16 chunks -- so even the
+     * smallest workable radius leaves each duel comfortably isolated, and combatants still sit in
+     * a ticking chunk, which they must for the damage pipeline to engage at all.
+     */
+    private void shrinkTrackingDistances(World simWorld) {
+        simWorld.setViewDistance(2);
+        simWorld.setSimulationDistance(2);
+        simWorld.setSendViewDistance(2);
     }
 
     /**
