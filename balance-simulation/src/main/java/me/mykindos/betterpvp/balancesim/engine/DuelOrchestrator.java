@@ -10,6 +10,7 @@ import me.mykindos.betterpvp.balancesim.catalog.SimBuildSpec;
 import me.mykindos.betterpvp.balancesim.catalog.SimEquipment;
 import me.mykindos.betterpvp.balancesim.catalog.SimScope;
 import me.mykindos.betterpvp.balancesim.catalog.SimSkillAllocation;
+import me.mykindos.betterpvp.balancesim.catalog.SimSkillFilter;
 import me.mykindos.betterpvp.balancesim.catalog.SimTargetSpec;
 import me.mykindos.betterpvp.balancesim.repository.SimResultRepository;
 import me.mykindos.betterpvp.balancesim.repository.SimResultRow;
@@ -80,6 +81,15 @@ public class DuelOrchestrator {
 
     /** Guards against a second sweep being started while one is in flight. */
     private volatile boolean running;
+
+    /**
+     * Set by {@link #requestStop()}; cleared when a run starts.
+     *
+     * <p>Volatile rather than synchronised because the two sides are a single boolean written by
+     * whoever ran the command and read by the tick loop, and a stop that takes one extra tick to be
+     * noticed is not a defect.
+     */
+    private volatile boolean stopRequested;
 
     @Inject
     public DuelOrchestrator(SimulationGate gate,
@@ -158,6 +168,7 @@ public class DuelOrchestrator {
                     new IllegalStateException("A simulation sweep is already running"));
         }
         running = true;
+        stopRequested = false;
 
         final CompletableFuture<SimSummary> done = new CompletableFuture<>();
         final int realm = Core.getCurrentRealm().getId();
@@ -176,6 +187,36 @@ public class DuelOrchestrator {
                 });
 
         return done;
+    }
+
+    /**
+     * Asks the running sweep to stop early.
+     *
+     * <p>The sweep drains rather than halting: no further duels are started, the ones already in
+     * flight are allowed to resolve, and the run then closes through the normal path with status
+     * {@code CANCELLED}. Draining is what makes a stop safe to use -- the duels in flight are real
+     * measurements a few seconds from completion, their matchups would otherwise be left with some
+     * iterations recorded and no row, and every result already reduced still needs flushing. It is
+     * also bounded: no duel outlives {@code duelTimeoutSeconds}, so the drain cannot hang.
+     *
+     * <p>A stop requested before the tick loop starts is honoured on its first tick, so cancelling
+     * during the database round trip that opens the run works. It cannot interrupt catalog
+     * enumeration, which is one synchronous main-thread call -- while that is running no command
+     * can be processed at all, so there is nothing here that could observe the request.
+     *
+     * @return false if no sweep was running, in which case nothing was requested
+     */
+    public boolean requestStop() {
+        if (!running) {
+            return false;
+        }
+        stopRequested = true;
+        return true;
+    }
+
+    /** Whether a sweep is currently in flight. */
+    public boolean isRunning() {
+        return running;
     }
 
     /**
@@ -317,13 +358,18 @@ public class DuelOrchestrator {
      * must be pinned by {@code engine_version} and run timestamp rather than by this alone.
      */
     private String configHash(SimScope scope) {
+        // The skill filter is in here because it decides which builds exist at all. Two FULL runs
+        // under different filters cover different spaces while sharing a scope, and comparing them
+        // would read a narrower sweep's absent builds as a balance change.
         return Integer.toHexString((scope + ":" + gate.getIterations() + ":" + gate.getDuelTimeoutSeconds()
-                + ":" + gate.getMaxConcurrentDuels() + ":" + ENGINE_VERSION).hashCode());
+                + ":" + gate.getMaxConcurrentDuels() + ":" + SimSkillFilter.parse(gate.getSkillFilter())
+                + ":" + ENGINE_VERSION).hashCode());
     }
 
     private String scenarioJson(SimScope scope) {
         return "{\"phase\":2,\"scope\":\"" + scope + "\",\"iterations\":" + Math.max(1, gate.getIterations())
-                + ",\"actives\":false,\"timeout_s\":" + gate.getDuelTimeoutSeconds() + "}";
+                + ",\"actives\":false,\"skill_filter\":\"" + SimSkillFilter.parse(gate.getSkillFilter())
+                + "\",\"timeout_s\":" + gate.getDuelTimeoutSeconds() + "}";
     }
 
     /**
@@ -374,6 +420,8 @@ public class DuelOrchestrator {
         private long lastProgressTick;
         /** Rows already handed to the repository, so the summary counts output and not intent. */
         private int rowsFlushed;
+        /** Whether the drain has been logged, so a stop reports once rather than every tick. */
+        private boolean stopAnnounced;
 
         /**
          * Builds whose effective levels have already been written back, so the update runs once per
@@ -410,13 +458,20 @@ public class DuelOrchestrator {
         public void run() {
             tick++;
             try {
-                fill();
+                // A stop stops the queue, not the fights. Duels already in flight are measurements
+                // seconds from completing, and abandoning them would leave their matchups with some
+                // iterations recorded and no row to show for them.
+                if (stopRequested) {
+                    announceStopOnce();
+                } else {
+                    fill();
+                }
                 step();
-                if (active.isEmpty() && pending.isEmpty()) {
+                if (active.isEmpty() && (pending.isEmpty() || stopRequested)) {
                     task.cancel();
                     report();
                     finish(runId, done, List.copyOf(results), List.copyOf(flushes),
-                            summarise("COMPLETED"));
+                            summarise(stopRequested ? "CANCELLED" : "COMPLETED"));
                     return;
                 }
                 if (tick - lastProgressTick >= progressIntervalTicks()) {
@@ -434,6 +489,24 @@ public class DuelOrchestrator {
                 // the matchups that did complete, and the summary says how far it got.
                 finish(runId, done, List.copyOf(results), List.copyOf(flushes), summarise("FAILED"));
             }
+        }
+
+        /**
+         * Logs the drain once, with what is left to wait for.
+         *
+         * <p>Once, because the loop sees the flag every tick and the useful information -- how many
+         * duels are still finishing, and how much of the queue is being abandoned -- is a one-time
+         * answer, not a stream. Progress reporting continues as normal, so the drain is still
+         * visible as it shrinks.
+         */
+        private void announceStopOnce() {
+            if (stopAnnounced) {
+                return;
+            }
+            stopAnnounced = true;
+            log.info("Simulation run {} stopping on request: draining {} duels in flight and"
+                            + " abandoning {} queued. Rows already measured will be written.",
+                    runId, active.size(), pending.size()).submit();
         }
 
         /** Freezes the loop's counters into the run's result. */

@@ -3,6 +3,7 @@ package me.mykindos.betterpvp.balancesim.catalog;
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
 import lombok.CustomLog;
+import me.mykindos.betterpvp.balancesim.SimulationGate;
 import me.mykindos.betterpvp.balancesim.catalog.SimEquipment.WeaponOption;
 import me.mykindos.betterpvp.champions.Champions;
 import me.mykindos.betterpvp.champions.champions.builds.RoleBuild;
@@ -56,11 +57,13 @@ import java.util.UUID;
 public class BalanceCatalog {
 
     private final SimEquipment equipment;
+    private final SimulationGate gate;
     private final ChampionsSkillManager skillManager;
 
     @Inject
-    public BalanceCatalog(SimEquipment equipment) {
+    public BalanceCatalog(SimEquipment equipment, SimulationGate gate) {
         this.equipment = equipment;
+        this.gate = gate;
         // Pulled from Champions' injector rather than injected, for the same reason SimClientFactory
         // does it: this plugin's injector is a sibling of Champions' under Core, and asking Guice
         // for a Champions-scoped singleton here would construct a second Champions.
@@ -77,15 +80,24 @@ public class BalanceCatalog {
      */
     public List<SimBuildSpec> enumerateBuilds(SimScope scope, int maxBuilds) {
         final List<SimBuildSpec> builds = new ArrayList<>();
+        int excluded = 0;
         for (Role role : Role.values()) {
-            switch (scope.getSkillAxis()) {
-                case NONE -> enumerateSkilless(role, scope, builds);
+            excluded += switch (scope.getSkillAxis()) {
+                case NONE -> {
+                    enumerateSkilless(role, scope, builds);
+                    yield 0;
+                }
                 case ONE_AT_A_TIME -> enumerateSingleSkill(role, scope, builds, maxBuilds);
                 case BUDGET_VECTORS -> enumerateBudgetVectors(role, scope, builds, maxBuilds);
-            }
+            };
             checkCap(builds.size(), maxBuilds, scope);
         }
-        log.info("Catalog scope {} enumerated {} builds", scope, builds.size()).submit();
+        // The exclusion count is logged even when it is zero: "0 skills excluded" is the only thing
+        // that distinguishes a genuinely exhaustive sweep from one the filter narrowed, and that
+        // distinction is not recoverable from the rows afterwards.
+        log.info("Catalog scope {} enumerated {} builds under skill filter {} ({} enabled skills"
+                        + " excluded as unexercisable by this engine)",
+                scope, builds.size(), SimSkillFilter.parse(gate.getSkillFilter()), excluded).submit();
         return List.copyOf(builds);
     }
 
@@ -136,9 +148,10 @@ public class BalanceCatalog {
      * afterwards, so isolating the skill is not a simplification of the full sweep -- it answers a
      * question the full sweep cannot.
      */
-    private void enumerateSingleSkill(Role role, SimScope scope, List<SimBuildSpec> out, int maxBuilds) {
+    private int enumerateSingleSkill(Role role, SimScope scope, List<SimBuildSpec> out, int maxBuilds) {
         final int budget = buildPoints();
-        for (Map.Entry<SkillType, List<Skill>> entry : skillsByType(role).entrySet()) {
+        final SkillPool pool = skillsByType(role);
+        for (Map.Entry<SkillType, List<Skill>> entry : pool.byType().entrySet()) {
             for (Skill skill : entry.getValue()) {
                 final int maxLevel = Math.min(skill.getMaxLevel(), budget);
                 for (int level = 1; level <= maxLevel; level++) {
@@ -150,6 +163,7 @@ public class BalanceCatalog {
                 checkCap(out.size(), maxBuilds, scope);
             }
         }
+        return pool.excluded();
     }
 
     /**
@@ -160,10 +174,11 @@ public class BalanceCatalog {
      * is what makes partial builds -- the common case for a real player, who rarely spends all
      * twelve points on the maximum number of slots -- part of the space.
      */
-    private void enumerateBudgetVectors(Role role, SimScope scope, List<SimBuildSpec> out, int maxBuilds) {
+    private int enumerateBudgetVectors(Role role, SimScope scope, List<SimBuildSpec> out, int maxBuilds) {
         final List<SkillType> slots = List.of(SkillType.values());
-        final Map<SkillType, List<Skill>> byType = skillsByType(role);
-        fillSlots(role, scope, byType, slots, 0, buildPoints(), new ArrayList<>(), out, maxBuilds);
+        final SkillPool pool = skillsByType(role);
+        fillSlots(role, scope, pool.byType(), slots, 0, buildPoints(), new ArrayList<>(), out, maxBuilds);
+        return pool.excluded();
     }
 
     private void fillSlots(Role role,
@@ -223,20 +238,45 @@ public class BalanceCatalog {
     }
 
     /**
-     * The role's enabled skills grouped by slot, ordered by name so a sweep enumerates the same
-     * space twice. Disabled skills are dropped because {@code SkillListener} will not run them --
-     * a build containing one would measure as if the slot were empty while claiming otherwise.
+     * The role's admissible skills grouped by slot, ordered by name so a sweep enumerates the same
+     * space twice.
+     *
+     * <p>Two exclusions, for the same reason. Disabled skills are dropped because
+     * {@code SkillListener} will not run them, and skills the configured {@link SimSkillFilter}
+     * rejects are dropped because this engine cannot exercise them -- in both cases a build
+     * containing one measures exactly as if the slot were empty while its row claims a skill. The
+     * filter is also what makes {@code FULL} enumerable at all; see {@link SimSkillFilter}.
+     *
+     * <p>Exclusions are counted rather than merely applied, so the run's log line can state how
+     * much of the skill pool the sweep did not cover. A sweep quietly covering an eighth of the
+     * skills would otherwise read as exhaustive.
      */
-    private Map<SkillType, List<Skill>> skillsByType(Role role) {
+    private SkillPool skillsByType(Role role) {
+        final SimSkillFilter filter = SimSkillFilter.parse(gate.getSkillFilter());
         final Map<SkillType, List<Skill>> byType = new EnumMap<>(SkillType.class);
+        int excluded = 0;
         for (Skill skill : skillManager.getSkillsForRole(role)) {
             if (!skill.isEnabled()) {
+                continue;
+            }
+            if (!filter.admits(skill)) {
+                excluded++;
                 continue;
             }
             byType.computeIfAbsent(skill.getType(), ignored -> new ArrayList<>()).add(skill);
         }
         byType.values().forEach(skills -> skills.sort(Comparator.comparing(Skill::getName)));
-        return byType;
+        return new SkillPool(byType, excluded);
+    }
+
+    /**
+     * A role's admissible skills and how many the filter turned away.
+     *
+     * @param byType   admissible skills grouped by slot
+     * @param excluded enabled skills this engine cannot exercise, carried so the count reaches the
+     *                 log rather than being inferred from a build total nobody can check
+     */
+    private record SkillPool(Map<SkillType, List<Skill>> byType, int excluded) {
     }
 
     /**
@@ -313,9 +353,12 @@ public class BalanceCatalog {
     private static void checkCap(int count, int maxBuilds, SimScope scope) {
         if (count > maxBuilds) {
             throw new IllegalStateException("Scope " + scope + " enumerates more than " + maxBuilds
-                    + " builds. Narrow the scope or raise champions.simulation.maxBuilds -- a sweep is"
+                    + " builds. Narrow the scope or champions.simulation.skillFilter -- a sweep is"
                     + " refused rather than truncated, because a prefix of the enumeration is a biased"
-                    + " sample and nothing on the row would say so.");
+                    + " sample and nothing on the row would say so. Raising maxBuilds is rarely the"
+                    + " answer for FULL: the skill axis is combinatorial across six slots, so the"
+                    + " unfiltered space is tens of millions of builds and exhausts the heap while"
+                    + " being enumerated, whatever the cap is set to.");
         }
     }
 
@@ -341,17 +384,30 @@ public class BalanceCatalog {
         return sha256(canonical.toString());
     }
 
-    private static String sha256(String input) {
+    /**
+     * One digest per thread, reset between uses.
+     *
+     * <p>{@code MessageDigest.getInstance} walks the JCA provider list on every call, which is
+     * cheap once and ruinous per build: with the enumeration running into the millions it showed up
+     * as the top frame in most samples of a stalled sweep, inside a security-provider lookup rather
+     * than in any hashing. A digest is not thread safe, hence per thread rather than shared.
+     */
+    private static final ThreadLocal<MessageDigest> DIGEST = ThreadLocal.withInitial(() -> {
         try {
-            final MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            final byte[] hash = digest.digest(input.getBytes(StandardCharsets.UTF_8));
-            final StringBuilder hex = new StringBuilder(hash.length * 2);
-            for (byte b : hash) {
-                hex.append(Character.forDigit((b >> 4) & 0xF, 16)).append(Character.forDigit(b & 0xF, 16));
-            }
-            return hex.toString();
+            return MessageDigest.getInstance("SHA-256");
         } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException("SHA-256 is required to fingerprint a build", e);
         }
+    });
+
+    private static String sha256(String input) {
+        final MessageDigest digest = DIGEST.get();
+        digest.reset();
+        final byte[] hash = digest.digest(input.getBytes(StandardCharsets.UTF_8));
+        final StringBuilder hex = new StringBuilder(hash.length * 2);
+        for (byte b : hash) {
+            hex.append(Character.forDigit((b >> 4) & 0xF, 16)).append(Character.forDigit(b & 0xF, 16));
+        }
+        return hex.toString();
     }
 }

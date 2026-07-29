@@ -10,8 +10,9 @@ import java.time.Duration;
  * <p>This is the run's result rather than a log line, so the numbers reach whoever started it and
  * not only the console. The planned and completed counts are both carried because a run can close
  * with status {@code COMPLETED} having measured fewer matchups than it enumerated -- a build whose
- * {@code sim_build} row did not come back is skipped, and an aborted run closes with whatever it
- * had. Reporting only the completed figure would make a partial sweep look like a whole one.
+ * {@code sim_build} row did not come back is skipped, and an aborted or cancelled run closes with
+ * whatever it had. Reporting only the completed figure would make a partial sweep look like a whole
+ * one.
  *
  * <p>{@code resultRows} is counted separately from {@code completedMatchups} rather than assumed
  * equal to it: the rows are the durable output, and a mismatch between the two is the signal that
@@ -19,7 +20,8 @@ import java.time.Duration;
  *
  * @param runId             the {@code sim_run} row this summarises
  * @param scope             the slice of the permutation space that was swept
- * @param status            the terminal {@code sim_run.status}: {@code COMPLETED} or {@code FAILED}
+ * @param status            the terminal {@code sim_run.status}: {@code COMPLETED}, {@code CANCELLED}
+ *                          for a sweep stopped by an admin, or {@code FAILED}
  * @param plannedDuels      duels the sweep enumerated
  * @param completedDuels    duels that actually resolved, by kill or timeout
  * @param plannedMatchups   matchups the sweep enumerated

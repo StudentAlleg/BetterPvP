@@ -59,6 +59,17 @@ public class SimulationGate {
     private int maxBuilds;
 
     /**
+     * Which skills the catalog is allowed to build permutations from. See {@code SimSkillFilter}.
+     *
+     * <p>Defaults to the narrowest setting because the skill axis is combinatorial across six
+     * slots: the unfiltered {@code FULL} space is tens of millions of builds and exhausts the heap
+     * while being enumerated, long before a single duel runs.
+     */
+    @Inject
+    @Config(path = "champions.simulation.skillFilter", defaultValue = "OFFENSIVE_PASSIVES")
+    private String skillFilter;
+
+    /**
      * How many duels may be set up in a single tick.
      *
      * <p>Setting a duel up is expensive and strictly main-thread: two {@code ServerPlayer}s are
