@@ -383,7 +383,8 @@ public class DuelOrchestrator {
 
         private BukkitTask task;
         private long tick;
-        private int arenaCounter;
+        /** Names combatants. Distinct from the arena index, which is recycled between duels. */
+        private int duelCounter;
 
         private SweepLoop(long runId,
                           SimScope scope,
@@ -486,7 +487,7 @@ public class DuelOrchestrator {
             while (setupsRemaining-- > 0
                     && active.size() < gate.getMaxConcurrentDuels()
                     && !pending.isEmpty()) {
-                final Duel duel = new Duel(pending.poll(), arenaCounter++, tick);
+                final Duel duel = new Duel(pending.poll(), duelCounter++, tick);
                 duel.setUp();
                 active.add(duel);
             }
@@ -563,16 +564,19 @@ public class DuelOrchestrator {
 
         private SimRecorder.Recording recording;
 
-        private Duel(Matchup matchup, int arenaIndex, long startTick) {
+        private Duel(Matchup matchup, int sequence, long startTick) {
             this.matchup = matchup;
-            this.arena = worldManager.prepareArena(arenaIndex);
+            this.arena = worldManager.acquireArena();
             this.startTick = startTick;
             this.timeoutTicks = (long) (gate.getDuelTimeoutSeconds() * 1000L / MILLIS_PER_TICK);
 
+            // Named by the duel's position in the sweep, not by its arena: arenas are recycled, so
+            // indexing names by slot would put a dozen different fights under the same name in the
+            // log and make a report of odd behaviour impossible to trace back to a matchup.
             final UUID attackerId = UUID.randomUUID();
             final UUID defenderId = UUID.randomUUID();
-            this.attacker = new SimCombatant(attackerId, "sim_atk_" + arenaIndex, matchup.build());
-            this.defender = new SimCombatant(defenderId, "sim_def_" + arenaIndex, defenderBuild());
+            this.attacker = new SimCombatant(attackerId, "sim_atk_" + sequence, matchup.build());
+            this.defender = new SimCombatant(defenderId, "sim_def_" + sequence, defenderBuild());
         }
 
         /**
@@ -721,9 +725,17 @@ public class DuelOrchestrator {
             return counts.isEmpty() ? Map.of() : new HashMap<>(counts);
         }
 
+        /**
+         * Despawns both combatants and returns the arena to the pool.
+         *
+         * <p>The arena is released after the combatants are gone, never before: a slot handed back
+         * while its fighters were still standing on it could be filled by the next duel in the same
+         * tick, putting four combatants on one platform.
+         */
         private void teardown() {
             attacker.despawn(context);
             defender.despawn(context);
+            worldManager.releaseArena(arena);
         }
     }
 }

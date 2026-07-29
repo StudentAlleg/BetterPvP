@@ -1,5 +1,6 @@
 package me.mykindos.betterpvp.balancesim.engine;
 
+import io.papermc.paper.event.player.PlayerInventorySlotChangeEvent;
 import lombok.CustomLog;
 import lombok.Getter;
 import me.mykindos.betterpvp.balancesim.catalog.SimBuildSpec;
@@ -43,6 +44,16 @@ import java.util.UUID;
 @Getter
 @CustomLog
 public class SimCombatant {
+
+    /**
+     * Raw slot of hotbar index 0 in the player's own container menu.
+     *
+     * <p>The nine hotbar slots sit after the 2x2 crafting grid, the result slot, the four armour
+     * slots and the main inventory, which is where the server's own slot-change events number them
+     * from. Announcing an equip with the plain inventory index instead would look like a change to
+     * a different slot entirely.
+     */
+    private static final int HOTBAR_MENU_SLOT_OFFSET = 36;
 
     private final UUID uuid;
     private final String name;
@@ -161,11 +172,27 @@ public class SimCombatant {
      * main hand is then overwritten with the weapon the build is being measured on, because that
      * is what the melee stat handlers read and what {@code SkillWeapons.isHolding} tests when
      * deciding whether a sword skill is active and whether the booster {@code +1} applies.
+     *
+     * <p>{@code PlayerInventorySlotChangeEvent} is raised afterwards for the same reason
+     * {@link #equipArmor} raises {@code ArmorEquipEvent}: the server fires it from the container
+     * menu's change tracking, which a headless combatant never drives, so setting the stack alone
+     * leaves every listener that keys off "this player is now holding X" unaware. That is not
+     * cosmetic -- {@code InteractionListener} feeds the hold tracker from it, and items keeping
+     * per-holder state build that state there. The scythe is the case that surfaced it: its soul
+     * map is populated only on join and slot change, so an unannounced equip left it with no entry
+     * and its damage handler threw out of every swing.
+     *
+     * <p>The raw slot is the hotbar's menu slot rather than the inventory index, so the event
+     * carries the numbers a real swap would and listeners filtering on either read it identically.
      */
     private void equipWeapon(SimContext context) {
         context.roleManager().equipWeapons(player);
+        final PlayerInventory inventory = player.getInventory();
+        final ItemStack previous = inventory.getItemInMainHand();
         final ItemStack weapon = context.equipment().weaponStack(build.weaponKey());
-        player.getInventory().setItemInMainHand(weapon);
+        inventory.setItemInMainHand(weapon);
+        UtilServer.callEvent(new PlayerInventorySlotChangeEvent(player,
+                HOTBAR_MENU_SLOT_OFFSET + inventory.getHeldItemSlot(), previous, weapon));
     }
 
     /**

@@ -84,8 +84,9 @@ public class ScytheOfTheFallenLord extends WeaponItem implements Reloadable {
     }
 
     private double getHeal(Player player) {
-        // Calculate heal based on base heal and souls
-        double soulCount = soulHarvestAbility.getPlayerData().get(player.getUniqueId()).getSoulCount();
+        // Calculate heal based on base heal and souls. An untracked holder reads as zero souls
+        // rather than throwing, which is the same total a player has the moment they equip it.
+        double soulCount = soulHarvestAbility.getHeldSouls(player);
         return baseHeal + (soulCount * healPerSoul);
     }
     

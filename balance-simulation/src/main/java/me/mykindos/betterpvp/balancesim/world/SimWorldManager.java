@@ -13,6 +13,10 @@ import org.bukkit.WorldType;
 import org.bukkit.block.Block;
 import org.jetbrains.annotations.Nullable;
 
+import java.util.HashSet;
+import java.util.LinkedHashSet;
+import java.util.Set;
+
 /**
  * Owns the dedicated void world that duels run in, and hands out arena slots inside it.
  *
@@ -35,6 +39,21 @@ public class SimWorldManager {
     private static final int SPAWN_OFFSET = 2;
 
     private final SimulationGate gate;
+
+    /**
+     * Arena indices whose duel has finished, ready to be handed out again.
+     *
+     * <p>A {@link LinkedHashSet} rather than a queue so releasing the same slot twice is harmless.
+     * Two duels sharing a platform would be silent corruption -- combatants within swinging range
+     * of the wrong opponent -- so the structure refuses the duplicate rather than trusting every
+     * caller to release exactly once.
+     */
+    private final Set<Integer> freeIndices = new LinkedHashSet<>();
+
+    /** Indices whose platform has already been laid, so the blocks are placed once per slot. */
+    private final Set<Integer> prepared = new HashSet<>();
+
+    private int nextIndex;
 
     @Nullable
     private World world;
@@ -100,6 +119,39 @@ public class SimWorldManager {
     }
 
     /**
+     * Takes an arena for a duel that is starting, reusing one a finished duel has released.
+     *
+     * <p>Slots must be recycled rather than allocated per duel. Each index is a fresh 256-block
+     * step across the world, so numbering them by duel walked the sweep into virgin terrain
+     * forever: an 864-duel run spanned roughly 8000x7000 blocks, and every arena it ever built
+     * stayed resident because the platform blocks kept the chunks loaded. That is what exhausted
+     * the heap -- the result rows are flushed to the database in batches and never amounted to
+     * more than a few hundred kilobytes. It also cost a synchronous chunk generation on the main
+     * thread for every single duel, which is what the watchdog caught mid-{@code getBlockAt}.
+     *
+     * <p>Bounded by concurrency instead, the live arena count never exceeds the number of duels in
+     * flight, so a sweep of any length touches the same handful of chunks it did in its first
+     * second.
+     */
+    public ArenaSlot acquireArena() {
+        final Integer recycled = freeIndices.isEmpty() ? null : freeIndices.iterator().next();
+        if (recycled != null) {
+            freeIndices.remove(recycled);
+        }
+        return prepareArena(recycled != null ? recycled : nextIndex++);
+    }
+
+    /**
+     * Returns a finished duel's arena to the pool.
+     *
+     * <p>The platform is left standing: it is barrier blocks in a void world that the next duel
+     * would only lay again, and the chunks stay loaded either way while the sweep is running.
+     */
+    public void releaseArena(ArenaSlot slot) {
+        freeIndices.add(slot.index());
+    }
+
+    /**
      * Lays a solid platform for the {@code index}-th arena and returns the two spawn points on
      * it, facing each other. Must be called on the main thread ({@link Block#setType} touches
      * world state).
@@ -108,19 +160,26 @@ public class SimWorldManager {
      * below the spawn Y. The two combatants start {@link #SPAWN_OFFSET} blocks either side of the
      * centre along the X axis, each yawed to look at the other, so the very first melee swing has
      * a valid target without the orchestrator having to path them together first.
+     *
+     * <p>The block loop runs only the first time a slot is used. A recycled arena is still handed
+     * back as a freshly built {@link ArenaSlot}: the spawn points are mutable {@code Location}s,
+     * and handing the same instances to successive duels would let anything that moved one corrupt
+     * every later duel on that platform.
      */
     public ArenaSlot prepareArena(int index) {
         final Location centre = arenaCentre(index);
         final World simWorld = centre.getWorld();
 
-        final int floorY = ARENA_Y - 1;
-        final int cx = centre.getBlockX();
-        final int cz = centre.getBlockZ();
-        for (int dx = -PLATFORM_RADIUS; dx <= PLATFORM_RADIUS; dx++) {
-            for (int dz = -PLATFORM_RADIUS; dz <= PLATFORM_RADIUS; dz++) {
-                final Block block = simWorld.getBlockAt(cx + dx, floorY, cz + dz);
-                if (block.getType() != Material.BARRIER) {
-                    block.setType(Material.BARRIER, false);
+        if (prepared.add(index)) {
+            final int floorY = ARENA_Y - 1;
+            final int cx = centre.getBlockX();
+            final int cz = centre.getBlockZ();
+            for (int dx = -PLATFORM_RADIUS; dx <= PLATFORM_RADIUS; dx++) {
+                for (int dz = -PLATFORM_RADIUS; dz <= PLATFORM_RADIUS; dz++) {
+                    final Block block = simWorld.getBlockAt(cx + dx, floorY, cz + dz);
+                    if (block.getType() != Material.BARRIER) {
+                        block.setType(Material.BARRIER, false);
+                    }
                 }
             }
         }
@@ -153,5 +212,10 @@ public class SimWorldManager {
         log.info("Unloading simulation world '{}'", world.getName()).submit();
         Bukkit.unloadWorld(world, false);
         world = null;
+        // The pool describes blocks in a world that no longer exists. Keeping it would hand the
+        // next run an index it believes is already built, in a freshly generated void.
+        freeIndices.clear();
+        prepared.clear();
+        nextIndex = 0;
     }
 }

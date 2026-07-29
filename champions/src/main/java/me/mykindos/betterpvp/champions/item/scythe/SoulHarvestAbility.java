@@ -1,7 +1,5 @@
 package me.mykindos.betterpvp.champions.item.scythe;
 
-import me.mykindos.betterpvp.core.locale.Translations;
-
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
 import io.papermc.paper.event.player.PlayerInventorySlotChangeEvent;
@@ -30,6 +28,7 @@ import me.mykindos.betterpvp.core.interaction.context.InteractionContext;
 import me.mykindos.betterpvp.core.item.ItemFactory;
 import me.mykindos.betterpvp.core.item.ItemInstance;
 import me.mykindos.betterpvp.core.listener.BPvPListener;
+import me.mykindos.betterpvp.core.locale.Translations;
 import me.mykindos.betterpvp.core.utilities.UtilEntity;
 import me.mykindos.betterpvp.core.utilities.UtilMessage;
 import me.mykindos.betterpvp.core.utilities.UtilServer;
@@ -284,6 +283,25 @@ public class SoulHarvestAbility extends AbstractInteraction implements Listener,
         }
     }
 
+    /**
+     * Souls a player is currently holding, zero when the ability is not tracking them.
+     *
+     * <p>Holding the scythe and being tracked are not the same thing. {@link #playerData} is
+     * populated only by {@link #onJoin}, {@link #onSlotChange} and {@link #onSwapWeapon}, and
+     * {@link #doExecute} removes the entry outright when a usage restriction blocks a harvest --
+     * so a player can be swinging the scythe with no entry at all. Every read of the total went
+     * through {@code playerData.get(...).getSoulCount()} unguarded, which turned that ordinary
+     * state into a {@link NullPointerException} thrown out of a {@code DamageEvent} handler,
+     * killing the rest of the event for everyone.
+     *
+     * <p>Zero is the honest answer rather than a fallback: a freshly created {@link ScytheData}
+     * starts at zero charge, so an untracked player and a just-equipped one hold the same number
+     * of souls. The bonus damage and lifesteal derived from it then come out identical.
+     */
+    public double getHeldSouls(Player player) {
+        final ScytheData data = playerData.get(player.getUniqueId());
+        return data == null ? 0 : data.getSoulCount();
+    }
 
     /**
      * Get the soul count for a player
@@ -462,9 +480,10 @@ public class SoulHarvestAbility extends AbstractInteraction implements Listener,
         final DamageCause cause = lastDamager.getDamageCause();
         if (lastDamager.getDamager() instanceof Player attacker && cause.getCategories().contains(DamageCauseCategory.MELEE) && scythe.isHoldingWeapon(attacker)
                 && event.getEntity() instanceof Player) {
+            // Absent when the killer is holding the scythe without being tracked -- see
+            // getHeldSouls. There is no total to add to, so the kill simply grants nothing.
             final ScytheData data = playerData.get(attacker.getUniqueId());
-            final boolean success = data.gainSoul(soulCount);
-            if (success) {
+            if (data != null && data.gainSoul(soulCount)) {
                 data.playHarvest(null);
             }
             return;
@@ -495,7 +514,7 @@ public class SoulHarvestAbility extends AbstractInteraction implements Listener,
             if (item.getBaseItem() != scythe) return;
 
             // Apply bonus damage based on soul count
-            double soulCount =  getPlayerData().get(damager.getUniqueId()).getSoulCount();
+            double soulCount = getHeldSouls(damager);
             double maxSouls = getMaxSouls();
 
             // Calculate and apply bonus damage
