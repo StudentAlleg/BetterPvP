@@ -18,10 +18,8 @@ import me.mykindos.betterpvp.core.effects.EffectTypes;
 import me.mykindos.betterpvp.core.listener.BPvPListener;
 import me.mykindos.betterpvp.core.locale.Translations;
 import me.mykindos.betterpvp.core.utilities.UtilBlock;
-import me.mykindos.betterpvp.core.utilities.UtilFormat;
 import me.mykindos.betterpvp.core.world.blocks.WorldBlockHandler;
 import net.kyori.adventure.text.Component;
-import net.kyori.adventure.text.format.NamedTextColor;
 import org.bukkit.Effect;
 import org.bukkit.block.Block;
 import org.bukkit.block.data.BlockData;
@@ -78,38 +76,41 @@ public class RootingAxe extends Skill implements PassiveSkill, CooldownSkill, De
         if (!SkillWeapons.isHolding(damager, SkillType.AXE)) return;
         if (event.getDamagee() instanceof Wither) return;
         if (!event.isDamageeLiving()) return;
+        // Before isGrounded, which walks the damagee's supporting blocks: every melee axe hit on
+        // the server reaches this handler, but only a mage carrying the passive can act on it. A
+        // 299 s profile of the balance simulator put 3.2% of the entire main thread in isGrounded
+        // under this method, essentially all of it on damagers with no level in the skill.
+        int level = getLevel(damager);
+        if (level <= 0) return;
         if (!UtilBlock.isGrounded(event.getDamagee())) return;
         final LivingEntity damagee = event.getLivingDamagee();
         if (championsManager.getEffects().hasEffect(damagee, EffectTypes.PROTECTION)) return;
-        int level = getLevel(damager);
-        if (level > 0) {
 
-            if (damagee instanceof Player &&
-                    championsManager.getEffects().hasEffect(damager, EffectTypes.PROTECTION)) {
-                return;
-            }
+        if (damagee instanceof Player &&
+                championsManager.getEffects().hasEffect(damager, EffectTypes.PROTECTION)) {
+            return;
+        }
 
-            Block block = event.getDamagee().getLocation().getBlock().getRelative(0, -1, 0);
+        Block block = event.getDamagee().getLocation().getBlock().getRelative(0, -1, 0);
 
-            BlockData blockData = block.getBlockData();
-            if (blockData instanceof Slab || blockData instanceof Openable || blockData instanceof Ladder) {
-                return;
-            }
+        BlockData blockData = block.getBlockData();
+        if (blockData instanceof Slab || blockData instanceof Openable || blockData instanceof Ladder) {
+            return;
+        }
 
-            Block blockMoreUnder = damagee.getLocation().getBlock().getRelative(0, -2, 0);
-            if(!isRootable(blockMoreUnder)) {
-                return;
-            }
+        Block blockMoreUnder = damagee.getLocation().getBlock().getRelative(0, -2, 0);
+        if(!isRootable(blockMoreUnder)) {
+            return;
+        }
 
-            Block blockUnder = damagee.getEyeLocation().getBlock().getRelative(0, -1, 0);
-            if (UtilBlock.airFoliage(blockUnder) && !UtilBlock.airFoliage(blockMoreUnder)) {
-                if (!UtilBlock.airFoliage(block) && !block.isLiquid() && !blockMoreUnder.isLiquid()) {
+        Block blockUnder = damagee.getEyeLocation().getBlock().getRelative(0, -1, 0);
+        if (UtilBlock.airFoliage(blockUnder) && !UtilBlock.airFoliage(blockMoreUnder)) {
+            if (!UtilBlock.airFoliage(block) && !block.isLiquid() && !blockMoreUnder.isLiquid()) {
 
-                    if (championsManager.getCooldowns().use(damager, getName(), getCooldown(level), false)) {
-                        damagee.teleport(damagee.getLocation().add(0, -1, 0));
-                        damagee.getWorld().playEffect(damagee.getLocation(), Effect.STEP_SOUND, damagee.getLocation().getBlock().getType());
-                        championsManager.getEffects().addEffect(damagee, damager, EffectTypes.NO_JUMP, (long) (getDuration(level) * 1000));
-                    }
+                if (championsManager.getCooldowns().use(damager, getName(), getCooldown(level), false)) {
+                    damagee.teleport(damagee.getLocation().add(0, -1, 0));
+                    damagee.getWorld().playEffect(damagee.getLocation(), Effect.STEP_SOUND, damagee.getLocation().getBlock().getType());
+                    championsManager.getEffects().addEffect(damagee, damager, EffectTypes.NO_JUMP, (long) (getDuration(level) * 1000));
                 }
             }
         }
