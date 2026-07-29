@@ -129,8 +129,16 @@ public class Swordsmanship extends Skill implements PassiveSkill, OffensiveSkill
             if (level > 0) {
                 if (charges.containsKey(cur)) {
                     Gamer gamer = championsManager.getClientManager().search().online(cur).getGamer();
-                    if (UtilTime.elapsed(gamer.getLastDamaged(), (long) getTimeOutOfCombat(level))) {
-                        if (!championsManager.getCooldowns().use(cur, getName(), timeBetweenCharges, false)) return;
+                    // This compared a seconds value against a millisecond epoch without scaling, so
+                    // the requirement was 2.5 *milliseconds* -- satisfied on every pass, letting the
+                    // skill charge while its holder was being hit, the exact opposite of the
+                    // out-of-combat mechanic the config describes. Now expressed in ticks, which is
+                    // also what makes the window independent of how far behind the server is.
+                    if (gamer.hasBeenOutOfCombatFor(UtilTime.toTicks(getTimeOutOfCombat(level)))) {
+                        // continue, not return: this is a per-player cooldown, so bailing out of the
+                        // whole loop let whichever player happened to be iterated first starve every
+                        // player behind them of charges for as long as their cooldown had left.
+                        if (!championsManager.getCooldowns().use(cur, getName(), timeBetweenCharges, false)) continue;
                         int charge = charges.get(cur);
                         if (charge < level) {
                             charge = Math.min(level, charge + 1);
@@ -155,7 +163,11 @@ public class Swordsmanship extends Skill implements PassiveSkill, OffensiveSkill
         timeBetweenCharges = getConfig("timeBetweenCharges", 2.0, Double.class);
         timeBetweenChargesDecreasePerLevel = getConfig("timeBetweenChargesDecreasePerLevel", 0.0, Double.class);
         timeOutOfCombat = getConfig("timeOutOfCombat", 2.5, Double.class);
-        timeOutOfCombatDecreasePerLevel = getConfig("timeOutOfCombat", 0d, Double.class);
+        // Was reading "timeOutOfCombat", so the per-level decrease defaulted to the whole
+        // out-of-combat window instead of 0: getTimeOutOfCombat fell to 0 at level 2 and went
+        // negative from level 3 up, which removed the out-of-combat requirement entirely for every
+        // level above 1.
+        timeOutOfCombatDecreasePerLevel = getConfig("timeOutOfCombatDecreasePerLevel", 0d, Double.class);
         baseDamagePerCharge = getConfig("baseDamagePerCharge", 1.0, Double.class);
         damageIncreasePerLevel = getConfig("damageIncreasePerLevel", 0.0, Double.class);
     }

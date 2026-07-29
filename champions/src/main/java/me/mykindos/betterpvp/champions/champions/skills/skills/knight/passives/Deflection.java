@@ -8,6 +8,7 @@ import me.mykindos.betterpvp.champions.champions.skills.Skill;
 import me.mykindos.betterpvp.champions.champions.skills.types.DefensiveSkill;
 import me.mykindos.betterpvp.champions.champions.skills.types.PassiveSkill;
 import me.mykindos.betterpvp.champions.combat.damage.SkillDamageModifier;
+import me.mykindos.betterpvp.core.client.Client;
 import me.mykindos.betterpvp.core.client.gamer.Gamer;
 import me.mykindos.betterpvp.core.combat.cause.DamageCauseCategory;
 import me.mykindos.betterpvp.core.combat.events.DamageEvent;
@@ -16,12 +17,10 @@ import me.mykindos.betterpvp.core.components.champions.SkillType;
 import me.mykindos.betterpvp.core.framework.updater.UpdateEvent;
 import me.mykindos.betterpvp.core.listener.BPvPListener;
 import me.mykindos.betterpvp.core.locale.Translations;
-import me.mykindos.betterpvp.core.utilities.UtilFormat;
 import me.mykindos.betterpvp.core.utilities.UtilMessage;
 import me.mykindos.betterpvp.core.utilities.UtilTime;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
-import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
@@ -118,13 +117,25 @@ public class Deflection extends Skill implements PassiveSkill, DefensiveSkill {
     @UpdateEvent(delay = 250)
     public void addCharge() {
 
-        for (Player cur : Bukkit.getOnlinePlayers()) {
+        // Iterates the loaded clients rather than Bukkit.getOnlinePlayers(), matching Swordsmanship,
+        // which is the sibling charge passive and was already written this way. The two describe the
+        // same mechanic and had no reason to disagree on who they apply to; the player list is also
+        // the narrower of the two, so anything holding this skill while absent from it -- a
+        // simulation combatant, for one -- never accrued a charge and so had the skill silently
+        // contribute nothing.
+        for (Client client : championsManager.getClientManager().getLoaded()) {
+            Player cur = client.getGamer().getPlayer();
+            if (cur == null) continue;
+
             int level = getLevel(cur);
             if (level > 0) {
                 if (charges.containsKey(cur.getUniqueId())) {
                     Gamer gamer = championsManager.getClientManager().search().online(cur).getGamer();
-                    if (UtilTime.elapsed(gamer.getLastDamaged(), (long) getTimeOutOfCombat(level) * 1000)) {
-                        if (!championsManager.getCooldowns().use(cur, getName(), getTimeBetweenCharges(level), false)) return;
+                    if (gamer.hasBeenOutOfCombatFor(UtilTime.toTicks(getTimeOutOfCombat(level)))) {
+                        // continue, not return: this is a per-player cooldown, so bailing out of the
+                        // whole loop let whichever player happened to be iterated first starve every
+                        // player behind them of charges for as long as their cooldown had left.
+                        if (!championsManager.getCooldowns().use(cur, getName(), getTimeBetweenCharges(level), false)) continue;
                         int charge = charges.get(cur.getUniqueId());
                         if (charge < getMaxCharges(level)) {
                             charge = Math.min(getMaxCharges(level), charge + 1);
