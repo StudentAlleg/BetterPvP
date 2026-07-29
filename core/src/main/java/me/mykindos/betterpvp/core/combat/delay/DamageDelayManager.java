@@ -8,7 +8,6 @@ import me.mykindos.betterpvp.core.combat.events.DamageEvent;
 import me.mykindos.betterpvp.core.effects.EffectManager;
 import me.mykindos.betterpvp.core.effects.EffectTypes;
 import me.mykindos.betterpvp.core.framework.updater.UpdateEvent;
-import me.mykindos.betterpvp.core.utilities.UtilTime;
 import org.bukkit.Bukkit;
 import org.bukkit.Sound;
 import org.bukkit.entity.Entity;
@@ -53,7 +52,7 @@ public class DamageDelayManager {
             return true;
         }
         
-        return UtilTime.elapsed(delayData.getTimestamp(), delayData.getDuration());
+        return delayData.isExpired();
     }
     
     /**
@@ -70,10 +69,12 @@ public class DamageDelayManager {
             cause
         );
         
-        DelayData delayData = new DelayData(System.currentTimeMillis(), duration);
+        // Durations arrive in milliseconds and are quantised to ticks here -- see DelayData for
+        // why the delay must not be measured against the wall clock.
+        DelayData delayData = DelayData.ofMillis(duration);
         activeDelays.put(key, delayData);
-        
-        log.debug("Added damage delay: {} -> {} for {} ms", 
+
+        log.debug("Added damage delay: {} -> {} for {} ms",
                  damager != null ? damager.getName() : "Environment", 
                  damagee.getName(), duration).submit();
     }
@@ -185,10 +186,7 @@ public class DamageDelayManager {
             return 0;
         }
         
-        long elapsed = System.currentTimeMillis() - delayData.getTimestamp();
-        long remaining = delayData.getDuration() - elapsed;
-        
-        return Math.max(0, remaining);
+        return delayData.getRemainingTime();
     }
     
     /**
@@ -214,8 +212,7 @@ public class DamageDelayManager {
         activeDelays.entrySet().removeIf(entry -> {
             DelayData delayData = entry.getValue();
             final Entity damagee = Bukkit.getEntity(entry.getKey().getDamageeId());
-            final boolean elapsed = UtilTime.elapsed(delayData.getTimestamp(), delayData.getDuration());
-            if (elapsed || damagee == null || !damagee.isValid()) {
+            if (delayData.isExpired() || damagee == null || !damagee.isValid()) {
                 return true;
             }
             return false;

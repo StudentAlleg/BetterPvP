@@ -4,15 +4,25 @@ import com.google.inject.Inject;
 import com.google.inject.Singleton;
 import lombok.CustomLog;
 import me.mykindos.betterpvp.balancesim.SimulationGate;
+import me.mykindos.betterpvp.balancesim.catalog.SimScope;
 import me.mykindos.betterpvp.balancesim.engine.DuelOrchestrator;
+import me.mykindos.betterpvp.balancesim.engine.SimProgress;
+import me.mykindos.betterpvp.balancesim.engine.SimSummary;
 import me.mykindos.betterpvp.balancesim.engine.SimulationTrigger;
 import me.mykindos.betterpvp.core.client.Client;
 import me.mykindos.betterpvp.core.command.Command;
 import me.mykindos.betterpvp.core.command.IConsoleCommand;
 import me.mykindos.betterpvp.core.framework.annotations.WithReflection;
 import me.mykindos.betterpvp.core.utilities.UtilMessage;
+import net.kyori.adventure.text.Component;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
+
+import java.util.Arrays;
+import java.util.List;
+import java.util.Locale;
+import java.util.Optional;
+import java.util.stream.Collectors;
 
 /**
  * Admin entry point for a simulation sweep.
@@ -57,14 +67,101 @@ public class SimulateCommand extends Command implements IConsoleCommand {
             return;
         }
 
-        UtilMessage.message(sender, "core.prefix.command", "balancesim.command.simulate.started");
-        orchestrator.run(SimulationTrigger.COMMAND)
-                .thenRun(() -> UtilMessage.message(sender, "core.prefix.command",
-                        "balancesim.command.simulate.finished"))
+        // An unrecognised scope is refused rather than defaulted. The tiers differ by orders of
+        // magnitude in cost, so silently running MELEE for a mistyped FULL would look like a
+        // finished sweep and be a different measurement entirely.
+        final SimScope scope;
+        if (args.length > 0) {
+            final Optional<SimScope> parsed = SimScope.parse(args[0]);
+            if (parsed.isEmpty()) {
+                UtilMessage.message(sender, "core.prefix.command", "balancesim.command.simulate.badScope",
+                        Component.text(args[0]), Component.text(scopeNames()));
+                return;
+            }
+            scope = parsed.get();
+        } else {
+            scope = SimScope.parse(gate.getScope()).orElse(SimScope.MELEE);
+        }
+
+        UtilMessage.message(sender, "core.prefix.command", "balancesim.command.simulate.started",
+                Component.text(scope.name()));
+        orchestrator.run(SimulationTrigger.COMMAND, scope, progress -> report(sender, progress))
+                .thenAccept(summary -> report(sender, summary))
                 .exceptionally(ex -> {
                     log.error("Simulation run failed", ex).submit();
                     UtilMessage.message(sender, "core.prefix.command", "balancesim.command.simulate.failed");
                     return null;
                 });
+    }
+
+    /**
+     * Relays a progress snapshot to whoever started the sweep.
+     *
+     * <p>Both counts are shown, because they answer different questions and can be far apart: a
+     * duel is a unit of work and moves constantly, while a matchup only becomes a
+     * {@code sim_result} row once all of its Monte-Carlo iterations are in. Reporting duels alone
+     * would suggest a run is nearly done when very few rows have actually been written.
+     *
+     * <p>Sent to the {@code CommandSender} that ran the command. If that was a player who has
+     * since logged out the messages simply go nowhere -- the log copy is unconditional, so a run
+     * is never unobservable.
+     */
+    private static void report(CommandSender sender, SimProgress progress) {
+        UtilMessage.message(sender, "core.prefix.command", "balancesim.command.simulate.progress",
+                Component.text(progress.completedDuels()),
+                Component.text(progress.plannedDuels()),
+                Component.text(String.format(Locale.ROOT, "%.1f", progress.percent())),
+                Component.text(progress.activeDuels()),
+                Component.text(progress.completedMatchups()),
+                Component.text(progress.plannedMatchups()),
+                Component.text(progress.elapsedFormatted()),
+                Component.text(progress.etaFormatted()),
+                Component.text(progress.estimatedFinish()));
+    }
+
+    /**
+     * Relays the closing figures to whoever started the sweep, mirroring the summary line the
+     * orchestrator writes to the log.
+     *
+     * <p>Sent rather than a bare "finished" because the useful question at the end of a multi-hour
+     * run is not whether it stopped but whether its rows are worth querying: a run can close
+     * {@code COMPLETED} having skipped builds, and the planned-versus-measured counts are the only
+     * thing that says so. A run that did not cover everything it planned gets an explicit warning
+     * line, so a partial sweep is not quietly treated as a whole one.
+     */
+    private static void report(CommandSender sender, SimSummary summary) {
+        UtilMessage.message(sender, "core.prefix.command", "balancesim.command.simulate.finished",
+                Component.text(summary.runId()),
+                Component.text(summary.scope().name()),
+                Component.text(summary.status()),
+                Component.text(summary.completedDuels()),
+                Component.text(summary.plannedDuels()),
+                Component.text(summary.completedMatchups()),
+                Component.text(summary.plannedMatchups()),
+                Component.text(summary.resultRows()),
+                Component.text(summary.elapsedFormatted()));
+        if (!summary.whole()) {
+            UtilMessage.message(sender, "core.prefix.command", "balancesim.command.simulate.partial");
+        }
+    }
+
+    /**
+     * Tab completion offers the tiers, so the cost difference between them is discoverable rather
+     * than something an admin has to read the source to find.
+     */
+    @Override
+    public List<String> processTabComplete(CommandSender sender, String[] args) {
+        if (args.length <= 1) {
+            final String prefix = args.length == 0 ? "" : args[0].toUpperCase(Locale.ROOT);
+            return Arrays.stream(SimScope.values())
+                    .map(Enum::name)
+                    .filter(name -> name.startsWith(prefix))
+                    .collect(Collectors.toList());
+        }
+        return super.processTabComplete(sender, args);
+    }
+
+    private static String scopeNames() {
+        return Arrays.stream(SimScope.values()).map(Enum::name).collect(Collectors.joining(", "));
     }
 }

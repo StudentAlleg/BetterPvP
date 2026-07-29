@@ -11,6 +11,11 @@ import java.util.List;
  *
  * @param role         {@code Role} enum name
  * @param weaponKey    {@code ItemRegistry} key of the equipped weapon
+ * @param armorSetId   {@code SimEquipment.NO_ARMOR} or {@code SimEquipment.ROLE_ARMOR}. Armour is
+ *                     effective HP rather than mitigation, so on an <em>attacker</em> it changes
+ *                     nothing about the damage measured and is always {@code none}; the field
+ *                     exists because a defender is spawned from a spec too, and its armour is what
+ *                     {@code sim_result.target_armor} and {@code target_hp} describe.
  * @param runeKeys     rune/gem item keys applied to the loadout
  * @param skills       one entry per filled slot
  * @param pointsSpent  sum of allocated levels, bounded by {@code RoleBuild.points} (12)
@@ -19,6 +24,7 @@ import java.util.List;
  */
 public record SimBuildSpec(String role,
                            String weaponKey,
+                           String armorSetId,
                            List<String> runeKeys,
                            List<SimSkillAllocation> skills,
                            int pointsSpent,

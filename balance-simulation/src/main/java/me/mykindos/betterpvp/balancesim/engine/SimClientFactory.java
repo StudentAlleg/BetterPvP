@@ -3,10 +3,14 @@ package me.mykindos.betterpvp.balancesim.engine;
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
 import lombok.CustomLog;
+import me.mykindos.betterpvp.balancesim.catalog.SimBuildSpec;
+import me.mykindos.betterpvp.balancesim.catalog.SimSkillAllocation;
 import me.mykindos.betterpvp.champions.Champions;
 import me.mykindos.betterpvp.champions.champions.builds.BuildManager;
 import me.mykindos.betterpvp.champions.champions.builds.GamerBuilds;
 import me.mykindos.betterpvp.champions.champions.builds.RoleBuild;
+import me.mykindos.betterpvp.champions.champions.skills.ChampionsSkillManager;
+import me.mykindos.betterpvp.champions.champions.skills.Skill;
 import me.mykindos.betterpvp.core.client.Client;
 import me.mykindos.betterpvp.core.client.Rank;
 import me.mykindos.betterpvp.core.client.gamer.Gamer;
@@ -52,6 +56,7 @@ public class SimClientFactory {
 
     private final ClientManager clientManager;
     private final BuildManager buildManager;
+    private final ChampionsSkillManager skillManager;
 
     @Inject
     public SimClientFactory(ClientManager clientManager) {
@@ -63,7 +68,9 @@ public class SimClientFactory {
         // ("Plugin already initialized!"). Binding Champions locally would fix the crash and
         // introduce a worse bug -- a second BuildManager singleton, so builds registered for a
         // fake player would land in a different map from the one the champions listeners read.
-        this.buildManager = JavaPlugin.getPlugin(Champions.class).getInjector().getInstance(BuildManager.class);
+        final var championsInjector = JavaPlugin.getPlugin(Champions.class).getInjector();
+        this.buildManager = championsInjector.getInstance(BuildManager.class);
+        this.skillManager = championsInjector.getInstance(ChampionsSkillManager.class);
     }
 
     /**
@@ -72,9 +79,11 @@ public class SimClientFactory {
      *
      * @param player the spawned fake player this client belongs to
      * @param name   the combatant's name, only used in logs
+     * @param build  the loadout this combatant is measuring; its skills are written into the
+     *               matching role's {@code RoleBuild}
      * @return the registered client
      */
-    public Client create(Player player, String name) {
+    public Client create(Player player, String name, SimBuildSpec build) {
         final UUID uuid = player.getUniqueId();
         final long id = SnowflakeIdGenerator.ID_GENERATOR.nextId();
         final Gamer gamer = new SimGamer(id, player);
@@ -85,38 +94,64 @@ public class SimClientFactory {
         // load() only puts the client into the cache. Deliberately not clientManager.save(), and
         // deliberately not the loadOnline() path, either of which would reach the database.
         clientManager.load(client);
-        registerBuilds(client, uuid);
+        registerBuilds(client, uuid, build);
         return client;
     }
 
     /**
-     * Registers an empty build per role, so {@code buildManager.getObject(uuid)} resolves.
+     * Registers one build per role, with the spec's skills written into the role it belongs to.
      *
      * <p>{@code BuildManager.loadBuilds} is unusable here on two counts: it reads the player's
      * builds out of the database, and its {@code loadDefaultBuilds} fallback both <em>writes</em>
-     * the generated builds back ({@code BuildRepository.save}) and equips a real skill loadout.
-     * Either would break phase 1 -- the first pollutes the database the simulator is supposed to
-     * only ever append results to, the second silently arms Sever, Leap, Vengeance and the rest on
-     * combatants whose whole point is to measure plain melee.
+     * the generated builds back ({@code BuildRepository.save}) and equips an arbitrary skill
+     * loadout. The first pollutes the database the simulator is supposed to only ever append
+     * results to; the second would silently overwrite the loadout the sweep is measuring.
      *
-     * <p>So the builds are constructed directly and left skill-less, which matches what
-     * {@code BalanceCatalog} enumerates for phase 1: {@code RoleBuild.getActiveSkills()} returns an
-     * empty list, so the stat listeners iterate nothing rather than dereferencing null.
+     * <p>A build exists for <em>every</em> role, not just the one being measured, because
+     * {@code SkillStatListener} and {@code SkillListener.onRoleChange} look the map up by role name
+     * on every role change and a missing entry is the {@code NoSuchElement}/NPE they cannot
+     * survive -- and the combatant passes through a second role on spawn (see
+     * {@code SimCombatant.equipRole}). Only the spec's own role is populated; the rest stay empty,
+     * so {@code getActiveSkills()} on them iterates nothing.
      *
-     * <p>TODO(phase 2): populate these from the matchup's {@code SimBuildSpec} instead of leaving
-     * them empty, which is what makes the catalog's skill axis actually reach the pipeline.
+     * <p>Points are taken as they are spent, so {@code RoleBuild.getPoints()} reports the same
+     * remaining budget a real player's build would. Nothing in the damage path reads it, but the
+     * build menus and validators do, and leaving it at 12 on a fully-spent build would make the
+     * fake player's state a thing no real player could be in.
      */
-    private void registerBuilds(Client client, UUID uuid) {
+    private void registerBuilds(Client client, UUID uuid, SimBuildSpec spec) {
+        final Role specRole = Role.valueOf(spec.role());
         final GamerBuilds builds = new GamerBuilds(client);
         for (Role role : Role.values()) {
             final RoleBuild build = new RoleBuild(client.getId(), uuid, role, 1);
             build.setActive(true);
+            if (role == specRole) {
+                applySkills(build, spec);
+            }
             builds.getBuilds().add(build);
             // Keyed by role name: this is the map SkillStatListener reads on every kill, death and
             // role change, and a missing entry there is the NoSuchElement/NPE it cannot survive.
             builds.getActiveBuilds().put(role.getName(), build);
         }
         buildManager.addObject(uuid.toString(), builds);
+    }
+
+    /**
+     * Writes the spec's allocation onto a {@link RoleBuild} through {@code setSkill}, the same
+     * mutator the build menu uses.
+     *
+     * <p>The {@code Skill} instances come from {@code ChampionsSkillManager}, so a build holds the
+     * live Guice singletons the listeners dispatch against -- a copy would be equal to nothing and
+     * {@code Skill.getSkill} compares by identity through {@code equals}.
+     */
+    private void applySkills(RoleBuild build, SimBuildSpec spec) {
+        for (SimSkillAllocation allocation : spec.skills()) {
+            final Skill skill = skillManager.getObject(allocation.skillName()).orElseThrow(() ->
+                    new IllegalStateException("Catalog named a skill that is not registered: "
+                            + allocation.skillName()));
+            build.setSkill(skill.getType(), skill, allocation.allocatedLevel());
+            build.takePoints(allocation.allocatedLevel());
+        }
     }
 
     /**

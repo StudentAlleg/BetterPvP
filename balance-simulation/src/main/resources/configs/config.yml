@@ -10,12 +10,31 @@ champions:
     # open, unloaded and deleted at run teardown.
     worldName: bpvp_sim
     # Monte-Carlo iterations per matchup, to average out damage min/max rolls and crits.
-    iterations: 100
+    # Duels cost real time, so this multiplies the sweep directly: a scope with 5,000
+    # matchups at 10 iterations is 50,000 duels. Start low and raise it once the sweep
+    # size is known.
+    iterations: 10
     # How many duels the orchestrator runs at once. All combat state is keyed per player
     # UUID, so this is bounded by tick budget rather than correctness.
     maxConcurrentDuels: 64
     # Hard stop for a single duel, so a matchup that can never kill does not stall a run.
     duelTimeoutSeconds: 30.0
+    # Which slice of the permutation space /simulate sweeps when given no argument.
+    #   MELEE   - role x default weapon. The phase 1 baseline; cheapest.
+    #   WEAPONS - role x every melee weapon, no skills to confound the weapon axis.
+    #   SKILLS  - one skill at a time over its level range, on plain and booster weapons.
+    #   FULL    - every budget-feasible build. Expect hours; check the logged count first.
+    scope: MELEE
+    # Refuse a scope that enumerates more builds than this rather than truncating it -- a
+    # prefix of an enumeration is a biased sample and nothing on the row would say so.
+    maxBuilds: 5000
+    # Duels started per tick. Spawning two ServerPlayers and equipping them is tens of
+    # milliseconds of main-thread work, so filling the whole concurrency budget in one
+    # tick stalls the server and staggers when duels actually engage.
+    duelSetupsPerTick: 4
+    # How often a running sweep reports duels done / matchups measured / ETA, to the
+    # console and to whoever ran /simulate. Floored at 1 second.
+    progressIntervalSeconds: 15.0
 
 command:
   simulate:

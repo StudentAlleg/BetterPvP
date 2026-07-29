@@ -124,11 +124,13 @@ public class SimRecorder implements Listener {
         // applied. The hit is already recorded above at its true value, and the duel is resolved
         // from that record rather than from the entity's health.
         //
-        // TODO(phase 2): remove this. Suppressing the death also suppresses every on-death
-        // mechanic -- SoulHarvest, BloodBarrier, Vengeance expiry -- which is harmless while
-        // builds carry no skills and silently under-measures them once the catalog does. See
-        // docs/balance-simulation/DESIGN.md open question 8: phase 2 raises fake-player fidelity
-        // (PlayerList registration, synthesised GamerBuilds) so combatants can really die.
+        // TODO(phase 3): remove this. Suppressing the death also suppresses every on-death
+        // mechanic. That costs nothing yet: the ones that produce value -- SoulHarvest,
+        // BloodBarrier, Riposte -- are all *actives*, and nothing synthesises a skill input until
+        // phase 3, while every passive with a death handler uses it purely to reset state that a
+        // duel ending at the lethal blow cannot observe anyway. It becomes silently wrong the
+        // moment an active is cast. See docs/balance-simulation/DESIGN.md open question 8 for the
+        // 47-listener surface that has to be audited first.
         recording.markKilled(damagee.getUniqueId(), Bukkit.getCurrentTick() - recording.startTick);
         event.setCancelled(true);
     }

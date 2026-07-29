@@ -1,6 +1,7 @@
 # Balance Simulation Pipeline — Design
 
-**Status:** In review — real-pipeline engine, dev-server-only, full scope incl. actives
+**Status:** Phase 2 implemented (2026-07-28) — real-pipeline engine, dev-server-only.
+Melee + passives measured across tiered scopes; actives are phase 3.
 **Goal:** Replace the SQL-modeled DPS/TTK dashboards with a simulation engine
 that uses the game's actual code and values, exports results to Postgres, and
 lets Grafana be a thin visualization layer.
@@ -232,8 +233,8 @@ Existing hand-built SQL dashboards are retired after parity is verified.
 | Phase | Scope | Exit criteria |
 |-------|-------|--------------|
 | 1 | Fake-player infra (spawn/teardown, ephemeral clients, stats exclusion), sim void world, sim gate flag, schema + repository, `/simulate` skeleton | Two fake players duel with plain weapons in the sim void world on a dev server; rows land in `sim_result` |
-| 2 | `BalanceCatalog` build enumeration (roles × slots × budget-feasible level vectors × weapons incl. boosters × runes × armor), duel orchestration at scale, Monte-Carlo iterations, passives measured correctly, **fake-player fidelity raised enough to let sim combatants really die** (open question 8) | Parity with `ttk_all_valid_builds` where the old SQL was right; documented deltas where it was wrong; sim deaths run the real `PlayerDeathEvent` path with the phase 1 kill-suppression removed |
-| 3 | Active-skill rotation policy (synthesized inputs, energy/cooldown-aware), thin dashboards (explorer + patch-diff + empirical overlay) | Actives contribute to DPS/TTK; dashboards read only `sim_*` tables |
+| 2 | `BalanceCatalog` build enumeration (roles × slots × budget-feasible level vectors × weapons incl. boosters × target armor), tiered scopes, duel orchestration at scale, Monte-Carlo iterations, passives measured correctly | Rows for every tier land in `sim_result` with iteration counts and percentiles; the skill and weapon axes visibly move DPS/TTK; parity with `ttk_all_valid_builds` where the old SQL was right, documented deltas where it was wrong |
+| 3 | Active-skill rotation policy (synthesized inputs, energy/cooldown-aware), **fake-player fidelity raised enough to let sim combatants really die** (open question 8), mutual-exchange scenario (open question 9), rune axis, thin dashboards (explorer + patch-diff + empirical overlay) | Actives contribute to DPS/TTK; sim deaths run the real `PlayerDeathEvent` path with the phase 2 kill-suppression removed; dashboards read only `sim_*` tables |
 | 4 | Retire old SQL dashboards; optional reload-triggered auto-runs on dev | Old dashboards deleted |
 
 ## 5. Implementation notes & open questions (to settle before/while building)
@@ -355,13 +356,35 @@ programmatic control, revisit.
 5. **jOOQ codegen dependency** — generated table classes require the local
    Postgres (`localhost:5002/betterpvp`) + codegen task. Fallback: string-based
    `DSL.table(...)` in the repository until codegen is run.
-6. **Permutation budget** — the damage-relevant space (roles × skills per slot ×
-   **budget-feasible level vectors** × weapons × runes × target roles + armor,
-   minus invalid combos) should be counted before building the orchestrator; it
-   sets the concurrency and iteration targets (goal: full sweep in single-digit
-   minutes on the dev box). The 12-point budget and per-skill `maxLevel` (§3.1)
-   prune this hard — count *after* applying them, and decide there whether the
-   reload-triggered path needs a reduced tier.
+6. ~~**Permutation budget**~~ — **resolved (2026-07-28, phase 2): the space is
+   tiered, and the tier is named at invocation.** Counting after both prunes:
+   ~150 enabled skills across six roles, ~27 melee `WeaponItem`s, six slots. Even
+   with the ≤12-point budget a single role admits thousands of slot combinations
+   before levels vary, so the unrestricted product is millions of matchups per
+   role — days of wall clock at real-time duel cost. A single "full sweep in
+   single-digit minutes" target is therefore not reachable and was the wrong goal.
+
+   `SimScope` names four tiers, and `/simulate <scope>` picks one:
+
+   | Tier | Axes | What it answers |
+   |------|------|-----------------|
+   | `MELEE` | role × default weapon | phase 1 baseline; a regression check that nothing under the simulator moved |
+   | `WEAPONS` | role × every melee weapon | the weapon axis with no skills to confound it |
+   | `SKILLS` | role × one skill at a time × level, plain and booster weapons, vs armoured targets | a per-skill strength curve |
+   | `FULL` | role × every budget-feasible level vector × every melee weapon | the design's end state; join target for live per-build data |
+
+   `SKILLS` is the tier that earns its keep. A full build folds several skills'
+   contributions into one DPS figure and there is no way to attribute it
+   afterwards, so isolating one skill is not a cheaper approximation of `FULL` —
+   it answers a question `FULL` cannot.
+
+   **A scope over `maxBuilds` is refused with its count, never truncated.** A
+   prefix of an enumeration is a biased sample and nothing on the resulting rows
+   would say so.
+
+   Iterations multiply all of this directly, so the config default dropped from
+   100 to 10; the orchestrator logs the duel count and a worst-case wall clock
+   before starting.
 7. ~~**Where duels happen**~~ — **resolved (2026-07-21): a dedicated void
    world.** No chunk-generation cost, no terrain interference with movement
    skills or projectiles, and world-scanning listeners can be excluded by world
@@ -427,17 +450,87 @@ programmatic control, revisit.
    **What this means for the phase 2 plan.** Registering combatants with
    `PlayerList` was expected to be required and turned out **not** to be — the
    `Gamer` override covers the observed call sites without giving up the "absent
-   from `Bukkit.getOnlinePlayers()`" exclusion. Prefer keeping it that way. The
-   remaining phase 2 work is therefore:
-   - populate the registered `RoleBuild`s from the matchup's `SimBuildSpec` rather
-     than leaving them empty, which is what makes the catalog's skill axis reach
-     the pipeline at all;
-   - delete the kill suppression in `SimRecorder` and let combatants really die,
-     re-auditing the open question 4 surface first;
-   - only fall back to `PlayerList` registration if a listener is found that calls
-     `Bukkit.getPlayer` directly and cannot be satisfied otherwise — and if so,
-     expect to need the `SimulatedEntity` guard at more chokepoints, since that
-     trades the free isolation away.
+   from `Bukkit.getOnlinePlayers()`" exclusion. Prefer keeping it that way.
+
+   **Deferred to phase 3 (2026-07-28), with the reason.** Populating the
+   `RoleBuild`s from the matchup's `SimBuildSpec` is done — that was the load-
+   bearing half. Deleting the kill suppression is **not**, and on inspection it
+   buys nothing a phase 2 row could show:
+
+   - The on-death mechanics that *produce* value — `SoulHarvestAbility`,
+     `BloodBarrier`, Riposte, `SeismicSlam`, `MagneticAxe` — are all **actives**.
+     Phase 2 synthesises no skill input, so none of them fires whether the
+     combatant dies or not.
+   - Every **passive** with a `PlayerDeathEvent` handler uses it purely for
+     cleanup: `Vengeance` resets its hit counter, `BarbedArrows` drops its target
+     map, `Kinetics` clears a jump flag. A duel ends at the lethal blow, so state
+     after death cannot affect the measurement.
+   - Against that, 47 files across champions, clans, core, hub, game and private
+     listen to `PlayerDeathEvent`, and the two already found (`SkillStatListener`,
+     `RoleStatListener`) failed on `Bukkit.getPlayer` returning null and on
+     `getObject(uuid).orElseThrow()`. Auditing that surface is real work with a
+     real chance of a wrong-but-silent outcome.
+
+   So the suppression stays through phase 2 and its removal moves to phase 3,
+   where it becomes load-bearing the moment an active is actually cast. Fall back
+   to `PlayerList` registration only if a listener is then found that calls
+   `Bukkit.getPlayer` directly and cannot be satisfied otherwise — and expect to
+   need the `SimulatedEntity` guard at more chokepoints if so, since that trades
+   the free isolation away.
+9. **Only one side swings, so reactive passives are unmeasured.** A duel drives
+   the attacker only; the defender is a full combatant but never attacks. Every
+   passive whose value is realised *on being hit* is therefore invisible: knight's
+   `Vengeance` ramps damage as its holder takes hits, and an attacker that is
+   never hit never ramps. The same applies to counters and to any
+   `DefensiveSkill` on the attacker.
+
+   This is not an oversight to patch in the orchestrator — a mutual exchange
+   truncates the attacker's TTK whenever the defender wins the race, which is a
+   meaningful measurement but a *different* one, and mixing the two would make a
+   row ambiguous. The likely shape is a second scenario axis (`one_way` vs
+   `mutual`) recorded on `sim_run.scenario`, so both are available and never
+   conflated. Belongs with phase 3, which needs to drive both sides properly
+   anyway.
+10. **`config_hash` does not yet cover the values that determine damage.** It
+    hashes the simulation knobs (scope, iterations, timeout, concurrency) and the
+    engine version, not the champions/item config that skill damage and weapon
+    stats are read from live during a run. Two sweeps taken either side of a
+    balance change therefore share a hash, which is precisely the case §3.3 says
+    it exists to distinguish. Until it is closed, a patch diff must be pinned by
+    `engine_version` plus run timestamp. Closing it means hashing the
+    `skills/skills` config tree and the per-item `Config.item` values — the same
+    values `GrafanaConfigSyncService` already mirrors, so that is the place to
+    read them from rather than a second traversal.
+11. **Effective levels are written after the fact.** `sim_build.skills` is
+    inserted with allocated levels (the foreign key needs the row before any duel
+    runs) and updated with observed effective levels once the first combatant for
+    that build has spawned. A run that dies between the two leaves rows whose
+    `effective_level` equals `allocated_level` and is indistinguishable from a
+    genuinely unboosted build. `sim_run.status` is the tell — treat `skills` on a
+    non-`COMPLETED` run as allocated-only.
+
+12. ~~**TTK in ticks carried wall-clock noise**~~ — **resolved (2026-07-28): the
+    damage delay is now tick-quantised.** Run 8 produced identical builds with
+    identical `dmg_per_hit` (stddev `0.0`) and identical `hits_to_kill` but
+    `ttk_ticks_mean` ranging 42.0–44.6, with the inter-hit interval drifting
+    monotonically upward with `build_id` (8.40 → 8.92 ticks) and one matchup
+    coming in *below* the 8-tick floor at 7.88.
+
+    Cause: `DelayData.isExpired()` compared `System.currentTimeMillis()` against
+    a 400 ms duration, while `addDelay` stamped the clock at whatever sub-tick
+    offset the damage happened to be finalised at. 400 ms is exactly 8 ticks at
+    20 TPS — the worst possible alignment — so whether the eighth-tick swing
+    passed depended on how far into each tick the server got before reaching that
+    duel in the loop, and when the server ticked slowly the 400 ms elapsed in as
+    few as 7 ticks. Effective attack speed was therefore a function of server load
+    and of queue position, for real players as much as for the simulator.
+
+    Fix: `DelayData` now holds a start tick and a duration in ticks and compares
+    `Bukkit.getCurrentTick()`. Callers still supply milliseconds and are converted
+    on the way in (`DelayData.ofMillis`, nearest tick, floored at 1 for any
+    positive duration). This is a live-combat change, not a sim-only one: it
+    removes the tick players randomly lost on roughly half their swings, so
+    effective attack rate rises slightly server-wide.
 
 ## 6. Key code references
 

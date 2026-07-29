@@ -458,7 +458,16 @@ public abstract class Skill implements IChampionsSkill {
         return Optional.empty();
     }
 
-    protected int getLevel(Player player) {
+    /**
+     * The level this skill actually executes at for a player, which is not the level they
+     * allocated: a booster weapon adds one and a {@code SkillBoostEffect} adds its amplifier,
+     * neither of which is re-clamped to {@link #getMaxLevel()}.
+     *
+     * <p>Public rather than protected so callers outside the skill hierarchy can read the
+     * effective level instead of re-deriving it. The balance simulator records both levels on a
+     * build, and computing the effective one itself would fork the definition.
+     */
+    public int getLevel(Player player) {
         Optional<BuildSkill> skillOptional = getSkill(player);
         int level = skillOptional.map(BuildSkill::getLevel).orElse(0);
 

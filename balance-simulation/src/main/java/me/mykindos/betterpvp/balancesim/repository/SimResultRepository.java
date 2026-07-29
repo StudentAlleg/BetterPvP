@@ -17,7 +17,9 @@ import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
 import static me.mykindos.betterpvp.balancesim.database.jooq.Tables.SIM_BUILD;
@@ -35,6 +37,14 @@ import static me.mykindos.betterpvp.balancesim.database.jooq.Tables.SIM_RUN;
 @Singleton
 @CustomLog
 public class SimResultRepository {
+
+    /**
+     * How many build rows go up per statement. Postgres binds every value of a multi-row insert as
+     * a parameter and caps a statement at 65535 of them; at eight columns per row this leaves an
+     * order of magnitude of headroom while still cutting a thousand-build catalog to a handful of
+     * round trips.
+     */
+    private static final int BUILD_INSERT_CHUNK = 500;
 
     private final Database database;
 
@@ -82,25 +92,69 @@ public class SimResultRepository {
     }
 
     /**
-     * Inserts one {@code sim_build} row and returns its id.
+     * Inserts every build of a run in chunked multi-row statements and returns fingerprint to id.
      *
-     * <p>{@code skillsJson} carries allocated <em>and</em> effective level per slot; storing
-     * only the allocation would make a booster run indistinguishable from a non-booster one at
-     * the same points spend, despite producing different damage.
+     * <p>{@code sim_result.build_id} is a foreign key, so all of these must exist before the first
+     * duel resolves, and the sweep needs their generated ids to write results at all. A per-build
+     * round trip was fine for phase 1's six rows and is not for a catalog in the thousands, so the
+     * rows go up in chunks with {@code RETURNING id, fingerprint} -- one statement per chunk, and
+     * the mapping comes back from the database rather than being assumed from insertion order.
+     *
+     * @param builds must be unique by fingerprint; {@code idx_sim_build_run_fingerprint} is unique
      */
-    public CompletableFuture<Long> insertBuild(long runId, SimBuildSpec build, String runesJson, String skillsJson) {
-        return database.getAsyncDslContext().executeAsync(ctx -> ctx
-                .insertInto(SIM_BUILD)
-                .set(SIM_BUILD.RUN_ID, runId)
-                .set(SIM_BUILD.ROLE, build.role())
-                .set(SIM_BUILD.WEAPON, build.weaponKey())
-                .set(SIM_BUILD.RUNES, jsonb(runesJson, "[]"))
-                .set(SIM_BUILD.SKILLS, jsonb(skillsJson))
-                .set(SIM_BUILD.POINTS_SPENT, build.pointsSpent())
-                .set(SIM_BUILD.BOOSTER, build.booster())
-                .set(SIM_BUILD.FINGERPRINT, build.fingerprint())
-                .returning(SIM_BUILD.ID)
-                .fetchOne(SIM_BUILD.ID));
+    public CompletableFuture<Map<String, Long>> insertBuilds(long runId, List<SimBuildSpec> builds) {
+        if (builds.isEmpty()) {
+            return CompletableFuture.completedFuture(Map.of());
+        }
+
+        return database.getAsyncDslContext().executeAsync(ctx -> ctx.transactionResult(configuration -> {
+            final DSLContext trx = DSL.using(configuration);
+            final Map<String, Long> ids = new HashMap<>();
+
+            for (int start = 0; start < builds.size(); start += BUILD_INSERT_CHUNK) {
+                final List<SimBuildSpec> chunk =
+                        builds.subList(start, Math.min(builds.size(), start + BUILD_INSERT_CHUNK));
+
+                var insert = trx.insertInto(SIM_BUILD,
+                        SIM_BUILD.RUN_ID, SIM_BUILD.ROLE, SIM_BUILD.WEAPON, SIM_BUILD.RUNES,
+                        SIM_BUILD.SKILLS, SIM_BUILD.POINTS_SPENT, SIM_BUILD.BOOSTER, SIM_BUILD.FINGERPRINT);
+                for (SimBuildSpec build : chunk) {
+                    insert = insert.values(runId,
+                            build.role(),
+                            build.weaponKey(),
+                            jsonb(runesToJson(build.runeKeys()), "[]"),
+                            // Allocated levels only at insert time. The effective level depends on
+                            // the equipped weapon and can only be read off a live combatant, so it
+                            // is written back by updateBuildSkills once the build has been spawned.
+                            jsonb(skillsToJson(build.skills()), "[]"),
+                            build.pointsSpent(),
+                            build.booster(),
+                            build.fingerprint());
+                }
+
+                insert.returning(SIM_BUILD.ID, SIM_BUILD.FINGERPRINT)
+                        .fetch()
+                        .forEach(record -> ids.put(record.get(SIM_BUILD.FINGERPRINT), record.get(SIM_BUILD.ID)));
+            }
+            return ids;
+        }));
+    }
+
+    /**
+     * Overwrites a build's skill allocation with one carrying observed effective levels.
+     *
+     * <p>Effective level is a property of the equipped combatant, not of the catalog entry: a
+     * booster weapon pushes a skill past {@code maxLevel} and the simulator is forbidden from
+     * deriving that itself. So the build row is written with allocated levels up front to satisfy
+     * the foreign key, and corrected once the first duel for it has spawned a player the real
+     * accessor can be asked about.
+     */
+    public CompletableFuture<Void> updateBuildSkills(long buildId, String skillsJson) {
+        return database.getAsyncDslContext().executeAsyncVoid(ctx -> ctx
+                .update(SIM_BUILD)
+                .set(SIM_BUILD.SKILLS, jsonb(skillsJson, "[]"))
+                .where(SIM_BUILD.ID.eq(buildId))
+                .execute());
     }
 
     /**
@@ -185,8 +239,12 @@ public class SimResultRepository {
      * uses, so an attacker build and a defender build are queryable identically. Written by hand
      * rather than pulling in a JSON binder because the values are all primitives and short
      * identifiers.
+     *
+     * <p>Public because the orchestrator writes the same shape back over a build row once the
+     * effective levels have been read off a live combatant; both callers must produce identical
+     * JSON or a dashboard would have to handle two shapes for one column.
      */
-    private static String skillsToJson(List<SimSkillAllocation> skills) {
+    public static String skillsToJson(List<SimSkillAllocation> skills) {
         if (skills == null || skills.isEmpty()) {
             return "[]";
         }
@@ -201,6 +259,21 @@ public class SimResultRepository {
                     .append("\",\"allocated_level\":").append(skill.allocatedLevel())
                     .append(",\"effective_level\":").append(skill.effectiveLevel())
                     .append('}');
+        }
+        return json.append(']').toString();
+    }
+
+    /** Rune keys as a JSON string array, matching the {@code sim_build.runes} column's shape. */
+    private static String runesToJson(List<String> runeKeys) {
+        if (runeKeys == null || runeKeys.isEmpty()) {
+            return "[]";
+        }
+        final StringBuilder json = new StringBuilder("[");
+        for (int i = 0; i < runeKeys.size(); i++) {
+            if (i > 0) {
+                json.append(',');
+            }
+            json.append('"').append(escape(runeKeys.get(i))).append('"');
         }
         return json.append(']').toString();
     }
