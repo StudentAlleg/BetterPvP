@@ -77,20 +77,31 @@ public class EnergyService {
         energyMap.get(id).setCurrent(energy);
     }
 
+    // The four mutators below seed the map before touching it, like every accessor above them.
+    // They used to assume an entry was already there, and it need not be: tick() drops the entry of
+    // anyone Bukkit.getPlayer cannot resolve, which is every tick for a player who is not in the
+    // player list at all. A simulation combatant is exactly that, so NullBlade siphoning energy off
+    // one threw a NullPointerException out of the DamageEvent handler on every mage melee hit -- 2,394
+    // of them in one sweep, each costing that hit its NullBlade contribution and 47 lines of log.
+
     public void addEnergyCooldown(Player player) {
+        addToMap(player.getUniqueId());
         energyMap.get(player.getUniqueId()).setLastUse(System.currentTimeMillis());
     }
 
     public boolean isOnRegenCooldown(Player player) {
+        addToMap(player.getUniqueId());
         long lastUsed = energyMap.get(player.getUniqueId()).getLastUse();
         return !UtilTime.elapsed(lastUsed, (long) (consumptionRegenDelay * 1000L));
     }
 
     public void reduceEnergy(UUID id, double energy) {
+        addToMap(id);
         energyMap.get(id).reduceEnergy(energy);
     }
 
     public void addEnergy(UUID id, double energy) {
+        addToMap(id);
         energyMap.get(id).addEnergy(energy);
     }
 
@@ -182,7 +193,13 @@ public class EnergyService {
         UtilServer.runTaskAsync(JavaPlugin.getPlugin(Core.class), () -> {
             final UpdateMaxEnergyEvent event = new UpdateMaxEnergyEvent(player, maxEnergy);
             double max = event.callEvent() ? event.getNewMax() : maxEnergy;
-            energyMap.get(player.getUniqueId()).setMax(max);
+            // Seeded rather than assumed present: nothing guarantees the player has an entry by the
+            // time this async task runs. tick() drops the entry of anyone Bukkit.getPlayer cannot
+            // find -- a player mid-quit, or a simulation combatant, which is never in the player list
+            // at all -- so a raw get here NPE'd on an async thread instead of updating anything.
+            // Seeded here rather than through addToMap because the max is already in hand; addToMap
+            // would raise a second UpdateMaxEnergyEvent to work out what this one just computed.
+            energyMap.computeIfAbsent(player.getUniqueId(), key -> new Energy(max, max, 0)).setMax(max);
         });
 
     }

@@ -94,4 +94,44 @@ public class SimulationGate {
     @Config(path = "champions.simulation.progressIntervalSeconds", defaultValue = "15.0")
     private double progressIntervalSeconds;
 
+    /**
+     * How long a combatant is held out of service after a duel before it may fight another.
+     *
+     * <p>Zero by default, because the state this used to wait out is now cleared outright.
+     * Combatants are resident rather than respawned per duel ({@code SimCombatantPool}), so a duel
+     * inherits the entity the previous one used along with every {@code WeakHashMap<Player, ?>} entry
+     * champions' passives filed under it; the quarantine existed only to sit out the timers those
+     * entries expire on. {@code SimCombatant.despawn} now unequips every skill from the combatant
+     * instead, which drops the same state immediately and deterministically -- so waiting buys
+     * nothing and costs a great deal, since a slot out of service for 20 seconds after a ~7-second
+     * duel means roughly three times the concurrency in resident, ticking entities.
+     *
+     * <p>Kept as a knob rather than deleted, as the diagnostic it is: if a sweep is suspected of
+     * carrying state between duels on a slot, raising this to 400 restores the old wait-it-out
+     * behaviour, and a difference in the results says the residue is real and some skill's
+     * {@code invalidatePlayer} is incomplete.
+     */
+    @Inject
+    @Config(path = "champions.simulation.combatantQuarantineTicks", defaultValue = "0")
+    private int combatantQuarantineTicks;
+
+    /**
+     * Ceiling on how many combatants may be resident in the sim world at once.
+     *
+     * <p>With the quarantine at its default of zero a slot is back in service the tick its duel ends,
+     * so residency settles at roughly the concurrency and this ceiling does not bind. It bound
+     * before: a slot is out of service for {@code quarantine / duelDuration} times as long as it is
+     * in use, so at 256 concurrent duels, the old 20-second quarantine and the observed ~7.3-second
+     * mean duel, steady state was roughly 1,900 combatants -- every one of them ticking and keeping
+     * its platform's chunks loaded.
+     *
+     * <p>When the cap is reached the sweep waits for a slot instead of growing. That is deliberate:
+     * a sweep that runs slightly slower is a bounded cost, whereas unbounded arena sprawl is what
+     * exhausted the heap before arenas were recycled at all. Default leaves headroom over the
+     * figure above so it does not bind at the default concurrency.
+     */
+    @Inject
+    @Config(path = "champions.simulation.maxResidentCombatants", defaultValue = "2048")
+    private int maxResidentCombatants;
+
 }

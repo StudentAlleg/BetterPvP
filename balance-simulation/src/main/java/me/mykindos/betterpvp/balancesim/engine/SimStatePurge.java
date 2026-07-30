@@ -3,12 +3,15 @@ package me.mykindos.betterpvp.balancesim.engine;
 import com.google.inject.Singleton;
 import lombok.CustomLog;
 import me.mykindos.betterpvp.core.Core;
+import me.mykindos.betterpvp.core.combat.delay.DamageDelayManager;
 import me.mykindos.betterpvp.core.cooldowns.CooldownManager;
 import me.mykindos.betterpvp.core.effects.EffectManager;
 import me.mykindos.betterpvp.core.interaction.state.InteractionStateManager;
 import me.mykindos.betterpvp.core.interaction.tracker.ActiveInteractionTracker;
 import me.mykindos.betterpvp.core.interaction.tracker.HoldTracker;
+import org.bukkit.entity.Entity;
 import org.bukkit.plugin.java.JavaPlugin;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.UUID;
 
@@ -70,6 +73,7 @@ public class SimStatePurge {
     private final HoldTracker holdTracker;
     private final InteractionStateManager stateManager;
     private final ActiveInteractionTracker activeInteractionTracker;
+    private final DamageDelayManager damageDelayManager;
 
     public SimStatePurge() {
         final var coreInjector = JavaPlugin.getPlugin(Core.class).getInjector();
@@ -78,27 +82,42 @@ public class SimStatePurge {
         this.holdTracker = coreInjector.getInstance(HoldTracker.class);
         this.stateManager = coreInjector.getInstance(InteractionStateManager.class);
         this.activeInteractionTracker = coreInjector.getInstance(ActiveInteractionTracker.class);
+        this.damageDelayManager = coreInjector.getInstance(DamageDelayManager.class);
     }
 
     /**
      * Forgets everything keyed on {@code uuid}.
      *
-     * <p>Unconditional rather than conditional: a combatant's UUID is freshly random per duel and
-     * is never reused, so there is no state under it that anything could legitimately want after
-     * the duel ends, and no case where leaving an entry behind is correct.
+     * <p>Unconditional rather than conditional: a combatant's UUID belongs to one arena slot for
+     * the length of the sweep and nothing outside a duel reads state under it, so there is nothing
+     * anything could legitimately want after the duel ends, and no case where leaving an entry
+     * behind is correct.
      *
-     * <p>Must be called on the main thread, after the entity has been despawned -- the interaction
-     * trackers' removal paths can run an interaction's end-of-life callback, which touches world
-     * state.
+     * <p>Since {@link SimCombatantPool} made combatants resident, this is load-bearing rather than
+     * merely tidy. The entity is no longer discarded between duels, so anything left under its
+     * identity is inherited by the next fight on that platform: what used to be a leak that slowed
+     * a sweep down is now a bias that changes what the sweep reports.
      *
-     * @param uuid the departed combatant
+     * <p>Must be called on the main thread -- the interaction trackers' removal paths can run an
+     * interaction's end-of-life callback, which touches world state.
+     *
+     * @param uuid   the combatant leaving the duel
+     * @param entity its entity, when still available. Damage delays are keyed by entity pair rather
+     *               than by UUID, so they can only be reached through the object; a null skips just
+     *               that step.
      */
-    public void purge(UUID uuid) {
+    public void purge(UUID uuid, @Nullable Entity entity) {
         final String key = uuid.toString();
         effectManager.removeObject(key);
         cooldownManager.removeObject(key);
         holdTracker.removeActor(uuid);
         stateManager.removeActor(uuid);
         activeInteractionTracker.removeActor(uuid);
+        if (entity != null) {
+            // Otherwise the delay recorded against the last hit of a duel outlives it, and the
+            // opening swings of the next duel on the slot are rejected -- which reads as a slower
+            // build rather than as a stale entry.
+            damageDelayManager.clearDelaysForEntity(entity);
+        }
     }
 }

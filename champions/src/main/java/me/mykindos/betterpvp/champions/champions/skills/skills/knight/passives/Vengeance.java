@@ -9,14 +9,13 @@ import me.mykindos.betterpvp.champions.champions.skills.types.DamageSkill;
 import me.mykindos.betterpvp.champions.champions.skills.types.OffensiveSkill;
 import me.mykindos.betterpvp.champions.champions.skills.types.PassiveSkill;
 import me.mykindos.betterpvp.champions.combat.damage.SkillDamageModifier;
+import me.mykindos.betterpvp.core.client.gamer.Gamer;
 import me.mykindos.betterpvp.core.combat.events.DamageEvent;
 import me.mykindos.betterpvp.core.components.champions.Role;
 import me.mykindos.betterpvp.core.components.champions.SkillType;
 import me.mykindos.betterpvp.core.listener.BPvPListener;
 import me.mykindos.betterpvp.core.locale.Translations;
-import me.mykindos.betterpvp.core.utilities.UtilFormat;
 import net.kyori.adventure.text.Component;
-import net.kyori.adventure.text.format.NamedTextColor;
 import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
@@ -124,6 +123,22 @@ public class Vengeance extends Skill implements PassiveSkill, Listener, Offensiv
             playerTasks.put(player, task);
         }
 
+    }
+
+    /**
+     * Forgets the accumulated hits and cancels the pending reset when the skill leaves the build.
+     *
+     * <p>The scheduled task is the reason this is not merely tidy: it holds a strong reference to the
+     * player and writes back into {@code playerNumHitsMap} when it runs, so a dequip during the
+     * expiry window would re-insert the entry after this method had cleared it.
+     */
+    @Override
+    public void invalidatePlayer(Player player, Gamer gamer) {
+        playerNumHitsMap.remove(player);
+        final BukkitTask task = playerTasks.remove(player);
+        if (task != null) {
+            task.cancel();
+        }
     }
 
     @EventHandler

@@ -8,6 +8,7 @@ import me.mykindos.betterpvp.champions.champions.skills.Skill;
 import me.mykindos.betterpvp.champions.champions.skills.types.BuffSkill;
 import me.mykindos.betterpvp.champions.champions.skills.types.HealthSkill;
 import me.mykindos.betterpvp.champions.champions.skills.types.PassiveSkill;
+import me.mykindos.betterpvp.core.client.gamer.Gamer;
 import me.mykindos.betterpvp.core.client.stats.impl.ClientStat;
 import me.mykindos.betterpvp.core.combat.damagelog.DamageLog;
 import me.mykindos.betterpvp.core.combat.damagelog.DamageLogManager;
@@ -18,10 +19,9 @@ import me.mykindos.betterpvp.core.framework.updater.UpdateEvent;
 import me.mykindos.betterpvp.core.listener.BPvPListener;
 import me.mykindos.betterpvp.core.locale.Translations;
 import me.mykindos.betterpvp.core.utilities.UtilEntity;
-import me.mykindos.betterpvp.core.utilities.UtilFormat;
+import me.mykindos.betterpvp.core.utilities.UtilMessage;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
-import me.mykindos.betterpvp.core.utilities.UtilMessage;
 import org.bukkit.Bukkit;
 import org.bukkit.Sound;
 import org.bukkit.entity.Animals;
@@ -148,6 +148,21 @@ public class Bloodlust extends Skill implements PassiveSkill, BuffSkill, HealthS
             time.remove(player);
         }
 
+    }
+
+    /**
+     * Drops the stack count and its deadline when the skill leaves the player's build.
+     *
+     * <p>Nothing else did. {@link #expire(Player)} only fires while the timer is still counting, so a
+     * player who dequipped mid-stack -- by editing their build, changing role, or logging out -- kept
+     * the entry until the entity was collected, and a live one kept it indefinitely. The buff itself
+     * is left to expire on its own, exactly as {@code expire} leaves it: the effects are timed and
+     * owned by the effect manager, and these two maps are only the bookkeeping for the message.
+     */
+    @Override
+    public void invalidatePlayer(Player player, Gamer gamer) {
+        str.remove(player);
+        time.remove(player);
     }
 
     @Override

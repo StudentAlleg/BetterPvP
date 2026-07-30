@@ -9,6 +9,7 @@ import me.mykindos.betterpvp.champions.champions.skills.types.DamageSkill;
 import me.mykindos.betterpvp.champions.champions.skills.types.DefensiveSkill;
 import me.mykindos.betterpvp.champions.champions.skills.types.PassiveSkill;
 import me.mykindos.betterpvp.champions.combat.damage.SkillDamageCause;
+import me.mykindos.betterpvp.core.client.gamer.Gamer;
 import me.mykindos.betterpvp.core.combat.cause.DamageCauseCategory;
 import me.mykindos.betterpvp.core.combat.events.DamageEvent;
 import me.mykindos.betterpvp.core.components.champions.Role;
@@ -16,10 +17,8 @@ import me.mykindos.betterpvp.core.components.champions.SkillType;
 import me.mykindos.betterpvp.core.listener.BPvPListener;
 import me.mykindos.betterpvp.core.locale.Translations;
 import me.mykindos.betterpvp.core.utilities.UtilDamage;
-import me.mykindos.betterpvp.core.utilities.UtilFormat;
 import me.mykindos.betterpvp.core.utilities.UtilTime;
 import net.kyori.adventure.text.Component;
-import net.kyori.adventure.text.format.NamedTextColor;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
@@ -96,6 +95,20 @@ public class Thorns extends Skill implements PassiveSkill, Listener, DefensiveSk
                 }
             }
         }
+    }
+
+    /**
+     * Forgets the player's own internal cooldown when the skill leaves their build.
+     *
+     * <p>Note what {@code cd} is keyed by: the <em>damager</em>, not the holder. So this clears the
+     * entry that exists because this player hit someone wearing Thorns, which is the only entry of
+     * theirs the map can hold. It is the useful direction anyway -- an identity that is reused (a
+     * simulation combatant, a respawn) must not inherit a cooldown that suppresses the first retaliation
+     * against it.
+     */
+    @Override
+    public void invalidatePlayer(Player player, Gamer gamer) {
+        cd.remove(player);
     }
 
     @Override

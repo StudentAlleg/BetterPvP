@@ -1,7 +1,11 @@
 package me.mykindos.betterpvp.balancesim.engine;
 
 import com.mojang.authlib.GameProfile;
+import io.netty.channel.ChannelHandlerContext;
+import io.netty.channel.ChannelOutboundHandlerAdapter;
+import io.netty.channel.ChannelPromise;
 import io.netty.channel.embedded.EmbeddedChannel;
+import io.netty.util.ReferenceCountUtil;
 import net.minecraft.network.protocol.PacketFlow;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ClientInformation;
@@ -13,7 +17,10 @@ import net.minecraft.world.entity.Entity;
 import org.bukkit.Location;
 import org.bukkit.craftbukkit.CraftWorld;
 import org.bukkit.entity.Player;
+import org.bukkit.potion.PotionEffect;
+import org.bukkit.util.Vector;
 
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -45,10 +52,24 @@ import java.util.UUID;
  * A {@code ServerPlayer} with a null {@code connection} NPEs the moment anything tries to send it
  * a packet, and the combat pipeline does exactly that (damage indicators, effect feedback). So it
  * gets a real {@link ServerGamePacketListenerImpl} over a {@code Connection} bound to an
- * {@link EmbeddedChannel}: packets are written, encoded and dropped into an in-memory buffer that
- * nothing ever reads. Sends are therefore harmless no-ops rather than crashes.
+ * {@link EmbeddedChannel}, with a {@link PacketSink} in front of it that drops every outbound
+ * packet on the floor. Sends are therefore harmless no-ops rather than crashes.
+ *
+ * <p><b>The sink is not optional.</b> An {@code EmbeddedChannel} on its own does not discard what
+ * is written to it -- it <em>records</em> it, in the unbounded {@code ArrayDeque} behind
+ * {@code outboundMessages()}, for a test to assert against later. Nothing here ever reads that
+ * deque, so before the sink existed every packet the server ever addressed to a fake player was
+ * retained for the length of the run. That is a real leak and it killed two 105k-duel sweeps: at
+ * 600 residents the per-tick time sync alone is 600 packets, and a 30-minute run heaps up tens of
+ * millions of them, so the sweep ended in a GC death spiral -- progress reports stretching from 16
+ * seconds to nine minutes apart at constant duels-per-report -- with watchdog dumps caught inside
+ * {@code ArrayDeque.add} under {@code Connection.send}. {@link #queuedPacketCount()} exists so the
+ * backlog is a number in the progress line rather than something to be inferred from a crash.
  */
 public class SimPlayer extends ServerPlayer {
+
+    /** The dead-end channel, kept only so {@link #queuedPacketCount()} can report on it. */
+    private EmbeddedChannel channel;
 
     private SimPlayer(MinecraftServer server, ServerLevel level, GameProfile profile) {
         super(server, level, profile, ClientInformation.createDefault());
@@ -85,7 +106,10 @@ public class SimPlayer extends ServerPlayer {
         // shadows the network Connection an import would otherwise bind.
         final net.minecraft.network.Connection connection =
                 new net.minecraft.network.Connection(PacketFlow.SERVERBOUND);
-        new EmbeddedChannel(connection);
+        // Sink first, so it sits between the Connection and the channel's head: outbound writes
+        // travel tail-to-head, so the last handler to see a packet before EmbeddedChannel would
+        // record it is the one added first. Reverse the order and every packet is retained.
+        player.channel = new EmbeddedChannel(new PacketSink(), connection);
         player.connection = new ServerGamePacketListenerImpl(server, connection, player,
                 CommonListenerCookie.createInitial(profile, false));
 
@@ -96,6 +120,86 @@ public class SimPlayer extends ServerPlayer {
     /** The Bukkit view, which is what every BetterPvP manager and listener actually works with. */
     public Player asBukkit() {
         return getBukkitEntity();
+    }
+
+    /**
+     * How many outbound packets the dead-end channel is holding.
+     *
+     * <p>Zero, always, while {@link PacketSink} is in the pipeline -- which is precisely why it is
+     * worth reporting. This is the number that says the sink is doing its job, and the one that
+     * grew without bound when there was no sink. A sweep whose progress line shows this rising is
+     * leaking packets again, and knows it inside one progress interval rather than at the OOM.
+     */
+    public int queuedPacketCount() {
+        return channel == null ? 0 : channel.outboundMessages().size();
+    }
+
+    /**
+     * Drops every outbound packet before the channel can retain it.
+     *
+     * <p>{@code EmbeddedChannel} is a testing transport: its whole purpose is to keep what was
+     * written so a test can assert on it, so writing to one without a sink in front is a retention
+     * bug dressed up as a no-op. Releasing the message keeps any pooled buffer accounting honest,
+     * and {@code trySuccess} rather than {@code setSuccess} because a void promise -- which the
+     * server uses for fire-and-forget sends -- throws on the latter.
+     */
+    private static final class PacketSink extends ChannelOutboundHandlerAdapter {
+
+        @Override
+        public void write(ChannelHandlerContext ctx, Object msg, ChannelPromise promise) {
+            ReferenceCountUtil.release(msg);
+            promise.trySuccess();
+        }
+
+        @Override
+        public void flush(ChannelHandlerContext ctx) {
+            // Nothing was written on, so there is nothing to push; overridden so the flush does not
+            // travel to the head and exercise the channel's outbound bookkeeping at all.
+        }
+    }
+
+    /**
+     * Returns a resident combatant to a fightable state and puts it on {@code at}.
+     *
+     * <p>Called by {@link SimCombatantPool} in place of a spawn when a slot is recycled. It resets
+     * only what belongs to the entity; the per-UUID state Core's managers hold is
+     * {@link SimStatePurge}'s job, and the per-{@code Player} state champions' passives hold is
+     * what the pool's quarantine window waits out.
+     *
+     * <p>Position is set rather than teleported. {@code at} is a couple of blocks from where the
+     * combatant already stands, inside the same chunk, so writing the coordinates keeps Moonrise's
+     * area maps untouched -- and avoiding their update is the entire reason residents are pinned to
+     * one arena. A {@code teleport} would run the full move path and give back the cost the pool
+     * exists to save.
+     *
+     * <p>The inventory is emptied rather than overwritten because a build's kit is not the same
+     * shape every duel: a ranger leaves a bow and arrows behind that a brute never sets, and an
+     * armour set with fewer pieces than the last one would inherit the difference. Equipping over
+     * the top would measure the union of two loadouts.
+     */
+    public void prepareForDuel(Location at) {
+        setPos(at.getX(), at.getY(), at.getZ());
+        setYRot(at.getYaw());
+        setXRot(at.getPitch());
+        setYHeadRot(at.getYaw());
+        setDeltaMovement(0, 0, 0);
+        resetAttackStrengthTicker();
+
+        final Player bukkit = asBukkit();
+        bukkit.getInventory().clear();
+        bukkit.setFireTicks(0);
+        bukkit.setFallDistance(0f);
+        bukkit.setVelocity(new Vector());
+        // Vanilla potion effects, as distinct from Core's Effects: skills apply both, and only the
+        // latter is reachable through SimStatePurge.
+        for (PotionEffect effect : List.copyOf(bukkit.getActivePotionEffects())) {
+            bukkit.removePotionEffect(effect.getType());
+        }
+        // Otherwise the first swing of the new duel can be swallowed by invulnerability left over
+        // from the last hit of the previous one, which would show up as an inflated time-to-kill on
+        // whichever matchup happened to inherit the slot.
+        bukkit.setNoDamageTicks(0);
+        bukkit.setLastDamage(0);
     }
 
     /**

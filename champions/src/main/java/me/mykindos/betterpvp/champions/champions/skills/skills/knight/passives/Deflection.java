@@ -153,6 +153,19 @@ public class Deflection extends Skill implements PassiveSkill, DefensiveSkill {
 
     }
 
+    /**
+     * Drops the charge count when the skill leaves the build.
+     *
+     * <p>{@link #addCharge()} already removes the entry for anyone whose level has fallen to zero,
+     * but only for players it iterates -- the loaded clients. This closes the same state for a player
+     * who leaves that set in the same breath as the skill, and re-seeding at zero on re-equip is
+     * handled by the same loop.
+     */
+    @Override
+    public void invalidatePlayer(Player player, Gamer gamer) {
+        charges.remove(player.getUniqueId());
+    }
+
     @Override
     public boolean enabledInSpectator() {
         return true;

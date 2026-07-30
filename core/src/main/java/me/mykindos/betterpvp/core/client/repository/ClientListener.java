@@ -16,6 +16,7 @@ import me.mykindos.betterpvp.core.client.properties.ClientPropertyUpdateEvent;
 import me.mykindos.betterpvp.core.config.Config;
 import me.mykindos.betterpvp.core.framework.events.lunar.LunarClientEvent;
 import me.mykindos.betterpvp.core.framework.sidebar.SidebarMode;
+import me.mykindos.betterpvp.core.framework.simulation.SimulatedEntity;
 import me.mykindos.betterpvp.core.framework.updater.UpdateEvent;
 import me.mykindos.betterpvp.core.listener.BPvPListener;
 import me.mykindos.betterpvp.core.utilities.UtilFormat;
@@ -345,8 +346,19 @@ public class ClientListener implements Listener {
 
     }
 
+    /**
+     * Logs a cache unload, except for simulation combatants.
+     *
+     * <p>A sweep registers and drops an ephemeral client per combatant per duel, so this line fired
+     * twice a duel: 160,834 of the 276,548 lines in one 105k-duel run, roughly 30 MB of log, which
+     * buries everything a run is actually meant to be read for. A real client unloads once per
+     * session and the line is worth having, so it is gated rather than removed.
+     */
     @EventHandler
     public void onClientUnload(ClientUnloadEvent event) {
+        if (SimulatedEntity.isSimulated(event.getClient().getGamer().getPlayer())) {
+            return;
+        }
         log.info("{} ({}) was unloaded from the cache", event.getClient().getName(), event.getClient().getUuid()).submit();
     }
 

@@ -7,6 +7,7 @@ import lombok.CustomLog;
 import lombok.Getter;
 import lombok.Setter;
 import me.mykindos.betterpvp.balancesim.commands.BalanceSimulationCommandLoader;
+import me.mykindos.betterpvp.balancesim.engine.SimCombatantPool;
 import me.mykindos.betterpvp.balancesim.injector.BalanceSimulationInjectorModule;
 import me.mykindos.betterpvp.balancesim.listeners.BalanceSimulationListenerLoader;
 import me.mykindos.betterpvp.balancesim.world.SimWorldManager;
@@ -98,7 +99,10 @@ public class BalanceSimulation extends BPvPPlugin {
             return;
         }
         // Duels leave fake players and a void world behind; tear both down so a reload does
-        // not resurrect a half-built arena.
+        // not resurrect a half-built arena. The pool first: its residents are entities inside the
+        // world, and between sweeps they outlive any duel, so a disable mid-quarantine still has
+        // combatants standing in arenas that are about to stop existing.
+        injector.getInstance(SimCombatantPool.class).drain();
         injector.getInstance(SimWorldManager.class).teardown();
     }
 }

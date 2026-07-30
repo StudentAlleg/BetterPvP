@@ -30,8 +30,19 @@ import java.util.Set;
 @CustomLog
 public class SimWorldManager {
 
-    /** Arenas are laid out on a grid this many blocks apart, well beyond any skill's range. */
-    private static final int ARENA_SPACING = 256;
+    /**
+     * Arenas are laid out on a grid this many blocks apart, well beyond any skill's range.
+     *
+     * <p>Sized against the world's view distance rather than against nothing. 64 blocks is four
+     * chunks, and {@link #shrinkTrackingDistances} pins view and simulation distance at 2, so no
+     * duel can see or tick another. The old 256 was chosen when arenas were allocated per duel and
+     * isolation was the only concern; now that {@code SimCombatantPool} keeps combatants resident,
+     * the live arena count is a multiple of the concurrency rather than equal to it, and every live
+     * arena holds its chunks loaded. At 64 the same number of platforms occupies a sixteenth of the
+     * area, which is the difference between a sweep touching a few hundred chunks and the sprawl
+     * that exhausted the heap before arenas were recycled at all.
+     */
+    private static final int ARENA_SPACING = 64;
     private static final int ARENA_Y = 64;
     /** Half-width of the square platform each duel is fought on. */
     private static final int PLATFORM_RADIUS = 8;
@@ -116,9 +127,16 @@ public class SimWorldManager {
      * time spent maintaining a view of the world that has no viewer. At the default distance of 10
      * each add or remove walks 21x21 chunks; at 2 it walks 5x5.
      *
-     * <p>Two rather than one because the arenas are 256 blocks apart -- 16 chunks -- so even the
-     * smallest workable radius leaves each duel comfortably isolated, and combatants still sit in
-     * a ticking chunk, which they must for the damage pipeline to engage at all.
+     * <p>Two rather than one because the arenas are {@link #ARENA_SPACING} blocks apart -- four
+     * chunks -- so the smallest workable radius still leaves each duel isolated, and combatants
+     * remain in a ticking chunk, which they must for the damage pipeline to engage at all.
+     *
+     * <p>Note that this is the only safe lever for shrinking chunk tracking. The obvious bigger
+     * hammer, {@code -DPaper.MaxViewDistance}, is not: Moonrise sizes
+     * {@code ParallelSearchRadiusIteration}'s table at {@code MAX_VIEW_DISTANCE + 3} but indexes it
+     * with a chunk-generation neighbour radius that has nothing to do with view distance and reaches
+     * 10. Setting the property below 8 therefore hard-crashes the chunk system the first time any
+     * chunk generates -- which, in a freshly created sim world, is immediately.
      */
     private void shrinkTrackingDistances(World simWorld) {
         simWorld.setViewDistance(2);

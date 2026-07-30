@@ -14,6 +14,7 @@ import me.mykindos.betterpvp.champions.champions.skills.types.OffensiveSkill;
 import me.mykindos.betterpvp.champions.champions.skills.types.PassiveSkill;
 import me.mykindos.betterpvp.champions.champions.skills.types.ToggleSkill;
 import me.mykindos.betterpvp.champions.combat.damage.SkillDamageModifier;
+import me.mykindos.betterpvp.core.client.gamer.Gamer;
 import me.mykindos.betterpvp.core.combat.cause.DamageCauseCategory;
 import me.mykindos.betterpvp.core.combat.events.DamageEvent;
 import me.mykindos.betterpvp.core.components.champions.IChampionsSkill;
@@ -23,7 +24,6 @@ import me.mykindos.betterpvp.core.components.champions.events.PlayerUseSkillEven
 import me.mykindos.betterpvp.core.framework.updater.UpdateEvent;
 import me.mykindos.betterpvp.core.listener.BPvPListener;
 import me.mykindos.betterpvp.core.locale.Translations;
-import me.mykindos.betterpvp.core.utilities.UtilFormat;
 import me.mykindos.betterpvp.core.utilities.UtilMessage;
 import me.mykindos.betterpvp.core.utilities.UtilTime;
 import net.kyori.adventure.text.Component;
@@ -168,6 +168,19 @@ public class ComboAttack extends Skill implements PassiveSkill, Listener, Damage
                 iterator.remove();
             }
         }
+    }
+
+    /**
+     * Drops the running combo when the skill leaves the build.
+     *
+     * <p>Silently, unlike every other way a combo ends: {@link #endInfo} exists to tell the player
+     * what their combo reached, and reporting a total for a skill they no longer hold is noise. The
+     * ramp is what has to go -- it is a damage bonus keyed on the player, and an identity that is
+     * reused must not inherit one.
+     */
+    @Override
+    public void invalidatePlayer(Player player, Gamer gamer) {
+        repeat.remove(player);
     }
 
     public void endInfo(Player player, int level, double combo) {

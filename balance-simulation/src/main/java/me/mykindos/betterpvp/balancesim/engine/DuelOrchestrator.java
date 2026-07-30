@@ -35,7 +35,6 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
-import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
 
@@ -76,6 +75,7 @@ public class DuelOrchestrator {
     private final BalanceCatalog catalog;
     private final SimResultRepository repository;
     private final SimRecorder recorder;
+    private final SimCombatantPool combatantPool;
     private final SimCombatant.SimContext context;
     private final BalanceSimulation plugin;
 
@@ -97,6 +97,7 @@ public class DuelOrchestrator {
                             BalanceCatalog catalog,
                             SimResultRepository repository,
                             SimRecorder recorder,
+                            SimCombatantPool combatantPool,
                             SimClientFactory clientFactory,
                             SimEquipment equipment,
                             SimStatePurge statePurge,
@@ -106,6 +107,7 @@ public class DuelOrchestrator {
         this.catalog = catalog;
         this.repository = repository;
         this.recorder = recorder;
+        this.combatantPool = combatantPool;
         this.plugin = plugin;
 
         // Both managers come from Champions' own injector, never from Guice injection here. This
@@ -123,8 +125,7 @@ public class DuelOrchestrator {
         // what was equipped and no non-knight skill would ever resolve -- a wrong answer rather
         // than a crash, and the worst possible failure mode for a measurement tool.
         final var championsInjector = JavaPlugin.getPlugin(Champions.class).getInjector();
-        this.context = new SimCombatant.SimContext(plugin,
-                clientFactory,
+        this.context = new SimCombatant.SimContext(clientFactory,
                 championsInjector.getInstance(RoleManager.class),
                 championsInjector.getInstance(ChampionsSkillManager.class),
                 equipment,
@@ -310,6 +311,9 @@ public class DuelOrchestrator {
                         List<SimResultRow> tail,
                         List<CompletableFuture<Void>> inFlight,
                         SimSummary summary) {
+        // Before the world goes: residents are entities inside it, and the pool's slots describe
+        // arenas that stop existing the moment it is unloaded.
+        combatantPool.drain();
         worldManager.teardown();
         CompletableFuture.allOf(inFlight.toArray(new CompletableFuture[0]))
                 .thenCompose(ignored -> repository.insertResults(runId, tail))
@@ -482,7 +486,7 @@ public class DuelOrchestrator {
                 }
             } catch (Exception e) {
                 task.cancel();
-                active.forEach(Duel::teardown);
+                active.forEach(duel -> duel.teardown(tick));
                 log.error("Simulation run {} aborted after {} of {} duels", runId, completedDuels,
                         plannedDuels, e).submit();
                 report();
@@ -537,10 +541,18 @@ public class DuelOrchestrator {
                     active.size(), plannedMatchups, completedMatchups,
                     Duration.ofMillis(elapsedMillis), eta);
 
-            log.info("Simulation run {} [{}]: {}/{} duels ({}%), {} in flight, {}/{} matchups measured."
+            // Residency is reported because the pool's cap can bind: once it does, throughput stops
+            // tracking maxConcurrentDuels and starts tracking how fast quarantine releases slots,
+            // and without this number that shows up only as an unexplained drop in duels/s. The
+            // packet backlog is reported for the opposite reason -- it should never be anything but
+            // zero, and the run that discovered it retained tens of millions of packets and showed
+            // nothing at all until the heap ran out.
+            log.info("Simulation run {} [{}]: {}/{} duels ({}%), {} in flight, {} combatants resident,"
+                            + " {} packets queued, {}/{} matchups measured."
                             + " Elapsed {}, remaining {}, ETA {}.",
                     runId, scope, completedDuels, plannedDuels,
                     String.format(Locale.ROOT, "%.1f", progress.percent()), active.size(),
+                    combatantPool.residentCount(), combatantPool.queuedPacketBacklog(),
                     completedMatchups, plannedMatchups,
                     progress.elapsedFormatted(), progress.etaFormatted(),
                     progress.estimatedFinish()).submit();
@@ -562,7 +574,15 @@ public class DuelOrchestrator {
             while (setupsRemaining-- > 0
                     && active.size() < gate.getMaxConcurrentDuels()
                     && !pending.isEmpty()) {
-                final Duel duel = new Duel(pending.poll(), duelCounter++, tick);
+                // Asked for before the matchup is polled, because the pool can legitimately have
+                // nothing to give: past the residency cap every slot may still be inside its
+                // quarantine window. Taking the matchup first and then discovering that would drop
+                // it, so a duel that is merely postponed would be silently unmeasured.
+                final SimCombatantPool.Slot slot = combatantPool.acquire(tick);
+                if (slot == null) {
+                    break;
+                }
+                final Duel duel = new Duel(pending.poll(), duelCounter++, tick, slot);
                 duel.setUp();
                 active.add(duel);
             }
@@ -575,7 +595,7 @@ public class DuelOrchestrator {
                     return false;
                 }
                 duel.record(tick, this);
-                duel.teardown();
+                duel.teardown(tick);
                 completedDuels++;
                 return true;
             });
@@ -631,7 +651,7 @@ public class DuelOrchestrator {
     private final class Duel {
 
         private final Matchup matchup;
-        private final SimWorldManager.ArenaSlot arena;
+        private final SimCombatantPool.Slot slot;
         private final SimCombatant attacker;
         private final SimCombatant defender;
         private final long startTick;
@@ -639,19 +659,17 @@ public class DuelOrchestrator {
 
         private SimRecorder.Recording recording;
 
-        private Duel(Matchup matchup, int sequence, long startTick) {
+        private Duel(Matchup matchup, int sequence, long startTick, SimCombatantPool.Slot slot) {
             this.matchup = matchup;
-            this.arena = worldManager.acquireArena();
+            this.slot = slot;
             this.startTick = startTick;
             this.timeoutTicks = (long) (gate.getDuelTimeoutSeconds() * 1000L / MILLIS_PER_TICK);
 
-            // Named by the duel's position in the sweep, not by its arena: arenas are recycled, so
-            // indexing names by slot would put a dozen different fights under the same name in the
-            // log and make a report of odd behaviour impossible to trace back to a matchup.
-            final UUID attackerId = UUID.randomUUID();
-            final UUID defenderId = UUID.randomUUID();
-            this.attacker = new SimCombatant(attackerId, "sim_atk_" + sequence, matchup.build());
-            this.defender = new SimCombatant(defenderId, "sim_def_" + sequence, defenderBuild());
+            // Both combatants are the slot's residents rather than fresh entities, so their names
+            // and UUIDs belong to the arena and not to this duel. The duel's identity is the
+            // sim_result row; `sequence` remains only as the ordering it was started in.
+            this.attacker = new SimCombatant(slot.getAttacker(), matchup.build());
+            this.defender = new SimCombatant(slot.getDefender(), defenderBuild());
         }
 
         /**
@@ -676,8 +694,8 @@ public class DuelOrchestrator {
         }
 
         private void setUp() {
-            attacker.spawn(context, arena.spawnA());
-            defender.spawn(context, arena.spawnB());
+            attacker.spawn(context, slot.getArena().spawnA());
+            defender.spawn(context, slot.getArena().spawnB());
             recording = recorder.startDuel(attacker.getUuid(), defender.getUuid());
         }
 
@@ -801,16 +819,18 @@ public class DuelOrchestrator {
         }
 
         /**
-         * Despawns both combatants and returns the arena to the pool.
+         * Releases both combatants and hands the slot back for quarantine.
          *
-         * <p>The arena is released after the combatants are gone, never before: a slot handed back
-         * while its fighters were still standing on it could be filled by the next duel in the same
-         * tick, putting four combatants on one platform.
+         * <p>The slot is released after the combatants are done, never before: it is returned to a
+         * queue the same tick loop draws from, and handing it back early could put four combatants
+         * on one platform.
+         *
+         * @param currentTick when the quarantine window starts counting from
          */
-        private void teardown() {
+        private void teardown(long currentTick) {
             attacker.despawn(context);
             defender.despawn(context);
-            worldManager.releaseArena(arena);
+            combatantPool.release(slot, currentTick);
         }
     }
 }

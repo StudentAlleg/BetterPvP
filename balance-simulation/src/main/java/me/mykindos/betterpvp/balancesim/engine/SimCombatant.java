@@ -11,7 +11,6 @@ import me.mykindos.betterpvp.champions.champions.skills.ChampionsSkillManager;
 import me.mykindos.betterpvp.champions.champions.skills.Skill;
 import me.mykindos.betterpvp.core.client.Client;
 import me.mykindos.betterpvp.core.components.champions.Role;
-import me.mykindos.betterpvp.core.framework.simulation.SimulatedEntity;
 import me.mykindos.betterpvp.core.item.armor.ArmorEquipEvent;
 import me.mykindos.betterpvp.core.utilities.UtilPlayer;
 import me.mykindos.betterpvp.core.utilities.UtilServer;
@@ -20,7 +19,6 @@ import org.bukkit.entity.Player;
 import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.PlayerInventory;
-import org.bukkit.plugin.Plugin;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayList;
@@ -59,12 +57,15 @@ public class SimCombatant {
     private final String name;
     private final SimBuildSpec build;
 
-    /** The Bukkit view of the fake player, once spawned. */
+    /**
+     * The pooled entity this combatant drives. Owned by {@link SimCombatantPool} and outliving the
+     * duel, so it is never despawned here.
+     */
+    private final SimPlayer handle;
+
+    /** The Bukkit view of the fake player, non-null between {@link #spawn} and {@link #despawn}. */
     @Nullable
     private Player player;
-
-    @Nullable
-    private SimPlayer handle;
 
     @Nullable
     private Client client;
@@ -75,9 +76,16 @@ public class SimCombatant {
      */
     private List<SimSkillAllocation> measuredSkills;
 
-    public SimCombatant(UUID uuid, String name, SimBuildSpec build) {
-        this.uuid = uuid;
-        this.name = name;
+    /**
+     * @param handle the pooled entity to fight this duel through. Its identity is the combatant's:
+     *               a resident keeps one UUID for the life of the sweep, so log lines and recorder
+     *               rows for successive duels on the same arena share it. The duel's own identity
+     *               is the {@code sim_result} row, not the combatant's name.
+     */
+    public SimCombatant(SimPlayer handle, SimBuildSpec build) {
+        this.handle = handle;
+        this.uuid = handle.getUUID();
+        this.name = handle.getScoreboardName();
         this.build = build;
         this.measuredSkills = build.skills();
     }
@@ -108,17 +116,15 @@ public class SimCombatant {
      * @param at      where in the sim world to place it
      */
     public void spawn(SimContext context, Location at) {
-        if (handle != null) {
+        if (player != null) {
             throw new IllegalStateException("Combatant " + name + " is already spawned");
         }
 
-        final SimPlayer spawned = SimPlayer.spawn(uuid, name, at);
-        this.handle = spawned;
-        this.player = spawned.asBukkit();
-
-        // Flag first: everything after this point can reach a listener, and the guards keyed off
-        // this metadata are what keep a simulated fight out of the stats and leaderboard tables.
-        SimulatedEntity.mark(player, context.plugin());
+        // The entity already exists and is already flagged -- SimCombatantPool marks a resident as
+        // it is added to the level, which is strictly earlier than this used to happen. All that is
+        // left is to undo the last duel's marks on it.
+        handle.prepareForDuel(at);
+        this.player = handle.asBukkit();
 
         // Registers the client *and* its builds, populated from the spec. equipRole below fires
         // RoleChangeEvent, whose listeners read both, so neither can be deferred until after the
@@ -253,33 +259,76 @@ public class SimCombatant {
     }
 
     /**
-     * Removes the fake player and drops its ephemeral client.
+     * Releases the combatant from the duel: unequips its skills, drops its ephemeral client and
+     * purges its per-UUID state, leaving the entity resident in the world for
+     * {@link SimCombatantPool} to hand out again.
      *
-     * <p>Despawn happens before the client is dropped so the sequence matches a real logout, and
-     * the entity is discarded rather than killed so teardown emits no death event. Leaves no row
-     * in {@code clients} because none was ever written.
+     * <p>Leaves no row in {@code clients} because none was ever written.
      *
-     * <p>The {@link SimStatePurge} runs last, once the entity is gone and the client is dropped,
-     * and is what stands in for the {@code PlayerQuitEvent} a fake player never fires. Without it
-     * the managers keyed on this combatant's UUID keep its entry for the life of the server, and
-     * since those maps are walked in full every tick a sweep's throughput decays as it runs --
-     * see that class for the measurements.
+     * <p>The {@link SimStatePurge} runs last, once the client is dropped, and is what stands in for
+     * the {@code PlayerQuitEvent} a fake player never fires. It matters more under pooling than it
+     * did before: with a fresh entity per duel a missed manager merely leaked, whereas a resident
+     * carries whatever is left behind into the next duel on its platform, where it becomes a
+     * measurement error rather than a memory one.
      */
     public void despawn(SimContext context) {
-        final UUID departed = uuid;
-        if (handle != null) {
-            if (player != null) {
-                context.roleManager().cleanUp(player);
-            }
-            handle.despawn();
-            handle = null;
+        if (player != null) {
+            // Before the role goes: an invalidate may read the player's level or energy max, both of
+            // which resolve through the role and build that cleanUp and destroy are about to drop.
+            invalidateSkills(context);
+            context.roleManager().cleanUp(player);
         }
         if (client != null) {
             context.clientFactory().destroy(client);
             client = null;
         }
+        // Purge before dropping the reference: clearing this combatant's damage delays needs the
+        // entity, not just its UUID. The entity itself stays in the world -- the pool owns it, and
+        // the whole point of a resident is that it is never removed from the level.
+        context.statePurge().purge(uuid, player);
         player = null;
-        context.statePurge().purge(departed);
+    }
+
+    /**
+     * Unequips every skill from the combatant, so nothing champions holds under this identity
+     * survives into the next duel on the slot.
+     *
+     * <p>This is the replacement for waiting. A resident entity is the key every
+     * {@code WeakHashMap<Player, ?>} in champions files its per-player combat state under, and in
+     * production the only thing that clears those maps for a departed player is the entity becoming
+     * garbage -- which residency is precisely designed to prevent. The pool used to hold a slot out
+     * of service until every such window had certainly expired on its own timer, which cost
+     * {@code quarantine / duelDuration} times the concurrency in resident entities and made
+     * throughput track quarantine rather than the sweep. Dequipping is the same cleanup done
+     * immediately and deterministically, so the slot is reusable the moment the duel ends.
+     *
+     * <p>{@code invalidatePlayer} is called directly rather than by raising {@code SkillDequipEvent}:
+     * that event means "the build was edited", and {@code SkillStatListener} handles it by recording
+     * a build change against the client. The direct call is exactly what {@code SkillListener} does
+     * on the paths that matter here -- dequip and role change -- minus the stat write.
+     *
+     * <p>Every registered skill, not only the build's. The sim's requirement is stronger than a real
+     * dequip's: state under a combatant's identity is not always held by a skill that combatant
+     * carries. {@code Thorns} keys its internal cooldown by the <em>damager</em>, so the attacker
+     * accrues an entry in a skill only the defender has equipped. Iterating the whole registry is
+     * the only way to reach those, and it is cheap -- an invalidate for a skill the player never had
+     * is a handful of failed map removes, against the several milliseconds a duel's setup costs.
+     *
+     * <p>Failures are caught per skill. One skill throwing must not leave the remaining hundred-odd
+     * uncleaned, because that residue would be inherited by the next duel and read as a balance
+     * difference rather than as an error.
+     */
+    private void invalidateSkills(SimContext context) {
+        if (client == null) {
+            return;
+        }
+        for (Skill skill : context.skillManager().getObjects().values()) {
+            try {
+                skill.invalidatePlayer(player, client.getGamer());
+            } catch (Exception e) {
+                log.warn("Skill {} failed to invalidate sim combatant {}", skill.getName(), name, e).submit();
+            }
+        }
     }
 
     /**
@@ -291,7 +340,7 @@ public class SimCombatant {
      * simulator never computes damage itself; it only decides when to swing.
      */
     public void swingAt(SimCombatant opponent) {
-        if (handle == null || opponent.handle == null) {
+        if (player == null || opponent.player == null) {
             return;
         }
         handle.attack(opponent.handle);
@@ -317,15 +366,17 @@ public class SimCombatant {
      * role store, and the champions listeners read the first one: every combatant would look like
      * {@code Role.DEFAULT} to {@code Skill.getSkill}, so no non-knight skill would ever resolve.
      *
-     * @param plugin        owner of the simulated-entity metadata
+     * <p>No plugin handle: flagging a combatant as simulated used to happen here, and now happens
+     * in {@link SimCombatantPool} as a resident is added to the level, which is the only moment
+     * early enough once entities outlive the duels fought on them.
+     *
      * @param clientFactory builds the ephemeral client and its builds
      * @param roleManager   applies role and standard weapons through the real code path
      * @param skillManager  resolves skill names and reads effective levels back
      * @param equipment     materialises weapons and armour from the live item registry
      * @param statePurge    drops the per-UUID state no {@code PlayerQuitEvent} will ever clear
      */
-    public record SimContext(Plugin plugin,
-                             SimClientFactory clientFactory,
+    public record SimContext(SimClientFactory clientFactory,
                              RoleManager roleManager,
                              ChampionsSkillManager skillManager,
                              SimEquipment equipment,

@@ -153,6 +153,18 @@ public class Swordsmanship extends Skill implements PassiveSkill, OffensiveSkill
         }
     }
 
+    /**
+     * Drops the charge count when the skill leaves the build.
+     *
+     * <p>{@link #addCharge()} re-seeds an absent entry at zero on its next pass, so removing it is
+     * both the cleanup and the reset -- a player who re-equips the skill starts uncharged rather than
+     * resuming whatever they had banked before.
+     */
+    @Override
+    public void invalidatePlayer(Player player, Gamer gamer) {
+        charges.remove(player);
+    }
+
     @Override
     public boolean enabledInSpectator() {
         return true;

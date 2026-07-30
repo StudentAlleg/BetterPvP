@@ -9,6 +9,7 @@ import me.mykindos.betterpvp.champions.champions.skills.Skill;
 import me.mykindos.betterpvp.champions.champions.skills.types.DefensiveSkill;
 import me.mykindos.betterpvp.champions.champions.skills.types.HealthSkill;
 import me.mykindos.betterpvp.champions.champions.skills.types.PassiveSkill;
+import me.mykindos.betterpvp.core.client.gamer.Gamer;
 import me.mykindos.betterpvp.core.client.stats.impl.ClientStat;
 import me.mykindos.betterpvp.core.combat.events.DamageEvent;
 import me.mykindos.betterpvp.core.components.champions.Role;
@@ -18,10 +19,8 @@ import me.mykindos.betterpvp.core.framework.updater.UpdateEvent;
 import me.mykindos.betterpvp.core.listener.BPvPListener;
 import me.mykindos.betterpvp.core.locale.Translations;
 import me.mykindos.betterpvp.core.utilities.UtilEntity;
-import me.mykindos.betterpvp.core.utilities.UtilFormat;
 import me.mykindos.betterpvp.core.utilities.UtilTime;
 import net.kyori.adventure.text.Component;
-import net.kyori.adventure.text.format.NamedTextColor;
 import org.bukkit.Particle;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
@@ -127,6 +126,19 @@ public class Fortitude extends Skill implements PassiveSkill, Listener, Defensiv
             last.remove(cur);
         }
     }
+    /**
+     * Cancels the pending heal when the skill leaves the build.
+     *
+     * <p>{@link #update()} drains the pool a tick at a time and only drops the entry once it reaches
+     * zero or the player goes offline, so a dequip mid-heal would otherwise keep healing the player
+     * from a skill they no longer have.
+     */
+    @Override
+    public void invalidatePlayer(Player player, Gamer gamer) {
+        health.remove(player);
+        last.remove(player);
+    }
+
     public void loadSkillConfig() {
         healRate = getConfig("healRate", 2.5, Double.class);
         baseHeal = getConfig("baseHeal", 7.5, Double.class);
