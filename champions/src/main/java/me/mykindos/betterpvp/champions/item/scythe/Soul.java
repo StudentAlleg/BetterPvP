@@ -4,6 +4,7 @@ import com.destroystokyo.paper.ParticleBuilder;
 import com.github.retrooper.packetevents.PacketEvents;
 import com.github.retrooper.packetevents.protocol.entity.data.EntityData;
 import com.github.retrooper.packetevents.protocol.entity.data.EntityDataTypes;
+import com.github.retrooper.packetevents.protocol.player.User;
 import com.github.retrooper.packetevents.util.Vector3f;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEntityMetadata;
 import lombok.Getter;
@@ -86,7 +87,13 @@ public class Soul {
                 items
         );
         UtilPlayer.setGlowing(player, display, true);
-        PacketEvents.getAPI().getPlayerManager().getUser(player).sendPacket(packet);
+
+        final User user = PacketEvents.getAPI().getPlayerManager().getUser(player);
+        if (user == null) {
+            // Player has no connection to send to -- disconnecting, or not a real client
+            return;
+        }
+        user.sendPacket(packet);
     }
 
     public void hide(Player player) {

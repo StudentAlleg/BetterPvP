@@ -17,6 +17,11 @@ import org.jetbrains.annotations.Nullable;
  * the isolation that keeping fake players out of the player list buys: {@code Client.isLoaded()}
  * asks {@code Bukkit.getPlayer} <em>directly</em> rather than going through the gamer, so a
  * simulated client still reports as not loaded and stays out of {@code ClientManager.getOnline()}.
+ *
+ * <p>Phase 3 registered a <em>fighting</em> combatant in {@code PlayerList.playersByUUID}, so the
+ * inherited lookup would now succeed while a duel is running. The override stays regardless: it is
+ * also correct between duels, when a resident is deliberately unregistered again, and it makes the
+ * gamer's answer independent of a registration whose whole point is to be narrow.
  */
 public class SimGamer extends Gamer {
 

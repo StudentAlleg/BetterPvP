@@ -1,7 +1,10 @@
 # Balance Simulation Pipeline — Design
 
-**Status:** Phase 2 implemented (2026-07-28) — real-pipeline engine, dev-server-only.
-Melee + passives measured across tiered scopes; actives are phase 3.
+**Status:** Phase 3 implemented (2026-07-29) — real-pipeline engine, dev-server-only.
+Melee, passives **and actives** measured across tiered scopes; sim combatants really die, so
+on-death mechanics fire; runes are an axis; duels run one-way or mutual; the dashboards read
+`sim_*` only. Remaining gaps are stated and excluded rather than approximated: the bow
+archetypes and the defender's own build.
 **Goal:** Replace the SQL-modeled DPS/TTK dashboards with a simulation engine
 that uses the game's actual code and values, exports results to Postgres, and
 lets Grafana be a thin visualization layer.
@@ -139,6 +142,15 @@ The level axis still multiplies the sweep (open question 6), so tiering is
 likely: an all-vectors nightly run vs. a budget-feasible-but-representative fast
 run for the reload-triggered path.
 
+#### The rune axis is separate, not folded into the build
+
+Runes are enumerated by their own tier (`SimScope.RUNES`, one socketed rune at a time against a bare
+baseline in the same run) rather than as another term in `FULL`. Two reasons, and they are the same
+two that give skills their own tier: around twenty registered runes across several sockets multiplies
+an already real-time-bound space, and a build carrying several runes cannot be decomposed afterwards
+into what each one bought. Runes *are* part of `sim_build.fingerprint`, so a rune set is part of a
+build's identity for cross-run diffing and for joining live per-build data.
+
 ### 3.2 Transform — real-pipeline duel engine
 
 **No sim-specific code in items/skills/effects.** The engine spawns headless
@@ -156,8 +168,11 @@ expiry, energy regen, cooldowns — all execute as the *actual* mechanic objects
   per-tick it performs due melee swings (timing from the real
   `DEFAULT_DELAY / (1 + attackSpeed)`; `DamageDelayManager` remains the
   enforcement backstop) and drives active skills via a **rotation policy**
-  (greedy: cast when off cooldown and energy allows), synthesizing the same
-  input events a real player produces.
+  (`GreedyRotationPolicy`: press every button as early as the game allows),
+  synthesizing the same input events a real player produces — never calling a
+  skill's activation method, since that would skip the cooldown, energy and
+  status gates in `SkillListener.onUseSkill`. Under `SimScenario.MUTUAL` both
+  sides are driven; under `ONE_WAY` only the attacker is.
 - `SimRecorder` — MONITOR-priority listener on the custom damage events; records
   per-hit timestamp, raw/final damage, and the modifier breakdown from
   `getAppliedModifiers()`; detects kill → TTK. Each matchup runs N iterations
@@ -172,6 +187,10 @@ expiry, energy regen, cooldowns — all execute as the *actual* mechanic objects
   persistence and leaderboards via guards in the stats listeners.
 - Fake clients are ephemeral: created in-memory, never written to `clients`,
   removed on duel teardown.
+- A combatant is registered for **lookup only** while it is fighting
+  (`PlayerList.playersByUUID`, not `PlayerList.players`), so `Bukkit.getPlayer(uuid)` resolves it —
+  which every skill that holds its targets as UUIDs needs — while `Bukkit.getOnlinePlayers()` still
+  does not contain it, and every per-player sweep on the server keeps skipping it for free.
 
 ### 3.3 Load — `SimResultRepository`
 
@@ -216,17 +235,30 @@ diverge from theoretical strength — that gap is itself a balance signal
 
 ### 3.6 Visualize
 
-Dashboards become thin (`SELECT … FROM sim_result WHERE run_id = $latest`):
+Dashboards become thin (`SELECT … FROM sim_result WHERE run_id = $latest`). **Built in phase 3
+(2026-07-29)**, three rather than four:
 
-1. **DPS / TTK explorer** — replaces `dps_all_valid_builds`, `ttk_all_valid_builds`,
-   `dps_ttk_density` (density/percentile panels read precomputed rows).
-2. **Patch diff** — pick run A vs run B, show per-build deltas (the balancing
-   workhorse).
-3. **Model drift** — predicted vs measured (from §3.5).
-4. **Empirical overlay** — sim TTK vs actual KDR/playtime snapshots (existing
-   `grafana_*` tables) to see where theory and player behavior disagree.
+1. **DPS / TTK explorer** (`sim_dps_ttk_explorer.json`, uid `betterpvp-sim-explorer`) — replaces
+   `dps_all_valid_builds`, `ttk_all_valid_builds`, `dps_ttk_density`. Run header, per-role strength,
+   TTK histogram, the pipeline's own modifier breakdown from `extras.reasons`, a per-skill strength
+   curve, and the full build table.
+2. **Patch diff** (`sim_patch_diff.json`, uid `betterpvp-sim-diff`) — run A vs run B, matched on
+   `sim_build.fingerprint`. Reports the three overlap counts separately, because a build present in
+   one run and not the other contributes no delta and a large non-overlap means the remaining deltas
+   are a biased sample.
+3. **Empirical overlay** (`sim_empirical_overlay.json`, uid `betterpvp-sim-empirical`) — sim strength
+   against the latest `grafana_skill_kdr_snapshot` / `grafana_role_playtime_snapshot` captures, per
+   skill and per role, plus a sim-DPS-versus-live-KDR scatter.
 
-Existing hand-built SQL dashboards are retired after parity is verified.
+The planned fourth, **model drift**, was dropped rather than deferred: it does not exist. The engine
+*is* the real pipeline, so there is no predicted-versus-measured pair to plot — §3.5 already says as
+much, and building the panel anyway would have implied a model that is not there.
+
+The three are generated by `grafana/generate_sim_dashboards.py` rather than hand-edited. That is the
+same principle as the rest of this document applied to the dashboards themselves: 200KB of
+hand-maintained JSON is how the old ones became unsafe to change.
+
+Existing hand-built SQL dashboards are retired after parity is verified (phase 4).
 
 ## 4. Rollout phases
 
@@ -234,8 +266,136 @@ Existing hand-built SQL dashboards are retired after parity is verified.
 |-------|-------|--------------|
 | 1 | Fake-player infra (spawn/teardown, ephemeral clients, stats exclusion), sim void world, sim gate flag, schema + repository, `/simulate` skeleton | Two fake players duel with plain weapons in the sim void world on a dev server; rows land in `sim_result` |
 | 2 | `BalanceCatalog` build enumeration (roles × slots × budget-feasible level vectors × weapons incl. boosters × target armor), tiered scopes, duel orchestration at scale, Monte-Carlo iterations, passives measured correctly | Rows for every tier land in `sim_result` with iteration counts and percentiles; the skill and weapon axes visibly move DPS/TTK; parity with `ttk_all_valid_builds` where the old SQL was right, documented deltas where it was wrong |
-| 3 | Active-skill rotation policy (synthesized inputs, energy/cooldown-aware), **fake-player fidelity raised enough to let sim combatants really die** (open question 8), mutual-exchange scenario (open question 9), rune axis, thin dashboards (explorer + patch-diff + empirical overlay) | Actives contribute to DPS/TTK; sim deaths run the real `PlayerDeathEvent` path with the phase 2 kill-suppression removed; dashboards read only `sim_*` tables |
+| 3 ✅ | Active-skill rotation policy (synthesized inputs, energy/cooldown-aware), **fake-player fidelity raised enough to let sim combatants really die** (open question 8), mutual-exchange scenario (open question 9), rune axis, thin dashboards (explorer + patch-diff + empirical overlay) | Actives contribute to DPS/TTK; sim deaths run the real `PlayerDeathEvent` path with the phase 2 kill-suppression removed; dashboards read only `sim_*` tables |
 | 4 | Retire old SQL dashboards; optional reload-triggered auto-runs on dev | Old dashboards deleted |
+
+### What phase 3 actually built (2026-07-29)
+
+Five things, each closing an open question:
+
+1. **Lookup registration, not player-list registration** (open question 8). The blocker turned out
+   not to be `PlayerDeathEvent` at all — it was that **30 skill files hold their active targets as
+   UUIDs and re-resolve them with `Bukkit.getPlayer` every tick**. With a combatant in neither of
+   `PlayerList`'s two player structures, every channel, charge and active-toggle skill dropped its
+   holder on the first tick after activation and measured as if it had never been cast. The same null
+   was silently granting infinite energy: `EnergyService.tick()` drops the entry of anyone
+   `Bukkit.getPlayer` cannot resolve and `addToMap` re-seeds it at full.
+
+   The two structures are separable, which is the whole fix. `PlayerList.players` is what
+   `Bukkit.getOnlinePlayers()` is a view of; `playersByUUID` is what `Bukkit.getPlayer(UUID)`
+   resolves through. `SimPlayer.registerForLookup()` puts a **fighting** combatant in the map only,
+   and `unregisterForLookup()` takes it out at teardown. So the isolation that mattered — absence
+   from every per-player sweep, sidebar, broadcast and persistence flush — is kept in full, and only
+   the lookup the combat code needs is granted. Registration is per duel rather than per resident,
+   which also lets `ClientManager.unload` drop the ephemeral client (it refuses while
+   `Bukkit.getPlayer` resolves) and makes each duel start on a full energy bar.
+
+   `Client.isLoaded()` reads that map, so `SimClient` now overrides it to `false` outright rather
+   than inheriting the answer.
+
+2. **Real deaths.** `SimRecorder` no longer cancels the lethal blow. It still marks the kill from the
+   damage event, because only that knows which tick the blow landed on and a TTK read off
+   `PlayerDeathEvent` would be quantised to whichever tick the sweep loop next looked. The 47-listener
+   audit the phase 2 note deferred came out small once scoped correctly: **only `core` and `champions`
+   are on a dev simulation server's classpath** (the `devsimulation` output bucket), and of their
+   death handlers exactly three touch anything durable —
+
+   | Listener | What it does | Guard |
+   |---|---|---|
+   | `KillEventListener` | the whole kill/stats/leaderboard chain | already guarded in phase 1 |
+   | `RoleStatsListener` | writes role kill/death data to Postgres | `SimulatedEntity` guard added |
+   | `UUIDController` | writes an `ITEM_DEATH` log row with client context | `SimulatedEntity` guard added |
+   | `DeathListener` (core) | fans a death message out to every online player | `SimulatedEntity` guard added |
+
+   Everything else either writes through `SimClient` (which records nothing), is already excluded by
+   a world-name check (`ActivityTrackingListener`), writes a property `SimGamer` swallows, or is a
+   mechanic whose firing is the point. `SimDeathListener` keeps the death itself litter-free — keep
+   inventory, no drops, no exp, no message — which also makes champions' own `DeathListener` return
+   early instead of re-dropping the loadout by hand.
+
+   The corpse is revived **in place** by `SimCombatantPool.release`. Both halves of that are
+   load-bearing: `LivingEntity.tickDeath` removes a dead entity from the level 20 ticks after the kill,
+   so a corpse that waits for its next duel stops being a resident and gives back the 43.8% of a
+   profile residency bought; and `PlayerList.respawn` is not an option because it constructs a *new*
+   `ServerPlayer`, which is exactly what a resident is not.
+
+   **A kill is recorded a tick before it is applied**, and the teardown has to respect that gap.
+   `SimRecorder` timestamps the lethal blow synchronously at `MONITOR` on `DamageEvent`, but
+   `DamageEventFinalizer.applyFinalDamage` defers the actual `setHealth(0)` by one tick to work around
+   [Paper #12148](https://github.com/PaperMC/Paper/issues/12148). Resolving the duel on the recorded
+   tick therefore destroyed the combatant's client out from under a death that had not happened yet:
+   `ServerPlayer.die` ran with nothing in `ClientManager`'s cache, and every death handler that calls
+   `search().online(player)` — `GamerProtectionListener`, `CoinDeathListener`, `SkillStatListener`,
+   `MinecraftStatListener` — hit `SearchEngineBase.online`'s "kick and throw" branch. That kicked the
+   resident, which cost the pool the slot it had just released. `DuelOrchestrator.DEATH_SETTLE_TICKS`
+   holds a resolved duel open for two ticks so the deferred kill and the death it causes both land
+   while the combatant is still spawned and still cached. It costs nothing measurable: TTK is read from
+   the recording's own lethal-blow tick, so the settle ticks are held open but never counted.
+
+   Note this is a genuine ordering constraint of the real pipeline, not a simulator artefact — the sim
+   is simply the only caller that tears its players down microseconds after killing them.
+
+3. **A rotation policy per archetype** (open question 3). `ActivationArchetype.of(Skill)` reads the
+   archetype off the type hierarchy, `SimInputs` synthesises the corresponding real input, and
+   `GreedyRotationPolicy` decides only *when* a button is pressed. It never calls
+   `InteractSkill.activate` or `ToggleSkill.toggle`: doing so would skip `SkillListener.onUseSkill`,
+   which is where the cooldown is consumed, the energy is spent and the silence/stun/slow/liquid gates
+   are applied.
+
+   | Archetype | Synthesised input |
+   |---|---|
+   | `INTERACT`, `PREPARE` | `PlayerInteractEvent(RIGHT_CLICK_AIR)`, one press when off cooldown |
+   | `CHANNEL`, `CHARGE` | the same press, then `startUsingItem(HAND)` held for `channelHoldTicks` |
+   | `TOGGLE` | `PlayerDropItemEvent` on a throwaway item entity holding a *copy* of the weapon |
+   | `PASSIVE` | nothing; they fire from the duel's normal traffic |
+   | `BOW` | nothing, and the catalog excludes them (see below) |
+
+   Two design points worth keeping. The toggle press uses a copied item entity rather than
+   `HumanEntity.dropItem` deliberately: with a real drop, a build whose toggle skill failed to cancel
+   the event would silently finish the duel unarmed and the row would read as a weak build rather than
+   as a broken input. And the policy arbitrates **one right hand** — while a channel is held nothing
+   else presses right click, because a real player cannot either.
+
+   Cooldown and weapon-slot state are *read* (`CooldownManager.hasCooldown`, `SkillWeapons.isHolding`)
+   to avoid pressing buttons the chain would certainly refuse. Energy deliberately is not: the refusal
+   is the measurement, observed by `SimRecorder` into `sim_result.energy_limited`.
+
+4. **Scenario axis** (open question 9). `SimScenario` is `ONE_WAY` or `MUTUAL`, named at invocation
+   (`/simulate <scope> [scenario]`), fixed for a run and recorded on `sim_run.scenario`. `MUTUAL`
+   drives both rotations and lets both sides swing, which is what makes an attacker's own reactive
+   passives measurable at all — `Vengeance` only ramps while its holder is being hit. The cost is
+   stated on the row rather than hidden: `ttk_s` becomes "how long when it won", `extras.kill_rate`
+   is how often that was, and `extras.attacker_deaths` is how often it lost. Under `ONE_WAY` that
+   last is always zero, which is what distinguishes the two scenarios on a row as well as on a run.
+
+5. **Rune axis, and `config_hash` closed** (open question 10). Runes come from
+   `SocketableRegistry`, are filtered by each rune's own `canApply`, and are fitted through the
+   item's real `SocketableContainerComponent` — which is the only thing that makes a rune real, since
+   every handler reads the container off the damager's held stack. A new `RUNES` tier sweeps one rune
+   at a time against a bare baseline in the same run, for the same reason `SKILLS` exists: a build
+   carrying several cannot be decomposed afterwards. Runes are hashed into the build fingerprint.
+   `SimConfigDigest` hashes every leaf of the champions and core config trees that determine damage
+   plus `Role` base health, so two sweeps either side of a balance change no longer share a
+   `config_hash`.
+
+**Also changed in the game modules**, all of it cleanup that is correct on its own merits:
+`PrepareSkill.invalidatePlayer` drops the armed state (previously only a build-menu dequip did, so a
+role change left a skill permanently refusing to re-arm), and `RightClickListener.clearHoldState`
+gives an owner of a player's lifecycle a way to forget a hold context without waiting out the 250 ms
+timeout. Everything else lives in the simulation plugin.
+
+One further core fix, surfaced by the sim but not specific to it: `UpdateMaxEnergyEvent` declared
+itself unconditionally asynchronous (`super(true)`), while `EnergyService` raises it from two
+genuinely different threads — `updateMax` from an async task, and `addToMap` inline, on the main
+thread, the first time anything asks for a player's energy. Bukkit rejects an event whose declared
+threading disagrees with the thread it is fired on, so the second caller threw
+`IllegalStateException` out of whatever pipeline it was in. It now derives the flag from
+`Bukkit.isPrimaryThread()`. This was never sim-only: any main-thread energy read for a player whose
+entry is not yet seeded — the window between `PlayerJoinEvent` and the async `updateMax` it schedules
+— aborts the enclosing event. The sim hit it every duel because `SimStatePurge` clears the energy
+entry between duels and phase 3 made `Bukkit.getPlayer` resolve, which together take the branch that
+fires the event. Both listeners (`SapphireGemHandler`, `EnergyPool`) only read equipment and skill
+level, so running them on the main thread is if anything the safer of the two.
 
 ## 5. Implementation notes & open questions (to settle before/while building)
 
@@ -312,10 +472,32 @@ programmatic control, revisit.
    `ClientManager.getOnline()`, which filters on `Client.isLoaded()` →
    `Bukkit.getPlayer(uuid) != null` → false for a fake player. The stat flush in
    `processStatUpdates` therefore never sees them either.
-3. **Active-skill activation paths (plural)** — there is no single "use skill"
-   entry point. `champions/.../skills/types/` defines several activation
-   archetypes, each consuming a *different* input, and the rotation policy needs
-   a synthesizer per archetype:
+3. ~~**Active-skill activation paths (plural)**~~ — **resolved (2026-07-29, phase 3): one input
+   synthesiser per archetype, classified off the type hierarchy.** `ActivationArchetype.of(Skill)`
+   tests from most specific to least (`BowChargeSkill`/`PrepareArrowSkill` → `ChargeSkill` →
+   `ChannelSkill` → `ToggleSkill` → `PrepareSkill` → `InteractSkill` → passive), because the hierarchy
+   is not a partition: a `PrepareSkill` *is* an `InteractSkill` and a `ChargeSkill` *is* a
+   `ChannelSkill`. Reading the archetype off the types rather than a name table means a new skill is
+   driven correctly the moment it is written, and one that changes archetype cannot silently keep being
+   driven the old way.
+
+   Two of the original suggestions held up and one did not. The declared hold duration is there
+   (`channelHoldTicks`, recorded in `sim_run.scenario` because it is a policy choice and not an
+   observation). Prepares are conditional on a hit, and the duel supplies that naturally — the rotation
+   arms before the swing on the same tick, so this tick's hit pays it off. What did **not** hold is
+   "a greedy policy is well-defined for `InteractSkill`/`ToggleSkill`": a toggle needs state, because an
+   `ActiveToggleSkill` stays on and a second drop-key press turns it back off, so pressing it every
+   retry interval would flicker it and measure roughly half of it. `GreedyRotationPolicy` checks
+   `getActive()` first and leaves it on.
+
+   `BowChargeSkill`/`PrepareArrowSkill` are still not drivable and are **excluded from the catalog**
+   rather than driven badly: they need a real `Arrow` through the vanilla bow path (the projectile is
+   what the skill tracks, and the damage arrives on hit, after a flight time), and they only make sense
+   at a range where a bow is the right weapon — which is a second scenario, not an input. An
+   unexercisable skill does not measure as absent, it measures as an *empty slot* while its
+   `sim_build` row claims a skill, so `SimSkillFilter` rejects them and the exclusion count is logged.
+
+   For reference, the original table of what each archetype's listener consumes:
 
    | Archetype | Input the listener consumes |
    |-----------|-----------------------------|
@@ -327,13 +509,19 @@ programmatic control, revisit.
    | `ChargeSkill` | charge accumulation over time, released at threshold |
    | `BowChargeSkill`, `PrepareArrowSkill` | bow draw/release; needs a real projectile through the vanilla bow path |
 
-   This widens the phase-3 scope meaningfully: a greedy "cast when off cooldown"
-   policy is well-defined for `InteractSkill`/`ToggleSkill` but ill-defined for
-   channels (how long to hold?) and prepares (they only pay off if a melee hit
-   lands). Suggested approach: per-archetype policy with a declared hold/charge
-   duration, and treat `PrepareSkill` DPS as conditional-on-hit rather than
-   free. Needs a trace through one skill per archetype, not just one sword active.
-4. **Stats exclusion surface** — *partially resolved (2026-07-25, phase 1).* The
+4. **Stats exclusion surface** — *resolved for the dev-simulation classpath (2026-07-29, phase 3).*
+   Phase 1 closed the kill/combat-stats chain at one chokepoint; phase 3 had to finish the sweep,
+   because combatants now really die. The audit came out far smaller than the "47 files" figure
+   suggested, for a reason worth recording: **only `core` and `champions` are on a dev simulation
+   server's classpath** — the `devsimulation` output bucket in `build.gradle.kts` is exactly
+   `{champions, core, balance-simulation}`, so the clans, game, hub, progression and private listeners
+   cannot observe a simulated death at all. Of the remainder, three needed a guard
+   (`RoleStatsListener`, `UUIDController`, core's `DeathListener`); the rest write through `SimClient`
+   or `SimGamer`, which record nothing, or are already excluded by a world-name check
+   (`ActivityTrackingListener`), or are mechanics whose firing is the whole point. See the phase 3
+   table above.
+
+   The original phase 1 note follows. The
    kill/combat-stats chain is closed at a single chokepoint:
    `KillEventListener.onDeath` is the only producer of `KillContributionEvent`,
    which is what both `CombatStatsListener` subclasses (global + champions) and
@@ -364,19 +552,25 @@ programmatic control, revisit.
    role — days of wall clock at real-time duel cost. A single "full sweep in
    single-digit minutes" target is therefore not reachable and was the wrong goal.
 
-   `SimScope` names four tiers, and `/simulate <scope>` picks one:
+   `SimScope` names five tiers (`RUNES` added in phase 3), and `/simulate <scope>` picks one:
 
    | Tier | Axes | What it answers |
    |------|------|-----------------|
    | `MELEE` | role × default weapon | phase 1 baseline; a regression check that nothing under the simulator moved |
    | `WEAPONS` | role × every melee weapon | the weapon axis with no skills to confound it |
+   | `RUNES` | role × default weapon × one socketed rune at a time, plus a bare baseline, vs armoured targets | what a rune is actually worth |
    | `SKILLS` | role × one skill at a time × level, plain and booster weapons, vs armoured targets | a per-skill strength curve |
    | `FULL` | role × every budget-feasible level vector × every melee weapon | the design's end state; join target for live per-build data |
 
    `SKILLS` is the tier that earns its keep. A full build folds several skills'
    contributions into one DPS figure and there is no way to attribute it
    afterwards, so isolating one skill is not a cheaper approximation of `FULL` —
-   it answers a question `FULL` cannot.
+   it answers a question `FULL` cannot. `RUNES` exists on identical reasoning, and is
+   deliberately *not* a term in `FULL`: around twenty registered runes across several sockets
+   multiplies the space the way skills do, and a build carrying several cannot be decomposed
+   afterwards either. It emits its own no-rune baseline row so a rune's contribution is read
+   against a row of the same sweep rather than a figure carried over from a `MELEE` run at a
+   different `config_hash`.
 
    **A scope over `maxBuilds` is refused with its count, never truncated.** A
    prefix of an enumeration is a biased sample and nothing on the resulting rows
@@ -391,7 +585,34 @@ programmatic control, revisit.
    name/flag rather than by distance heuristics. Remaining detail is only
    mechanical: create it on demand when the sim gate is on, flat void generator,
    a solid platform per duel arena, and teardown/unload at run end.
-8. **Fake-player fidelity vs. `PlayerDeathEvent`** — *phase 1 workaround in place;
+8. ~~**Fake-player fidelity vs. `PlayerDeathEvent`**~~ — **resolved (2026-07-29, phase 3), and the
+   diagnosis was wrong.** The blocker was never `PlayerDeathEvent`'s listener count. It was that
+   **`Bukkit.getPlayer(uuid)` returned null**, which is a far bigger deal than the two crashing stat
+   listeners phase 1 found: 30 skill files hold their active targets as UUIDs and re-resolve them
+   every tick, so every channel, charge and active-toggle skill dropped its holder on the first tick
+   after activation and measured as an empty slot. `EnergyService.tick()` does the same and re-seeds
+   the entry at full, so combatants had been fighting with infinite energy the whole time.
+
+   And `PlayerList` registration turned out not to be the trade the phase 2 note feared, because
+   `PlayerList` keeps **two** structures: `players` (public, the list `Bukkit.getOnlinePlayers()`
+   views) and `playersByUUID` (private, the map `Bukkit.getPlayer(UUID)` resolves through). Only the
+   second is needed. `SimPlayer.registerForLookup()` puts a *fighting* combatant in the map alone —
+   per duel, not per resident — so every per-player sweep, sidebar, broadcast and persistence flush
+   still skips it for free, and the one lookup the combat code needs is granted. `SimClient` overrides
+   `isLoaded()` to `false` because that method reads the same map.
+
+   With that in place the death is allowed to happen: `SimRecorder` no longer cancels the lethal blow
+   (it still timestamps the kill from the damage event, since only that knows which tick it landed
+   on), `SimDeathListener` keeps the death litter-free, three `SimulatedEntity` guards close the three
+   durable writers on the dev-simulation classpath (see open question 4), and
+   `SimCombatantPool.release` revives the corpse **in place** on the same tick — because
+   `LivingEntity.tickDeath` removes a dead entity after 20 ticks, and `PlayerList.respawn` would
+   construct a new `ServerPlayer`, which is exactly what a resident is not.
+
+   The original phase 1/2 note follows, kept because its reasoning about *why* the suppression was
+   safe through phase 2 is still the right way to think about deferring this kind of work.
+
+   *Phase 1 workaround was in place;
    the real fix is phase 2 scope.*
 
    **What happened (2026-07-27).** The first `/simulate` run on a dev server
@@ -477,7 +698,27 @@ programmatic control, revisit.
    `Bukkit.getPlayer` directly and cannot be satisfied otherwise — and expect to
    need the `SimulatedEntity` guard at more chokepoints if so, since that trades
    the free isolation away.
-9. **Only one side swings, so reactive passives are unmeasured.** A duel drives
+9. ~~**Only one side swings, so reactive passives are unmeasured.**~~ — **resolved (2026-07-29,
+   phase 3): a scenario axis, exactly the shape this note predicted.** `SimScenario` is `ONE_WAY` or
+   `MUTUAL`, named at invocation (`/simulate <scope> [scenario]`), fixed for a run, and recorded on
+   `sim_run.scenario`. `MUTUAL` runs both rotations and lets both sides swing.
+
+   The ambiguity the note warned about is handled by putting the qualification on the row rather than
+   in a comment: `ttk_s` under `MUTUAL` averages over winning iterations only, `extras.kill_rate` says
+   how often that was, and `extras.attacker_deaths` says how often the attacker lost instead. Those
+   two do not have to sum to the iteration count, because a duel can also time out with both alive.
+   Under `ONE_WAY` `attacker_deaths` is always zero, so the two scenarios are distinguishable from a
+   single row and not only from the run.
+
+   **One thing deliberately not done:** the defender still carries no build of its own. The target
+   axis is role and armour, so a mutual duel is a swept attacker build against a bare-role defender
+   with the standard kit; sweeping the defender's build too would square an already real-time-bound
+   space. `sim_result.target_skills` therefore stays empty rather than fabricated. Note also that
+   `SimSkillFilter`'s `OFFENSIVE` default rests on a premise `MUTUAL` weakens — a defensive skill
+   *does* move the attacker's TTK once the defender fights back — so a mutual sweep aimed at defensive
+   builds wants `EXERCISABLE`.
+
+   *The original note follows.* A duel drives
    the attacker only; the defender is a full combatant but never attacks. Every
    passive whose value is realised *on being hit* is therefore invisible: knight's
    `Vengeance` ramps damage as its holder takes hits, and an attacker that is
@@ -491,16 +732,28 @@ programmatic control, revisit.
    `mutual`) recorded on `sim_run.scenario`, so both are available and never
    conflated. Belongs with phase 3, which needs to drive both sides properly
    anyway.
-10. **`config_hash` does not yet cover the values that determine damage.** It
-    hashes the simulation knobs (scope, iterations, timeout, concurrency) and the
-    engine version, not the champions/item config that skill damage and weapon
-    stats are read from live during a run. Two sweeps taken either side of a
-    balance change therefore share a hash, which is precisely the case §3.3 says
-    it exists to distinguish. Until it is closed, a patch diff must be pinned by
-    `engine_version` plus run timestamp. Closing it means hashing the
-    `skills/skills` config tree and the per-item `Config.item` values — the same
-    values `GrafanaConfigSyncService` already mirrors, so that is the place to
-    read them from rather than a second traversal.
+10. ~~**`config_hash` does not yet cover the values that determine damage.**~~ — **resolved
+    (2026-07-29, phase 3): `SimConfigDigest`.** It walks every leaf key of the config trees the
+    pipeline reads during a duel — champions' `skills/skills` plus both plugins'
+    `items/{armor,block,consumable,material,misc,tool,weapon}` — and folds in `Role` base health,
+    which is the largest single term in a target's durability and lives in the enum rather than any
+    YAML. The digest is hashed into `config_hash` and also written to `sim_run.scenario` under
+    `balance_config`, so a dashboard can group runs by the balance numbers they were taken against
+    without unpacking the hash.
+
+    Read from the live `ExtendedYamlConfiguration` — the same view
+    `GrafanaConfigSyncService` mirrors, so a value that exists only as a code default is included and
+    a stale comment is not — but read directly rather than by querying `grafana_config`, so the digest
+    does not depend on whether that sync has run and can be computed synchronously before the
+    `sim_run` row is inserted.
+
+    Two things are deliberately excluded, because including them would break the hash in the opposite
+    direction: `items/recipes` (how an item is obtained, not what it does) and each plugin's top-level
+    `config.yml`, which holds database credentials, world names and feature toggles — a dev server
+    restarted with a different world name would otherwise make two genuinely comparable runs look
+    incomparable. The rotation's retry interval is likewise absent from `config_hash`: it only
+    rate-limits attempts the real gates would have refused, so two runs differing in it measured the
+    same thing. The channel hold budget *is* in, because it changes what a channel build's DPS means.
 11. **Effective levels are written after the fact.** `sim_build.skills` is
     inserted with allocated levels (the foreign key needs the row before any duel
     runs) and updated with observed effective levels once the first combatant for
@@ -546,6 +799,18 @@ programmatic control, revisit.
 - Booster weapons: `champions/.../skills/data/SkillWeapons.java` (`hasBooster`, `isBooster`, `getTypeFrom`)
 - Activation archetypes: `champions/.../skills/types/` (`InteractSkill`, `PrepareSkill`,
   `ToggleSkill`, `ChannelSkill`, `ChargeSkill`, `BowChargeSkill`, `PrepareArrowSkill`, …)
+- Rotation (phase 3): `balance-simulation/.../engine/ActivationArchetype.java` (classification),
+  `SimInputs.java` (input synthesis), `GreedyRotationPolicy.java` (timing and arbitration)
+- Death path (phase 3): `SimPlayer.registerForLookup`/`reviveIfDead`, `SimDeathListener.java`,
+  `SimCombatantPool.release`; guards in `champions/.../roles/listeners/RoleStatsListener.java`,
+  `core/.../item/component/impl/uuid/UUIDController.java`, `core/.../combat/death/DeathListener.java`
+- Scenario axis: `balance-simulation/.../catalog/SimScenario.java`
+- Runes: `core/.../item/component/impl/socketables/` (`SocketableRegistry`,
+  `SocketableContainerComponent`, `SocketableGroups`), fitted by `SimEquipment.weaponStack(key, runes)`
+- Balance fingerprint: `balance-simulation/.../engine/SimConfigDigest.java`
+- Where a fake player becomes resolvable: NMS `PlayerList.players` (public, backs
+  `Bukkit.getOnlinePlayers()`) versus `PlayerList.playersByUUID` (private, backs
+  `Bukkit.getPlayer(UUID)`) — only the latter is registered
 - Armor → health: `core/.../item/model/ArmorItem.java` (`StatTypes.HEALTH`)
 - Mitigation: `core/.../effects/types/positive/ResistanceEffect.java`, `DefensiveSkill` implementors
 - ETL template: `core/.../stats/GrafanaConfigSyncService.java`, `champions/.../stats/repository/GrafanaSnapshotRepository.java`

@@ -58,6 +58,30 @@ public class RightClickListener implements Listener {
         this.clientManager = clientManager;
     }
 
+    /**
+     * Forgets that {@code player} was holding right click, without emitting a release.
+     *
+     * <p>Exists for callers that own a player's lifecycle outside the join/quit flow the caches are
+     * built around -- today the balance simulator, whose combatants are pooled entities reused across
+     * duels. Eviction here is otherwise driven by a 250 ms timeout or by the held item's type
+     * changing, and both are too slow for a duel that ends and is replaced by another on the next
+     * tick: a hold-click context left over from the previous fight re-fires {@link RightClickEvent}
+     * against the new one, which can re-trigger a channel skill the build being measured does not
+     * even have.
+     *
+     * <p>No {@link RightClickEndEvent} is raised, because nothing released anything -- the player
+     * stopped existing as far as the caller is concerned. Callers that want the release semantics
+     * should stop the item use and let the normal eviction path run.
+     */
+    public void clearHoldState(Player player) {
+        final RightClickContext context = rightClickCache.remove(player);
+        suspectedRelease.remove(player);
+        lastDrop.remove(player);
+        if (context != null) {
+            context.getGamer().setLastBlock(-1);
+        }
+    }
+
     // Fix for interact event triggering when dropping items
     @EventHandler
     public void onDrop(PlayerDropItemEvent event) {

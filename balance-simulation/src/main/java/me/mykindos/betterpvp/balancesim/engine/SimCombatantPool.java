@@ -124,19 +124,28 @@ public class SimCombatantPool {
     }
 
     /**
-     * Returns a finished duel's slot to quarantine.
+     * Returns a finished duel's slot to quarantine, reviving whichever combatant lost.
      *
-     * <p>A combatant that actually died is not recycled. Lethal blows are intercepted before they
-     * land so no fake player should ever reach zero health, but a dead {@code ServerPlayer} cannot
-     * be revived without going through the respawn path, and quietly reusing one would measure a
-     * corpse. The slot's residents are discarded and replaced instead, which costs the old
-     * spawn price for that slot only.
+     * <p>Since phase 3 stopped intercepting lethal blows a death is the <em>normal</em> end of a
+     * duel, so this is on the hot path rather than a warning case. It has to happen here, on the tick
+     * the duel resolves, and not lazily when the slot is next handed out:
+     * {@code LivingEntity.tickDeath} removes a dead entity from the level 20 ticks after the kill, so
+     * a corpse that waits for its next duel simply stops being a resident.
+     *
+     * <p>{@link SimPlayer#reviveIfDead()} restores the entity in place rather than respawning it,
+     * because a respawn constructs a new {@code ServerPlayer} and a new entity is precisely what a
+     * resident is not. If the window was missed anyway -- a sweep stalled for a second between the
+     * kill and this call -- the entity is gone and the slot's residents are replaced, which costs the
+     * old spawn price for that one slot.
      */
     public void release(Slot slot, long tick) {
-        if (slot.attacker.isDeadOrDying() || slot.defender.isDeadOrDying()) {
-            log.warn("Sim combatant on arena {} died despite lethal-blow interception; replacing"
-                    + " the slot's residents rather than reusing them", slot.arena.index()).submit();
+        if (slot.attacker.isRemoved() || slot.defender.isRemoved()) {
+            log.warn("Sim combatant on arena {} was removed before it could be revived; replacing the"
+                    + " slot's residents rather than reusing them", slot.arena.index()).submit();
             replaceResidents(slot);
+        } else {
+            slot.attacker.reviveIfDead();
+            slot.defender.reviveIfDead();
         }
         slot.releasedAtTick = tick;
         quarantined.add(slot);
@@ -205,6 +214,13 @@ public class SimCombatantPool {
      * a moment between the entity existing and the pipeline being able to reach it -- a resident
      * sits in a ticking chunk from the instant it is added to the level, so the flag the
      * persistence guards read has to be set in the same breath as the spawn.
+     *
+     * <p>Lookup registration is deliberately <em>not</em> done here. It is per duel
+     * ({@code SimCombatant.spawn}/{@code despawn}) rather than per resident, so that between duels a
+     * slot's combatants are unresolvable again -- which restores the phase 2 isolation for the whole
+     * idle period, lets {@code ClientManager.unload} actually drop the ephemeral client, and means
+     * {@code EnergyService.tick} discards the energy entry so the next duel starts on a full bar
+     * rather than the last one's remainder.
      */
     private SimPlayer spawnResident(int arenaIndex, String side, Location at) {
         final String name = "sim_" + side + "_" + arenaIndex;

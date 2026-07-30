@@ -50,6 +50,44 @@ public class SimulationGate {
     private String scope;
 
     /**
+     * Whether a duel drives one side or both. See {@code SimScenario}; defaults to the one-way
+     * measurement every phase 1 and 2 row was taken with, so an existing dashboard keeps meaning what
+     * it meant.
+     */
+    @Inject
+    @Config(path = "champions.simulation.scenario", defaultValue = "ONE_WAY")
+    private String scenario;
+
+    /**
+     * How long the rotation holds right click for a channel or charge skill, in ticks.
+     *
+     * <p>This is a <em>policy choice</em> rather than a measurement, and the only one in the engine: a
+     * channel produces damage for as long as it is held, so its DPS is whatever this says it is. Two
+     * runs with different budgets are not comparable for a channel build, which is why the value is
+     * written into {@code sim_run.scenario} alongside the scope.
+     *
+     * <p>Two seconds by default -- long enough for the energy drain of an {@code EnergyChannelSkill} to
+     * bind (a 30/s channel against a 150 pool empties in five seconds) and short enough that a channel
+     * build is not simply measured as "stands still for the whole fight", which no player does while
+     * being hit.
+     */
+    @Inject
+    @Config(path = "champions.simulation.channelHoldTicks", defaultValue = "40")
+    private int channelHoldTicks;
+
+    /**
+     * How often the rotation may re-press a button that did not fire, in ticks.
+     *
+     * <p>A rate limit on attempts, not a model of anything. Every press dispatches a real event through
+     * the whole listener chain, and at 128 concurrent duels pressing every skill every tick is tens of
+     * thousands of dispatches a second that produce no extra measurement -- the chain's answer does not
+     * change within a few ticks. Low enough that a skill still comes off cooldown promptly.
+     */
+    @Inject
+    @Config(path = "champions.simulation.skillRetryIntervalTicks", defaultValue = "5")
+    private int skillRetryIntervalTicks;
+
+    /**
      * Ceiling on how many builds a scope may enumerate. A scope over this is refused with its
      * count rather than truncated: a prefix of an enumeration is a biased sample, and nothing on
      * the resulting rows would say so.
@@ -61,12 +99,13 @@ public class SimulationGate {
     /**
      * Which skills the catalog is allowed to build permutations from. See {@code SimSkillFilter}.
      *
-     * <p>Defaults to the narrowest setting because the skill axis is combinatorial across six
-     * slots: the unfiltered {@code FULL} space is tens of millions of builds and exhausts the heap
-     * while being enumerated, long before a single duel runs.
+     * <p>Defaults to {@code OFFENSIVE}, which is {@code OFFENSIVE_PASSIVES} widened to include the
+     * actives phase 3's rotation policy can now drive. It is still a narrow setting, because the skill
+     * axis is combinatorial across six slots: the unfiltered {@code FULL} space is tens of millions of
+     * builds and exhausts the heap while being enumerated, long before a single duel runs.
      */
     @Inject
-    @Config(path = "champions.simulation.skillFilter", defaultValue = "OFFENSIVE_PASSIVES")
+    @Config(path = "champions.simulation.skillFilter", defaultValue = "OFFENSIVE")
     private String skillFilter;
 
     /**

@@ -3,6 +3,7 @@ package me.mykindos.betterpvp.core.utilities;
 import com.github.retrooper.packetevents.PacketEvents;
 import com.github.retrooper.packetevents.protocol.entity.data.EntityData;
 import com.github.retrooper.packetevents.protocol.entity.data.EntityDataTypes;
+import com.github.retrooper.packetevents.protocol.player.User;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEntityMetadata;
 import lombok.AccessLevel;
 import lombok.CustomLog;
@@ -206,6 +207,12 @@ public class UtilPlayer {
      */
     @SneakyThrows
     public static void setGlowing(Player player, Entity target, boolean glowing) {
+        final User user = PacketEvents.getAPI().getPlayerManager().getUser(player);
+        if (user == null) {
+            // Player has no connection to send to -- disconnecting, or not a real client
+            return;
+        }
+
         byte glowingByte = 0x00;
         if (glowing) {
             glowingByte = (byte) (glowingByte | 0x40);
@@ -218,7 +225,7 @@ public class UtilPlayer {
                 List.of(data)
         );
 
-        PacketEvents.getAPI().getPlayerManager().getUser(player).sendPacket(packet);
+        user.sendPacket(packet);
     }
 
     /**

@@ -20,6 +20,7 @@ import org.bukkit.entity.Player;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.util.Vector;
 
+import java.lang.reflect.Field;
 import java.util.List;
 import java.util.UUID;
 
@@ -48,6 +49,28 @@ import java.util.UUID;
  * bars, tab list, broadcasts, scoreboard updates -- skips it without needing to be taught about
  * simulation.
  *
+ * <h2>...but it <em>is</em> registered for lookup (phase 3)</h2>
+ * {@code PlayerList} keeps two separate structures, and only one of them is the thing the
+ * isolation above depends on. {@code players} is the list {@code Bukkit.getOnlinePlayers()} is a
+ * view of; {@code playersByUUID} is the map {@code Bukkit.getPlayer(UUID)} resolves through
+ * ({@code CraftServer.getPlayer} -> {@code PlayerList.getPlayer}). Phase 3 puts a combatant in the
+ * <em>map only</em>, via {@link #registerForLookup()}.
+ *
+ * <p>That split is what makes actives measurable at all. A skill that stays active over time keeps
+ * its holders as UUIDs and resolves them back with {@code Bukkit.getPlayer} every tick -- 30 skill
+ * files do -- so with the map entry missing, every channel, charge and active-toggle skill dropped
+ * its holder on the first tick after activation and measured as if it had never been cast. The same
+ * null was silently handing combatants infinite energy: {@code EnergyService.tick()} removes the
+ * entry of anyone {@code Bukkit.getPlayer} cannot resolve, and {@code addToMap} re-seeds it at
+ * full, so the energy gate that is supposed to bound a rotation never bound anything.
+ *
+ * <p>The cost is bounded and paid for explicitly, because two things do read the map:
+ * {@code Client.isLoaded()} (closed by {@code SimClient}, which overrides it to false) and
+ * {@code Player.isOnline()}, which is now true -- and wants to be, since the listeners that gate on
+ * it are the ones that drive a live player's skills. Nothing that iterates
+ * {@code Bukkit.getOnlinePlayers()} is affected, which is the large majority of the per-player
+ * persistence and display surface.
+ *
  * <h2>The connection</h2>
  * A {@code ServerPlayer} with a null {@code connection} NPEs the moment anything tries to send it
  * a packet, and the combat pipeline does exactly that (damage indicators, effect feedback). So it
@@ -68,8 +91,22 @@ import java.util.UUID;
  */
 public class SimPlayer extends ServerPlayer {
 
+    /**
+     * {@code PlayerList.playersByUUID}, the map {@code Bukkit.getPlayer(UUID)} resolves through.
+     *
+     * <p>Reflective because it is the one of {@code PlayerList}'s two player structures that is
+     * private -- {@code players}, the list behind {@code Bukkit.getOnlinePlayers()}, is public and is
+     * deliberately <em>not</em> touched. Resolved once at class load so a sweep does not pay a
+     * reflective lookup per combatant, and eagerly enough that a mapping change breaks the plugin
+     * loading rather than the first duel.
+     */
+    private static final Field PLAYERS_BY_UUID = playersByUuidField();
+
     /** The dead-end channel, kept only so {@link #queuedPacketCount()} can report on it. */
     private EmbeddedChannel channel;
+
+    /** Whether this combatant is currently in {@code playersByUUID}, so the removal is idempotent. */
+    private boolean registeredForLookup;
 
     private SimPlayer(MinecraftServer server, ServerLevel level, GameProfile profile) {
         super(server, level, profile, ClientInformation.createDefault());
@@ -120,6 +157,101 @@ public class SimPlayer extends ServerPlayer {
     /** The Bukkit view, which is what every BetterPvP manager and listener actually works with. */
     public Player asBukkit() {
         return getBukkitEntity();
+    }
+
+    /**
+     * Makes {@code Bukkit.getPlayer(uuid)} resolve to this combatant, without making
+     * {@code Bukkit.getOnlinePlayers()} contain it.
+     *
+     * <p>See the class comment for why the two are separable and why only the first is wanted.
+     *
+     * <p>Called per <em>duel</em> rather than once per resident, and paired with
+     * {@link #unregisterForLookup()} at teardown. A resident between duels needs no resolvability, and
+     * three things get better for not having it: the phase 2 isolation holds for the whole idle
+     * period, {@code ClientManager.unload} can actually drop the ephemeral client (it refuses while
+     * {@code Bukkit.getPlayer} resolves), and {@code EnergyService.tick} discards the energy entry so
+     * the next duel opens on a full bar instead of inheriting the last one's remainder.
+     */
+    public void registerForLookup() {
+        if (registeredForLookup) {
+            return;
+        }
+        playersByUuid().put(getUUID(), this);
+        registeredForLookup = true;
+    }
+
+    /**
+     * Drops the lookup entry.
+     *
+     * <p>Not merely tidy. {@code EnergyService.tick}, {@code SkillListener.processActiveToggleSkills}
+     * and every skill that resolves its holders through {@code Bukkit.getPlayer} treat a resolvable
+     * UUID as a live player to keep working on, and they run on a global sweep rather than per duel.
+     * A combatant left in the map between duels is therefore an entry those loops keep visiting, on a
+     * player that is not fighting -- and for a discarded resident, on an entity no longer in any level.
+     */
+    public void unregisterForLookup() {
+        if (!registeredForLookup) {
+            return;
+        }
+        playersByUuid().remove(getUUID(), this);
+        registeredForLookup = false;
+    }
+
+    /**
+     * Brings a combatant that actually died back to a fightable state, in place.
+     *
+     * <p>Phase 3 stopped intercepting lethal blows, so the loser of a duel is a genuinely dead
+     * {@code ServerPlayer}. Two things follow, and both are why this exists rather than a respawn:
+     * <ul>
+     *   <li>{@code LivingEntity.tickDeath} removes a dead entity from the level 20 ticks after the
+     *       kill, so a corpse left alone stops being a resident at all -- which would silently return
+     *       the pool to spawning a fresh pair per duel and give back the 43.8% of a profile that
+     *       residency bought.</li>
+     *   <li>{@code PlayerList.respawn} is the other option and is worse on every count: it is the
+     *       client-driven path, it fires {@code PlayerRespawnEvent}, and it constructs a
+     *       <em>new</em> {@code ServerPlayer} -- a new entity is exactly what a resident is not.</li>
+     * </ul>
+     *
+     * <p>So the fields vanilla sets on death are unset directly. That is a narrow, sim-only
+     * liberty: the alternative is a per-duel respawn whose cost and side effects are both larger
+     * than the death being undone. Health is only lifted off zero here; the duel's real starting
+     * health is set by {@code SimCombatant.spawn} once role and armour are equipped.
+     *
+     * @return true if the combatant had died and was revived
+     */
+    public boolean reviveIfDead() {
+        if (!isDeadOrDying() && !isRemoved()) {
+            return false;
+        }
+        // A corpse that already passed the 20-tick window is gone from the level and cannot be
+        // revived; the caller replaces the slot's residents instead.
+        if (isRemoved()) {
+            return false;
+        }
+        dead = false;
+        deathTime = 0;
+        setHealth(getMaxHealth());
+        return true;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static java.util.Map<UUID, ServerPlayer> playersByUuid() {
+        try {
+            return (java.util.Map<UUID, ServerPlayer>) PLAYERS_BY_UUID.get(MinecraftServer.getServer().getPlayerList());
+        } catch (IllegalAccessException e) {
+            throw new IllegalStateException("PlayerList.playersByUUID became inaccessible", e);
+        }
+    }
+
+    private static Field playersByUuidField() {
+        try {
+            final Field field = net.minecraft.server.players.PlayerList.class.getDeclaredField("playersByUUID");
+            field.setAccessible(true);
+            return field;
+        } catch (NoSuchFieldException e) {
+            throw new IllegalStateException("PlayerList.playersByUUID is gone; simulation combatants"
+                    + " cannot be made resolvable by Bukkit.getPlayer, which every active skill needs", e);
+        }
     }
 
     /**
@@ -207,8 +339,12 @@ public class SimPlayer extends ServerPlayer {
      *
      * <p>{@code DISCARDED} rather than {@code KILLED}: a kill would run the death path and emit a
      * {@code PlayerDeathEvent}, which is a persistence trigger. Teardown must be silent.
+     *
+     * <p>The lookup entry goes first, so no global sweep can resolve a UUID to an entity that is
+     * already out of the level.
      */
     public void despawn() {
+        unregisterForLookup();
         remove(Entity.RemovalReason.DISCARDED);
     }
 }

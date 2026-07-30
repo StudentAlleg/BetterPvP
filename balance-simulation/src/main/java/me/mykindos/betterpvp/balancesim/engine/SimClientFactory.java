@@ -42,12 +42,15 @@ import java.util.UUID;
  *   <li>No {@code save} call is made anywhere here, so no row appears in {@code clients} or
  *       {@code gamers}. {@code ClientSQLLayer.create} would have written one; that is precisely
  *       why the client is built directly instead of asked for.</li>
- *   <li>{@code Client.isLoaded()} tests {@code Bukkit.getPlayer(uuid)}, and a fake player is not
- *       in the player list ({@link SimPlayer}), so it reports false. That is desirable, not a
- *       defect: {@code ClientManager.getOnline()} filters on it, so simulated clients are
- *       invisible to every "for each online client" sweep on the server. It is <em>not</em>
- *       sufficient on its own, though -- the periodic property and stat flushes iterate the
- *       loaded set rather than the online one, which is what {@link SimClient} closes off.</li>
+ *   <li>A simulated client must never report as loaded: {@code ClientManager.getOnline()} filters on
+ *       it, so that is what keeps simulated clients out of every "for each online client" sweep on the
+ *       server. Phase 2 got this for free, because the inherited {@code Client.isLoaded()} asks
+ *       {@code Bukkit.getPlayer(uuid)} and a fake player was in neither of {@code PlayerList}'s player
+ *       structures. Phase 3 put a fighting combatant into the lookup map so that active skills can
+ *       resolve their holders ({@link SimPlayer}), so {@link SimClient} now overrides
+ *       {@code isLoaded()} to false outright. Either way it was never sufficient on its own -- the
+ *       periodic property and stat flushes iterate the loaded set rather than the online one, which is
+ *       the other thing {@link SimClient} closes off.</li>
  * </ul>
  */
 @Singleton
@@ -157,9 +160,11 @@ public class SimClientFactory {
     /**
      * Drops a combatant's client and builds at teardown.
      *
-     * <p>{@code ClientManager.unload} refuses while {@code Bukkit.getPlayer(uuid)} is non-null,
-     * which never applies to a fake player, so it is safe here -- but it is called only after the
-     * entity is despawned so the ordering matches a real logout.
+     * <p>{@code ClientManager.unload} refuses while {@code Bukkit.getPlayer(uuid)} is non-null, and
+     * since phase 3 a <em>fighting</em> combatant is resolvable that way ({@link SimPlayer}). So this
+     * is only correct after {@code SimCombatant.despawn} has dropped the lookup registration, which is
+     * the order it calls them in; reverse them and the client silently survives in the manager's cache
+     * until the next duel on that slot overwrites it.
      */
     public void destroy(Client client) {
         buildManager.removeObject(client.getUuid());

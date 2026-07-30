@@ -571,6 +571,10 @@ public class SoulHarvestAbility extends AbstractInteraction implements Listener,
         // Show to everyone who can see the soul
         for (UUID playerId : playerData.keySet()) {
             final Player player = Bukkit.getPlayer(playerId);
+            if (player == null || !player.isOnline()) {
+                // Tracked data outlives the player -- see getNearbyActive
+                continue;
+            }
             if (!scythe.isHoldingWeapon(player)) {
                 continue;
             }

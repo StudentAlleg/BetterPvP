@@ -4,6 +4,7 @@ import com.google.inject.Inject;
 import com.google.inject.Singleton;
 import lombok.CustomLog;
 import me.mykindos.betterpvp.balancesim.SimulationGate;
+import me.mykindos.betterpvp.balancesim.catalog.SimScenario;
 import me.mykindos.betterpvp.balancesim.catalog.SimScope;
 import me.mykindos.betterpvp.balancesim.engine.DuelOrchestrator;
 import me.mykindos.betterpvp.balancesim.engine.SimProgress;
@@ -93,9 +94,25 @@ public class SimulateCommand extends Command implements IConsoleCommand {
             scope = SimScope.parse(gate.getScope()).orElse(SimScope.MELEE);
         }
 
+        // An unrecognised scenario is refused for the same reason an unrecognised scope is: the two
+        // measure different things, so quietly running the default would produce a finished sweep whose
+        // rows answer a question nobody asked.
+        final SimScenario scenario;
+        if (args.length > 1) {
+            final Optional<SimScenario> parsed = SimScenario.parse(args[1]);
+            if (parsed.isEmpty()) {
+                UtilMessage.message(sender, "core.prefix.command", "balancesim.command.simulate.badScenario",
+                        Component.text(args[1]), Component.text(scenarioNames()));
+                return;
+            }
+            scenario = parsed.get();
+        } else {
+            scenario = SimScenario.parse(gate.getScenario()).orElse(SimScenario.ONE_WAY);
+        }
+
         UtilMessage.message(sender, "core.prefix.command", "balancesim.command.simulate.started",
-                Component.text(scope.name()));
-        orchestrator.run(SimulationTrigger.COMMAND, scope, progress -> report(sender, progress))
+                Component.text(scope.name()), Component.text(scenario.name()));
+        orchestrator.run(SimulationTrigger.COMMAND, scope, scenario, progress -> report(sender, progress))
                 .thenAccept(summary -> report(sender, summary))
                 .exceptionally(ex -> {
                     log.error("Simulation run failed", ex).submit();
@@ -173,9 +190,9 @@ public class SimulateCommand extends Command implements IConsoleCommand {
 
     /**
      * Tab completion offers the tiers, so the cost difference between them is discoverable rather
-     * than something an admin has to read the source to find, plus {@code stop} while a sweep is
-     * running -- the moment you need it is the moment a long run is underway, which is exactly when
-     * looking it up is least convenient.
+     * than something an admin has to read the source to find, then the scenarios, then {@code stop}
+     * while a sweep is running -- the moment you need it is the moment a long run is underway, which is
+     * exactly when looking it up is least convenient.
      */
     @Override
     public List<String> processTabComplete(CommandSender sender, String[] args) {
@@ -190,10 +207,21 @@ public class SimulateCommand extends Command implements IConsoleCommand {
             }
             return options;
         }
+        if (args.length == 2) {
+            final String prefix = args[1].toUpperCase(Locale.ROOT);
+            return Arrays.stream(SimScenario.values())
+                    .map(Enum::name)
+                    .filter(name -> name.startsWith(prefix))
+                    .collect(Collectors.toList());
+        }
         return super.processTabComplete(sender, args);
     }
 
     private static String scopeNames() {
         return Arrays.stream(SimScope.values()).map(Enum::name).collect(Collectors.joining(", "));
+    }
+
+    private static String scenarioNames() {
+        return Arrays.stream(SimScenario.values()).map(Enum::name).collect(Collectors.joining(", "));
     }
 }

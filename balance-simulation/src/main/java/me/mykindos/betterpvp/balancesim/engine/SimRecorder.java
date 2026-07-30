@@ -5,14 +5,20 @@ import com.google.inject.Singleton;
 import lombok.CustomLog;
 import lombok.Getter;
 import me.mykindos.betterpvp.balancesim.world.SimWorldManager;
+import me.mykindos.betterpvp.champions.champions.skills.types.EnergySkill;
+import me.mykindos.betterpvp.core.Core;
 import me.mykindos.betterpvp.core.combat.events.DamageEvent;
+import me.mykindos.betterpvp.core.components.champions.events.PlayerUseSkillEvent;
+import me.mykindos.betterpvp.core.cooldowns.CooldownManager;
 import me.mykindos.betterpvp.core.listener.BPvPListener;
 import org.bukkit.Bukkit;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.LivingEntity;
+import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
+import org.bukkit.plugin.java.JavaPlugin;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayList;
@@ -41,12 +47,23 @@ public class SimRecorder implements Listener {
 
     private final SimWorldManager worldManager;
 
+    /**
+     * Core's cooldown manager, used only to tell an energy refusal from a cooldown refusal.
+     *
+     * <p>From Core's injector rather than injected, for the reason {@code SimStatePurge} documents at
+     * length: this plugin's injector is a sibling of Champions' under Core, none of Core's singletons
+     * is bound in it, and a just-in-time binding here would hand back a second, empty
+     * {@code CooldownManager} whose answers are unrelated to the one the skill listeners use.
+     */
+    private final CooldownManager cooldownManager;
+
     /** Every participant UUID of an in-flight duel, mapped to that duel's recording. */
     private final Map<UUID, Recording> active = new ConcurrentHashMap<>();
 
     @Inject
     public SimRecorder(SimWorldManager worldManager) {
         this.worldManager = worldManager;
+        this.cooldownManager = JavaPlugin.getPlugin(Core.class).getInjector().getInstance(CooldownManager.class);
     }
 
     /**
@@ -54,8 +71,10 @@ public class SimRecorder implements Listener {
      * has both sides swinging, and the orchestrator later reads out whichever direction the
      * {@code sim_result} row is for.
      *
-     * @param combatantA one combatant's UUID
-     * @param combatantB the other combatant's UUID
+     * @param combatantA the <em>attacker</em>'s UUID. The order matters: a {@code sim_result} row
+     *                   describes the attacker's build, so {@code energy_limited} is only set for
+     *                   refusals on this side
+     * @param combatantB the defender's UUID
      * @return the recording to hand back to {@link #endDuel} once the duel resolves
      */
     public Recording startDuel(UUID combatantA, UUID combatantB) {
@@ -102,8 +121,9 @@ public class SimRecorder implements Listener {
                 event.getModifiedDamage(),
                 List.of(event.getReasons())));
 
-        // Same arithmetic DamageEventFinalizer.applyFinalDamage is about to do. It runs after the
-        // event returns, so this is the last point at which the kill can be stopped.
+        // Same arithmetic DamageEventFinalizer.applyFinalDamage is about to do, run one step ahead of
+        // it so the kill is timestamped at the blow that caused it rather than at whichever sweep tick
+        // noticed the corpse. The blow is NOT stopped: the entity goes on to die for real.
         if (!event.isDamageeLiving()) {
             return;
         }
@@ -112,27 +132,61 @@ public class SimRecorder implements Listener {
             return;
         }
 
-        // A fake player must never actually die. PlayerDeathEvent has upwards of forty listeners
-        // across the plugins, and they reasonably assume a real logged-in player: Gamer.getPlayer()
-        // resolves through Bukkit.getPlayer, which returns null for a combatant that was never
-        // added to the PlayerList, and BuildManager has no GamerBuilds for a UUID that never
-        // logged in. Guarding each listener would mean scattering simulation awareness across the
-        // codebase, which is exactly what this project is not allowed to do -- so the kill is
-        // stopped here instead, in the simulator.
+        // Phase 2 cancelled the event here, so that a fake player never actually died. That bought
+        // isolation from PlayerDeathEvent's ~47 listeners and cost every on-death mechanic in the
+        // game -- SoulHarvest, BloodBarrier, Riposte, SeismicSlam, MagneticAxe -- all of which are
+        // actives, and so all of which phase 3's rotation policy can now cast. A build whose value is
+        // partly realised on kill would be under-measured with nothing on the row to say so, which is
+        // the failure mode this project exists to remove.
         //
-        // Cancelling makes DamageEventProcessor return before the finalizer, so no health is
-        // applied. The hit is already recorded above at its true value, and the duel is resolved
-        // from that record rather than from the entity's health.
+        // So the death is allowed, and the surface is closed where it should be. Only core and
+        // champions are on a dev simulation server's classpath (the `devsimulation` output bucket), and
+        // of their death handlers exactly three touch anything durable: RoleStatsListener writes
+        // role kill/death data, UUIDController writes an item log, and core's DeathListener fans a
+        // death message out to every online player. All three now check SimulatedEntity, at the
+        // chokepoint rather than scattered through the mechanics. Everything else either writes through
+        // SimClient (which records nothing) or is a mechanic whose firing is the point.
         //
-        // TODO(phase 3): remove this. Suppressing the death also suppresses every on-death
-        // mechanic. That costs nothing yet: the ones that produce value -- SoulHarvest,
-        // BloodBarrier, Riposte -- are all *actives*, and nothing synthesises a skill input until
-        // phase 3, while every passive with a death handler uses it purely to reset state that a
-        // duel ending at the lethal blow cannot observe anyway. It becomes silently wrong the
-        // moment an active is cast. See docs/balance-simulation/DESIGN.md open question 8 for the
-        // 47-listener surface that has to be audited first.
+        // The recording still owns the duel's notion of death, because it is the only one that knows
+        // which tick the lethal blow landed on; SimDeathListener keeps the death itself silent and
+        // litter-free, and SimCombatantPool revives the loser in place.
         recording.markKilled(damagee.getUniqueId(), Bukkit.getCurrentTick() - recording.startTick);
-        event.setCancelled(true);
+    }
+
+    /**
+     * Notes when a combatant's rotation stalled on energy rather than on a cooldown.
+     *
+     * <p>{@code MONITOR} priority, so the verdict is whatever the real gates decided.
+     * {@code SkillListener.onUseSkill} runs at {@code HIGH} and cancels for three separable reasons:
+     * the skill is on cooldown, the skill costs energy the player does not have, or
+     * {@code canUse} refused. Only the first two apply to a combatant fighting in an empty void
+     * world, and they are distinguishable after the fact -- a cooldown refusal leaves the cooldown
+     * running, an energy refusal does not consume one. So a cancelled use of an energy skill with no
+     * cooldown outstanding is an energy refusal.
+     *
+     * <p>That is an inference rather than a reading, and it is a deliberate one: the alternative is
+     * for the simulator to compare {@code EnergyService.getEnergy} against
+     * {@code EnergySkill.getEnergy} itself, which is re-deriving the rule
+     * {@code EnergyService.use} owns -- the class of drift this project exists to remove. The
+     * inference is confined to a boolean diagnostic column; every figure that carries a number is
+     * still measured.
+     */
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onUseSkill(PlayerUseSkillEvent event) {
+        if (!event.isCancelled() || !(event.getSkill() instanceof EnergySkill)) {
+            return;
+        }
+        final Player player = event.getPlayer();
+        final Recording recording = active.get(player.getUniqueId());
+        if (recording == null || cooldownManager.hasCooldown(player, event.getSkill().getName())) {
+            return;
+        }
+        // The attacker only. sim_result describes the attacker's build, so under MUTUAL a defender
+        // running dry would otherwise set a column that claims something about the wrong side.
+        if (!recording.getCombatantA().equals(player.getUniqueId())) {
+            return;
+        }
+        recording.markEnergyLimited();
     }
 
     /**
@@ -169,15 +223,27 @@ public class SimRecorder implements Listener {
         private final List<HitRecord> hits = new ArrayList<>();
 
         /**
-         * Whoever took a blow that would have been lethal, or null while both are alive. This is
-         * the duel's notion of death -- the entity itself never dies, see
-         * {@link SimRecorder#onDamage}.
+         * Whoever took the lethal blow, or null while both are alive.
+         *
+         * <p>Set from the damage event rather than from {@code PlayerDeathEvent}, even though the death
+         * is real since phase 3: only the damage event knows which tick the blow landed on, and a TTK
+         * read off the death would be quantised to whichever tick the sweep loop next looked.
          */
         @Nullable
         private volatile UUID killed;
 
         /** Ticks from duel start to the lethal blow. Only meaningful once {@link #killed} is set. */
         private volatile int killedElapsedTicks;
+
+        /**
+         * Whether a skill this duel was refused for want of energy rather than for want of a cooldown.
+         *
+         * <p>This is what {@code sim_result.energy_limited} reports, and it is observed rather than
+         * modelled -- see {@link SimRecorder#onUseSkill}. It matters because an energy-limited rotation
+         * and a cooldown-limited one respond to opposite balance levers, and the DPS figure alone
+         * cannot tell them apart.
+         */
+        private volatile boolean energyLimited;
 
         private Recording(UUID combatantA, UUID combatantB) {
             this.combatantA = combatantA;
@@ -186,6 +252,10 @@ public class SimRecorder implements Listener {
 
         private synchronized void record(HitRecord hit) {
             hits.add(hit);
+        }
+
+        private void markEnergyLimited() {
+            energyLimited = true;
         }
 
         private void markKilled(UUID victim, int elapsedTicks) {

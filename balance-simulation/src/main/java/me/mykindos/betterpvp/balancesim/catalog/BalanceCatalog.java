@@ -133,10 +133,12 @@ public class BalanceCatalog {
     // Skill axis
     // -------------------------------------------------------------------------
 
-    /** A bare role on each weapon of the axis. */
+    /** A bare role on each weapon of the axis, and each rune set of the axis. */
     private void enumerateSkilless(Role role, SimScope scope, List<SimBuildSpec> out) {
         for (WeaponOption weapon : weaponsFor(scope, null)) {
-            out.add(build(role, weapon, List.of()));
+            for (List<String> runes : runesFor(scope, weapon)) {
+                out.add(build(role, weapon, runes, List.of()));
+            }
         }
     }
 
@@ -157,7 +159,9 @@ public class BalanceCatalog {
                 for (int level = 1; level <= maxLevel; level++) {
                     final List<SimSkillAllocation> allocation = List.of(allocation(skill, level));
                     for (WeaponOption weapon : weaponsFor(scope, entry.getKey())) {
-                        out.add(build(role, weapon, allocation));
+                        for (List<String> runes : runesFor(scope, weapon)) {
+                            out.add(build(role, weapon, runes, allocation));
+                        }
                     }
                 }
                 checkCap(out.size(), maxBuilds, scope);
@@ -196,7 +200,9 @@ public class BalanceCatalog {
             if (!chosen.isEmpty()) {
                 final SkillType boostable = boostableSlot(chosen);
                 for (WeaponOption weapon : weaponsFor(scope, boostable)) {
-                    out.add(build(role, weapon, List.copyOf(chosen)));
+                    for (List<String> runes : runesFor(scope, weapon)) {
+                        out.add(build(role, weapon, runes, List.copyOf(chosen)));
+                    }
                 }
                 checkCap(out.size(), maxBuilds, scope);
             }
@@ -322,10 +328,44 @@ public class BalanceCatalog {
     }
 
     // -------------------------------------------------------------------------
+    // Rune axis
+    // -------------------------------------------------------------------------
+
+    /**
+     * The rune sets a build on {@code weapon} is measured with.
+     *
+     * <p>{@code ONE_AT_A_TIME} yields an empty set first and then one set per applicable rune, so the
+     * baseline the rune's contribution is read against is a row of the same sweep rather than a figure
+     * carried over from a {@code MELEE} run at a different {@code config_hash}.
+     *
+     * <p>Which runes a weapon accepts is the rune's own {@code canApply}, resolved in
+     * {@link SimEquipment}. A weapon that accepts none yields only the baseline, which is why a
+     * {@code RUNES} sweep of a role whose default weapon has no compatible runes is a small sweep rather
+     * than an error.
+     */
+    private List<List<String>> runesFor(SimScope scope, WeaponOption weapon) {
+        if (scope.getRuneAxis() == SimScope.RuneAxis.NONE) {
+            return NO_RUNES;
+        }
+        final List<List<String>> sets = new ArrayList<>();
+        sets.add(List.of());
+        for (SimEquipment.RuneOption rune : equipment.weaponRunes(weapon.key())) {
+            sets.add(List.of(rune.key()));
+        }
+        return List.copyOf(sets);
+    }
+
+    /** The single "no runes at all" rune set, hoisted so the common case allocates nothing. */
+    private static final List<List<String>> NO_RUNES = List.of(List.of());
+
+    // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------
 
-    private SimBuildSpec build(Role role, WeaponOption weapon, List<SimSkillAllocation> skills) {
+    private SimBuildSpec build(Role role,
+                               WeaponOption weapon,
+                               List<String> runeKeys,
+                               List<SimSkillAllocation> skills) {
         int points = 0;
         for (SimSkillAllocation allocation : skills) {
             points += allocation.allocatedLevel();
@@ -335,11 +375,11 @@ public class BalanceCatalog {
         return new SimBuildSpec(role.name(),
                 weapon.key(),
                 SimEquipment.NO_ARMOR,
-                List.of(),
+                runeKeys,
                 skills,
                 points,
                 weapon.booster(),
-                fingerprint(role, weapon, skills));
+                fingerprint(role, weapon, runeKeys, skills));
     }
 
     /**
@@ -371,9 +411,16 @@ public class BalanceCatalog {
      * patch-diff dashboard to work at all. Only the <em>allocated</em> level is hashed -- the
      * effective level is an outcome of the run, not part of what a player configured -- but the
      * weapon key is, which is what keeps a booster run distinguishable from a plain one.
+     *
+     * <p>Runes are hashed sorted, for the same reason skills are: a socket order is not part of a
+     * build's identity, and two rows that differ only in it must be the same build across runs.
      */
-    private static String fingerprint(Role role, WeaponOption weapon, List<SimSkillAllocation> skills) {
+    private static String fingerprint(Role role,
+                                      WeaponOption weapon,
+                                      List<String> runeKeys,
+                                      List<SimSkillAllocation> skills) {
         final StringBuilder canonical = new StringBuilder(role.name()).append('|').append(weapon.key());
+        runeKeys.stream().sorted().forEach(rune -> canonical.append('|').append(rune));
         // Sorted so two builds that differ only in enumeration order hash identically.
         skills.stream()
                 .sorted(Comparator.comparing(SimSkillAllocation::slot).thenComparing(SimSkillAllocation::skillName))

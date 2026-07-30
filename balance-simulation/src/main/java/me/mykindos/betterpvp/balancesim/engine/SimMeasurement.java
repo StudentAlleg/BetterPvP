@@ -57,24 +57,37 @@ public final class SimMeasurement {
      * @param dmgPerHit    mean final damage across this duel's landed hits
      * @param dpsSustained damage over the engagement window
      * @param dpsBurst     damage over the best one-second window
-     * @param ttkTicks     server ticks from first landed hit to the lethal one
-     * @param hits         landed hits
-     * @param killed       whether the defender took a blow that would have been lethal
+     * @param ttkTicks      server ticks from first landed hit to the lethal one
+     * @param hits          landed hits
+     * @param killed        whether the defender took the lethal blow
+     * @param attackerDied  whether the <em>attacker</em> died instead, which only a {@code MUTUAL}
+     *                      duel can produce. Recorded rather than inferred from {@code !killed},
+     *                      because a duel can also simply time out with both alive.
+     * @param energyLimited whether a skill was refused for want of energy during this duel
      */
     public record Sample(@Nullable Double dmgPerHit,
                          @Nullable Double dpsSustained,
                          @Nullable Double dpsBurst,
                          @Nullable Integer ttkTicks,
                          int hits,
-                         boolean killed) {
+                         boolean killed,
+                         boolean attackerDied,
+                         boolean energyLimited) {
     }
 
-    /** The reduced figures, ready to become a {@code sim_result} row. */
+    /**
+     * The reduced figures, ready to become a {@code sim_result} row.
+     *
+     * @param energyLimited true when any iteration of this matchup had a skill refused for energy.
+     *                      Any rather than all: a rotation that runs dry in some iterations and not
+     *                      others is energy-limited, and the fraction is not what the column claims.
+     */
     public record Aggregate(@Nullable Double dmgPerHit,
                             @Nullable Double dpsSustained,
                             @Nullable Double dpsBurst,
                             @Nullable Double ttkSeconds,
                             @Nullable Double hitsToKill,
+                            boolean energyLimited,
                             String extrasJson) {
     }
 
@@ -107,11 +120,21 @@ public final class SimMeasurement {
         final Double hitsToKill = killing.isEmpty() ? null
                 : killing.stream().mapToInt(Sample::hits).average().orElseThrow();
 
+        final long attackerDeaths = samples.stream().filter(Sample::attackerDied).count();
+        final boolean energyLimited = samples.stream().anyMatch(Sample::energyLimited);
+
         final Map<String, Object> extras = new LinkedHashMap<>();
         extras.put("iterations", samples.size());
         extras.put("planned_iterations", expectedIterations);
         extras.put("kills", killing.size());
         extras.put("kill_rate", samples.isEmpty() ? 0.0 : (double) killing.size() / samples.size());
+        // Under MUTUAL these two are the honest reading of the matchup: kill_rate is how often the
+        // attacker won the race and attacker_deaths is how often it lost, and the pair does not have to
+        // sum to the iteration count because a duel can also time out with both alive. Under ONE_WAY
+        // attacker_deaths is always zero, which is what makes the two scenarios distinguishable on a row
+        // as well as on the run.
+        extras.put("attacker_deaths", attackerDeaths);
+        extras.put("energy_limited_iterations", samples.stream().filter(Sample::energyLimited).count());
         // The tick count rides in extras so the unit the sim actually measured in is recoverable
         // from the row: ttk_s is a rendering of it and is always a multiple of 0.05.
         extras.put("ttk_ticks_mean", ttkTicks);
@@ -127,6 +150,7 @@ public final class SimMeasurement {
                 dpsBurst,
                 ttkTicks == null ? null : ticksToSeconds(ttkTicks),
                 hitsToKill,
+                energyLimited,
                 toJson(extras));
     }
 

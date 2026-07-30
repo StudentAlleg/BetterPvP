@@ -9,6 +9,8 @@ import me.mykindos.betterpvp.balancesim.catalog.SimSkillAllocation;
 import me.mykindos.betterpvp.champions.champions.roles.RoleManager;
 import me.mykindos.betterpvp.champions.champions.skills.ChampionsSkillManager;
 import me.mykindos.betterpvp.champions.champions.skills.Skill;
+import me.mykindos.betterpvp.champions.champions.skills.types.ActiveToggleSkill;
+import me.mykindos.betterpvp.champions.champions.skills.types.ChannelSkill;
 import me.mykindos.betterpvp.core.client.Client;
 import me.mykindos.betterpvp.core.components.champions.Role;
 import me.mykindos.betterpvp.core.item.armor.ArmorEquipEvent;
@@ -77,6 +79,15 @@ public class SimCombatant {
     private List<SimSkillAllocation> measuredSkills;
 
     /**
+     * The build's skills paired with the input each one needs, plus the rotation's per-skill timing.
+     *
+     * <p>Resolved once at spawn rather than per tick: classifying an archetype walks the skill's type
+     * hierarchy and resolving the name walks the manager's map, and the rotation runs on every duel on
+     * every tick. Empty until spawned, so a rotation on an unspawned combatant does nothing.
+     */
+    private List<DrivenSkill> drivenSkills = List.of();
+
+    /**
      * @param handle the pooled entity to fight this duel through. Its identity is the combatant's:
      *               a resident keeps one UUID for the life of the sweep, so log lines and recorder
      *               rows for successive duels on the same arena share it. The duel's own identity
@@ -124,6 +135,12 @@ public class SimCombatant {
         // it is added to the level, which is strictly earlier than this used to happen. All that is
         // left is to undo the last duel's marks on it.
         handle.prepareForDuel(at);
+        // Makes Bukkit.getPlayer resolve the combatant for the length of the duel, which is what every
+        // skill that holds its targets as UUIDs needs in order to keep working on one -- and what makes
+        // the energy gate bind. Before the client and the role, because the RoleChangeEvent listeners
+        // are among the code that resolves a player that way. See SimPlayer for why this is the map
+        // and not the player list.
+        handle.registerForLookup();
         this.player = handle.asBukkit();
 
         // Registers the client *and* its builds, populated from the spec. equipRole below fires
@@ -145,6 +162,36 @@ public class SimCombatant {
         player.setHealth(UtilPlayer.getMaxHealth(player));
 
         this.measuredSkills = readBackEffectiveLevels(context);
+        this.drivenSkills = resolveDrivenSkills(context);
+    }
+
+    /**
+     * Pairs each of the build's skills with the input archetype that activates it.
+     *
+     * <p>Resolved after the weapon is equipped, because {@link ActivationArchetype} is a property of the
+     * skill class but whether the skill can fire at all depends on what is held -- and the rotation asks
+     * that per tick through the real {@code SkillWeapons} accessor rather than caching it, since a
+     * booster swap mid-sweep would invalidate a cached answer.
+     *
+     * <p>A skill the catalog named but the manager does not know is skipped with a warning rather than
+     * throwing: the sweep's other axes are still measurable, and {@code SimClientFactory} would already
+     * have failed loudly on the same name when it built the build.
+     */
+    private List<DrivenSkill> resolveDrivenSkills(SimContext context) {
+        if (build.skills().isEmpty()) {
+            return List.of();
+        }
+        final List<DrivenSkill> driven = new ArrayList<>(build.skills().size());
+        for (SimSkillAllocation allocation : build.skills()) {
+            final Skill skill = context.skillManager().getObject(allocation.skillName()).orElse(null);
+            if (skill == null) {
+                log.warn("Catalog named skill {} which is not registered; combatant {} will not drive it",
+                        allocation.skillName(), name).submit();
+                continue;
+            }
+            driven.add(new DrivenSkill(skill, ActivationArchetype.of(skill)));
+        }
+        return List.copyOf(driven);
     }
 
     /**
@@ -195,7 +242,9 @@ public class SimCombatant {
         context.roleManager().equipWeapons(player);
         final PlayerInventory inventory = player.getInventory();
         final ItemStack previous = inventory.getItemInMainHand();
-        final ItemStack weapon = context.equipment().weaponStack(build.weaponKey());
+        // With the build's runes socketed in. The rune handlers read the container off the held stack, so
+        // this is the only place a rune becomes real -- there is no separate "apply rune" step.
+        final ItemStack weapon = context.equipment().weaponStack(build.weaponKey(), build.runeKeys());
         inventory.setItemInMainHand(weapon);
         UtilServer.callEvent(new PlayerInventorySlotChangeEvent(player,
                 HOTBAR_MENU_SLOT_OFFSET + inventory.getHeldItemSlot(), previous, weapon));
@@ -273,11 +322,18 @@ public class SimCombatant {
      */
     public void despawn(SimContext context) {
         if (player != null) {
+            // Release any held input first, so the channel that is about to be cancelled is not also
+            // left with the server believing the hand is still raised.
+            releaseHeldInput(context);
             // Before the role goes: an invalidate may read the player's level or energy max, both of
             // which resolve through the role and build that cleanUp and destroy are about to drop.
             invalidateSkills(context);
             context.roleManager().cleanUp(player);
         }
+        // Before the client goes: ClientManager.unload refuses while Bukkit.getPlayer(uuid) resolves,
+        // so with the combatant still registered the ephemeral client would stay in the cache until the
+        // next duel on this slot happened to replace it.
+        handle.unregisterForLookup();
         if (client != null) {
             context.clientFactory().destroy(client);
             client = null;
@@ -287,6 +343,21 @@ public class SimCombatant {
         // the whole point of a resident is that it is never removed from the level.
         context.statePurge().purge(uuid, player);
         player = null;
+        drivenSkills = List.of();
+    }
+
+    /**
+     * Stops holding right click, if the rotation left this combatant mid-channel.
+     *
+     * <p>A duel can end on any tick, including one where a channel is halfway through its hold budget.
+     * The held item is entity state on a resident, so leaving it set would carry a raised hand into the
+     * next duel on this platform -- where {@code SimInputs.beginHold} would decline to start a hold
+     * because one is apparently already running.
+     */
+    private void releaseHeldInput(SimContext context) {
+        if (heldSkill() != null) {
+            context.inputs().endHold(player);
+        }
     }
 
     /**
@@ -324,10 +395,39 @@ public class SimCombatant {
         }
         for (Skill skill : context.skillManager().getObjects().values()) {
             try {
+                cancelIfRunning(skill);
                 skill.invalidatePlayer(player, client.getGamer());
             } catch (Exception e) {
                 log.warn("Skill {} failed to invalidate sim combatant {}", skill.getName(), name, e).submit();
             }
+        }
+    }
+
+    /**
+     * Stops a channel, charge or active toggle that is still running on this combatant.
+     *
+     * <p>{@code invalidatePlayer} is not enough for these. Each keeps its holders in its own set and
+     * clears them from {@code PlayerDeathEvent}, {@code PlayerQuitEvent} or a state-change handler --
+     * none of which a combatant that survives its duel produces. Under pooling that residue is
+     * inherited: the next build on this platform would open its duel already channelling a skill it does
+     * not carry, and the row would attribute that damage to the wrong build.
+     *
+     * <p>It is done through each type's own public {@code cancel}, so the skill runs its own
+     * teardown -- {@code onCancel}, the effects it applied, the charge data it accumulated -- rather
+     * than having its set reached into. That is the same call the death and quit handlers make.
+     *
+     * <p>Every registered skill is offered, not only the build's, for the reason the caller documents:
+     * state under a combatant's identity is not always held by a skill that combatant carries. The
+     * channel cancel is unconditional because {@code ChannelSkill} exposes no way to ask whether it is
+     * running -- which is safe, because cancelling reduces to a set removal plus {@code onCancel}, and
+     * the sole implementation of that hook returns immediately when the player has no data.
+     */
+    private void cancelIfRunning(Skill skill) {
+        if (skill instanceof ChannelSkill channel) {
+            // Covers ChargeSkill too, which overrides cancel to drop its charge data as well.
+            channel.cancel(player);
+        } else if (skill instanceof ActiveToggleSkill toggle && toggle.getActive().contains(uuid)) {
+            toggle.cancel(player);
         }
     }
 
@@ -357,6 +457,72 @@ public class SimCombatant {
     }
 
     /**
+     * One skill of the build, the input that activates it, and the rotation's timing for it.
+     *
+     * <p>Mutable and per combatant per duel, which is the whole reason it lives here rather than in
+     * {@link GreedyRotationPolicy}: the policy is a singleton shared by every duel in flight, so any
+     * state it kept would have to be a map keyed by combatant, and the natural owner of "when may this
+     * combatant next press this button" is the combatant.
+     */
+    @Getter
+    public static final class DrivenSkill {
+
+        private final Skill skill;
+        private final ActivationArchetype archetype;
+
+        /**
+         * Earliest tick the rotation may press this skill's button again.
+         *
+         * <p>An attempt is cheap but not free -- it dispatches a real event through the whole listener
+         * chain -- and pressing every tick on every combatant in a 128-duel sweep is tens of thousands of
+         * event dispatches a second for no extra information. The interval is a rate limit on
+         * <em>attempts</em>, not a model of the cooldown: whether anything happens is still the real
+         * gates' decision.
+         */
+        private long nextAttemptTick;
+
+        /** Tick the held input is released on, or {@code -1} when this skill is not being held. */
+        private long releaseHoldAtTick = -1;
+
+        private DrivenSkill(Skill skill, ActivationArchetype archetype) {
+            this.skill = skill;
+            this.archetype = archetype;
+        }
+
+        void attemptedAt(long tick, long retryIntervalTicks) {
+            this.nextAttemptTick = tick + retryIntervalTicks;
+        }
+
+        void holdUntil(long tick) {
+            this.releaseHoldAtTick = tick;
+        }
+
+        void released() {
+            this.releaseHoldAtTick = -1;
+        }
+
+        boolean isHolding() {
+            return releaseHoldAtTick >= 0;
+        }
+    }
+
+    /**
+     * The skill this combatant is currently holding right click for, or null.
+     *
+     * <p>At most one, because a combatant has one right hand -- which is the arbitration
+     * {@link GreedyRotationPolicy} needs and the reason it is asked here rather than tracked there.
+     */
+    @Nullable
+    public DrivenSkill heldSkill() {
+        for (DrivenSkill driven : drivenSkills) {
+            if (driven.isHolding()) {
+                return driven;
+            }
+        }
+        return null;
+    }
+
+    /**
      * The managers a combatant needs to materialise itself. Passed in rather than injected so
      * {@link SimCombatant} stays a plain object the orchestrator creates per duel.
      *
@@ -375,11 +541,13 @@ public class SimCombatant {
      * @param skillManager  resolves skill names and reads effective levels back
      * @param equipment     materialises weapons and armour from the live item registry
      * @param statePurge    drops the per-UUID state no {@code PlayerQuitEvent} will ever clear
+     * @param inputs        synthesises the real input events a rotation presses
      */
     public record SimContext(SimClientFactory clientFactory,
                              RoleManager roleManager,
                              ChampionsSkillManager skillManager,
                              SimEquipment equipment,
-                             SimStatePurge statePurge) {
+                             SimStatePurge statePurge,
+                             SimInputs inputs) {
     }
 }

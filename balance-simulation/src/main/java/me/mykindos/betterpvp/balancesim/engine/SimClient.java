@@ -47,6 +47,25 @@ public class SimClient extends Client {
     }
 
     /**
+     * Never loaded, whatever the player list says.
+     *
+     * <p>The inherited implementation answers {@code Bukkit.getPlayer(uuid) != null}, and phase 3
+     * made that true: a combatant is registered in {@code PlayerList.playersByUUID} so the skills
+     * that resolve their holders by UUID can find it ({@link SimPlayer}). That would have quietly
+     * put simulated clients back into {@code ClientManager.getOnline()}, which is the filter a
+     * dozen "for each online client" sweeps rely on -- chat channels, rank reporters, capacity
+     * reporting, the player list command.
+     *
+     * <p>So the two facts are separated here: the <em>entity</em> is resolvable, because the game's
+     * combat code needs it to be, and the <em>client</em> is not loaded, because it has no row and
+     * nothing that writes one should ever see it.
+     */
+    @Override
+    public boolean isLoaded() {
+        return false;
+    }
+
+    /**
      * Writes the property to memory only.
      *
      * <p>{@code putSilent} is the property map's own escape hatch -- the one

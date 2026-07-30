@@ -22,25 +22,50 @@ champions:
     # Which slice of the permutation space /simulate sweeps when given no argument.
     #   MELEE   - role x default weapon. The phase 1 baseline; cheapest.
     #   WEAPONS - role x every melee weapon, no skills to confound the weapon axis.
+    #   RUNES   - role x default weapon x one socketed rune at a time, plus a bare baseline.
     #   SKILLS  - one skill at a time over its level range, on plain and booster weapons.
     #   FULL    - every budget-feasible build. Expect hours; check the logged count first.
     # A running sweep can be stopped with "/simulate stop", which drains the duels in
     # flight and writes everything measured so far under status CANCELLED.
     scope: MELEE
+    # Whether a duel drives one side or both, when /simulate is given no second argument.
+    #   ONE_WAY - only the attacker acts. ttk_s is an unconditional "how long this build
+    #             needs to kill that target". The phase 1 and 2 measurement.
+    #   MUTUAL  - both sides swing and both rotations run; the duel ends when either dies.
+    #             Makes the attacker's own reactive passives and DefensiveSkills measurable
+    #             (Vengeance only ramps while its holder is being hit), at the cost that
+    #             ttk_s becomes "how long when it won" and extras.kill_rate carries the rest
+    #             of the answer. Never mixed within a run.
+    scenario: ONE_WAY
     # Refuse a scope that enumerates more builds than this rather than truncating it -- a
     # prefix of an enumeration is a biased sample and nothing on the row would say so.
     maxBuilds: 10000
     # Which skills may appear in an enumerated build. Skills occupy six independent slots,
     # so this is the lever with the most leverage on sweep size: FULL over every enabled
     # skill is ~60 million builds and cannot be enumerated at all.
-    #   OFFENSIVE_PASSIVES - passives declared OffensiveSkill. The only ones that can move
-    #                        a column on a row, since a duel measures one direction.
+    #   OFFENSIVE          - skills the engine can drive that declare themselves offensive.
+    #                        The default: a one-way row measures the attacker's damage, so
+    #                        nothing else can move a column on it.
+    #   EXERCISABLE        - every skill the engine has an input for. What a MUTUAL sweep of
+    #                        defensive builds wants, since a defensive skill does move the
+    #                        attacker's TTK once the defender fights back.
+    #   OFFENSIVE_PASSIVES - the phase 2 default. Melee plus offensive passives, no actives.
     #   PASSIVES           - every passive, including defensive/movement ones.
-    #   ALL                - no filter. Only meaningful once the engine activates skills;
-    #                        today a non-passive measures identically to an empty slot.
+    #   ALL                - no filter, including the bow archetypes this engine cannot
+    #                        drive. Those measure as an empty slot, so this is for sizing
+    #                        that gap rather than for balance work.
     # Recorded in config_hash: two runs at one scope with different filters are not
     # comparable, and nothing else on the row would say so.
-    skillFilter: OFFENSIVE_PASSIVES
+    skillFilter: OFFENSIVE
+    # How long the rotation holds right click for a channel or charge skill, in ticks.
+    # This is the engine's one policy choice rather than an observation -- a channel deals
+    # damage for as long as it is held -- so it is written into sim_run.scenario, and two
+    # runs with different budgets are not comparable for channel builds.
+    channelHoldTicks: 40
+    # How often the rotation may re-press a button that did not fire, in ticks. A rate limit
+    # on event dispatches, not a model of anything: whether a skill fires is still the real
+    # cooldown and energy gates' decision.
+    skillRetryIntervalTicks: 5
     # Duels started per tick. Spawning two ServerPlayers and equipping them is tens of
     # milliseconds of main-thread work, so filling the whole concurrency budget in one
     # tick stalls the server and staggers when duels actually engage.

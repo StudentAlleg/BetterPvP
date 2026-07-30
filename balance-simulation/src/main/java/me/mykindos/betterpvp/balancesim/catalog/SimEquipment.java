@@ -5,18 +5,24 @@ import com.google.inject.Singleton;
 import lombok.CustomLog;
 import me.mykindos.betterpvp.champions.champions.skills.data.SkillWeapons;
 import me.mykindos.betterpvp.champions.item.component.armor.RoleArmorComponent;
+import me.mykindos.betterpvp.core.Core;
 import me.mykindos.betterpvp.core.combat.health.EntityHealthService;
 import me.mykindos.betterpvp.core.components.champions.Role;
 import me.mykindos.betterpvp.core.components.champions.SkillType;
 import me.mykindos.betterpvp.core.item.BaseItem;
 import me.mykindos.betterpvp.core.item.ItemFactory;
+import me.mykindos.betterpvp.core.item.ItemInstance;
 import me.mykindos.betterpvp.core.item.ItemRegistry;
+import me.mykindos.betterpvp.core.item.component.impl.socketables.Socketable;
+import me.mykindos.betterpvp.core.item.component.impl.socketables.SocketableContainerComponent;
+import me.mykindos.betterpvp.core.item.component.impl.socketables.SocketableRegistry;
 import me.mykindos.betterpvp.core.item.model.ArmorItem;
 import me.mykindos.betterpvp.core.item.model.WeaponItem;
 import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
 import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.inventory.ItemStack;
+import org.bukkit.plugin.java.JavaPlugin;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayList;
@@ -83,12 +89,27 @@ public class SimEquipment {
     private WeaponOption defaultWeaponCache;
     private final Map<String, SkillType> skillTypeCache = new HashMap<>();
     private final Map<Role, List<BaseItem>> armorCache = new EnumMap<>(Role.class);
+    private final Map<String, List<RuneOption>> runeCache = new HashMap<>();
+
+    /**
+     * Core's rune registry.
+     *
+     * <p>From Core's injector rather than injected, for the reason {@code SimStatePurge} documents:
+     * {@code SocketableRegistry} takes {@code Core} as a constructor argument, and a just-in-time
+     * binding in this sibling injector would build a second registry -- populated by its own reflection
+     * pass, so holding a second set of {@code Socketable} instances. {@code hasRune} compares by
+     * equality against the instance the <em>handler</em> injected, so a sweep would socket runes that
+     * every handler then failed to recognise, and the rune axis would read as "runes do nothing".
+     */
+    private final SocketableRegistry socketableRegistry;
 
     @Inject
     public SimEquipment(ItemRegistry itemRegistry, ItemFactory itemFactory, EntityHealthService entityHealthService) {
         this.itemRegistry = itemRegistry;
         this.itemFactory = itemFactory;
         this.entityHealthService = entityHealthService;
+        this.socketableRegistry = JavaPlugin.getPlugin(Core.class).getInjector()
+                .getInstance(SocketableRegistry.class);
     }
 
     /**
@@ -101,6 +122,7 @@ public class SimEquipment {
         defaultWeaponCache = null;
         skillTypeCache.clear();
         armorCache.clear();
+        runeCache.clear();
     }
 
     /**
@@ -175,11 +197,97 @@ public class SimEquipment {
      * @throws IllegalArgumentException if the key is not registered
      */
     public ItemStack weaponStack(String key) {
+        return weaponStack(key, List.of());
+    }
+
+    /**
+     * Materialises a weapon with runes socketed into it.
+     *
+     * <p>Socketed through the item's real {@code SocketableContainerComponent}, which is what makes the
+     * rune take effect: every handler -- {@code BrutalityRuneHandler} and the rest -- reads the
+     * container off the damager's held {@code ItemStack} via {@code ComponentLookupService} and asks
+     * {@code hasRune}. Nothing here applies a rune's effect, and nothing here reads a rune's numbers;
+     * the sim only decides which weapon carries which rune.
+     *
+     * <p>Sockets are sized to the rune list rather than taken from the item's own socket count. A
+     * registered weapon ships with however many sockets its config gives it -- often zero, since sockets
+     * are something a player upgrades into -- and the sweep's question is what a rune is worth, not what
+     * a fresh drop happens to allow. The build's fingerprint records which runes were fitted, so a row
+     * is never ambiguous about it.
+     *
+     * @param runeKeys rune keys as written to {@code sim_build.runes}, in catalog order
+     * @throws IllegalArgumentException if the weapon key or any rune key is not registered
+     */
+    public ItemStack weaponStack(String key, List<String> runeKeys) {
         final BaseItem item = itemRegistry.getItem(key);
         if (item == null) {
             throw new IllegalArgumentException("No registered item for weapon key " + key);
         }
-        return itemFactory.create(item).createItemStack();
+        ItemInstance instance = itemFactory.create(item);
+        if (!runeKeys.isEmpty()) {
+            final List<Socketable> socketables = new ArrayList<>(runeKeys.size());
+            for (String runeKey : runeKeys) {
+                socketables.add(rune(runeKey));
+            }
+            instance = instance.withComponent(
+                    new SocketableContainerComponent(socketables.size(), socketables.size(), socketables));
+        }
+        return instance.createItemStack();
+    }
+
+    /**
+     * One rune of the sweep's rune axis.
+     *
+     * @param key    the rune's {@code NamespacedKey}, as written to {@code sim_build.runes}
+     * @param name   the rune's stable identity string, only used in logs
+     */
+    public record RuneOption(String key, String name) {
+    }
+
+    /**
+     * Every registered rune that can be socketed into {@code weaponKey}, ordered by key.
+     *
+     * <p>Compatibility is the rune's own {@code canApply}, so a rune declared for armour or for bows
+     * only is not offered for a melee sword -- and a rune added to the game joins the sweep with no
+     * change here, the same way a weapon does.
+     *
+     * <p>Ordered by key rather than by registration, because {@code SocketableRegistry} hands back a
+     * {@code Set} built by reflection over a package: iteration order is a hash order that can differ
+     * between JVM runs, and a sweep has to enumerate the same space twice for two runs to be diffable.
+     */
+    public List<RuneOption> weaponRunes(String weaponKey) {
+        return runeCache.computeIfAbsent(weaponKey, key -> {
+            final BaseItem item = itemRegistry.getItem(key);
+            if (item == null) {
+                throw new IllegalArgumentException("No registered item for weapon key " + key);
+            }
+            // Asked of a created instance rather than the BaseItem: SocketableGroups tests the item's
+            // group and its ItemStack's material, and an instance is what a combatant will actually hold.
+            final ItemInstance instance = itemFactory.create(item);
+            final List<RuneOption> runes = new ArrayList<>();
+            for (Socketable socketable : socketableRegistry.getAllRunes()) {
+                if (socketable.canApply(instance)) {
+                    runes.add(new RuneOption(socketable.getKey().toString(), socketable.getName()));
+                }
+            }
+            runes.sort(Comparator.comparing(RuneOption::key));
+            return List.copyOf(runes);
+        });
+    }
+
+    /**
+     * Resolves a rune key back to the live {@code Socketable} singleton.
+     *
+     * <p>The singleton, not a copy: {@code SocketableContainerComponent.hasRune} is a list
+     * {@code contains}, and the handlers pass their own injected instance to it.
+     */
+    private Socketable rune(String runeKey) {
+        final NamespacedKey key = NamespacedKey.fromString(runeKey);
+        if (key == null) {
+            throw new IllegalArgumentException("Malformed rune key " + runeKey);
+        }
+        return socketableRegistry.getRune(key).orElseThrow(() ->
+                new IllegalArgumentException("No registered rune for key " + runeKey));
     }
 
     /**

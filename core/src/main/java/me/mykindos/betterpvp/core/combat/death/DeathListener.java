@@ -9,6 +9,7 @@ import me.mykindos.betterpvp.core.combat.damagelog.DamageLog;
 import me.mykindos.betterpvp.core.combat.damagelog.DamageLogManager;
 import me.mykindos.betterpvp.core.combat.death.events.CustomDeathEvent;
 import me.mykindos.betterpvp.core.combat.death.events.CustomDeathMessageEvent;
+import me.mykindos.betterpvp.core.framework.simulation.SimulatedEntity;
 import me.mykindos.betterpvp.core.item.ItemFactory;
 import me.mykindos.betterpvp.core.item.ItemInstance;
 import me.mykindos.betterpvp.core.item.ItemInstanceView;
@@ -55,6 +56,16 @@ public class DeathListener implements Listener {
     @EventHandler
     public void onDeath(PlayerDeathEvent event) {
         event.deathMessage(null);
+
+        // A balance-simulation duel ends in a real death, and a sweep is hundreds of thousands of
+        // them. Announcing each one would send every admin watching a dev server one death message
+        // per duel -- a few thousand a minute -- and the CustomDeathEvent behind it means nothing
+        // for a fake player fighting in an isolated void world. The on-death *mechanics* still fire;
+        // they hang off PlayerDeathEvent, not off this.
+        if (SimulatedEntity.isSimulated(event.getPlayer())) {
+            return;
+        }
+
         DamageLog lastDamage = damageLogManager.getLastDamager(event.getPlayer());
 
         final CustomDeathEvent deathEvent = new CustomDeathEvent(event.getPlayer());

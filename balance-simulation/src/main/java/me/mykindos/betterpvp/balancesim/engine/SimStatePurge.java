@@ -3,13 +3,16 @@ package me.mykindos.betterpvp.balancesim.engine;
 import com.google.inject.Singleton;
 import lombok.CustomLog;
 import me.mykindos.betterpvp.core.Core;
+import me.mykindos.betterpvp.core.combat.click.RightClickListener;
 import me.mykindos.betterpvp.core.combat.delay.DamageDelayManager;
 import me.mykindos.betterpvp.core.cooldowns.CooldownManager;
 import me.mykindos.betterpvp.core.effects.EffectManager;
+import me.mykindos.betterpvp.core.energy.EnergyService;
 import me.mykindos.betterpvp.core.interaction.state.InteractionStateManager;
 import me.mykindos.betterpvp.core.interaction.tracker.ActiveInteractionTracker;
 import me.mykindos.betterpvp.core.interaction.tracker.HoldTracker;
 import org.bukkit.entity.Entity;
+import org.bukkit.entity.Player;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.jetbrains.annotations.Nullable;
 
@@ -53,6 +56,17 @@ import java.util.UUID;
  *       held-item interactions for every tracked entity each tick; a stale entry pointing at an
  *       arena whose chunk has since unloaded turns that into a synchronous chunk load on the main
  *       thread, which is what the last watchdog dump of the run caught.</li>
+ *   <li><b>Energy.</b> {@code EnergyService.tick} drops the entry of anyone {@code Bukkit.getPlayer}
+ *       cannot resolve, which used to be every combatant on every tick -- and so used to hand them
+ *       infinite energy. Phase 3 makes a fighting combatant resolvable ({@link SimPlayer}), which is
+ *       what finally makes the energy gate bind on a rotation, and which is exactly why the entry now
+ *       has to be dropped deliberately: a duel that ended on an empty bar would otherwise hand the
+ *       next build on that slot an empty bar too and be read as a weaker build.</li>
+ *   <li><b>Held right click.</b> {@code RightClickListener} evicts a hold context on a 250 ms timeout
+ *       or a held-item type change, neither of which is fast enough when a slot is handed to a new
+ *       duel on the tick the last one ended. A leftover context re-fires {@code RightClickEvent}
+ *       against the new build, which can keep a channel skill running that the new build does not
+ *       carry.</li>
  * </ul>
  *
  * <h2>Why the managers come from Core's injector</h2>
@@ -74,6 +88,8 @@ public class SimStatePurge {
     private final InteractionStateManager stateManager;
     private final ActiveInteractionTracker activeInteractionTracker;
     private final DamageDelayManager damageDelayManager;
+    private final EnergyService energyService;
+    private final RightClickListener rightClickListener;
 
     public SimStatePurge() {
         final var coreInjector = JavaPlugin.getPlugin(Core.class).getInjector();
@@ -83,6 +99,8 @@ public class SimStatePurge {
         this.stateManager = coreInjector.getInstance(InteractionStateManager.class);
         this.activeInteractionTracker = coreInjector.getInstance(ActiveInteractionTracker.class);
         this.damageDelayManager = coreInjector.getInstance(DamageDelayManager.class);
+        this.energyService = coreInjector.getInstance(EnergyService.class);
+        this.rightClickListener = coreInjector.getInstance(RightClickListener.class);
     }
 
     /**
@@ -113,6 +131,10 @@ public class SimStatePurge {
         holdTracker.removeActor(uuid);
         stateManager.removeActor(uuid);
         activeInteractionTracker.removeActor(uuid);
+        energyService.getEnergyMap().remove(uuid);
+        if (entity instanceof Player player) {
+            rightClickListener.clearHoldState(player);
+        }
         if (entity != null) {
             // Otherwise the delay recorded against the last hit of a duel outlives it, and the
             // opening swings of the next duel on the slot are rejected -- which reads as a slower

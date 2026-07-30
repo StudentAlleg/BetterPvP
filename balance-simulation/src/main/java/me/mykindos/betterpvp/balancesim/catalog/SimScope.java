@@ -32,6 +32,9 @@ import java.util.Optional;
  *       build.</li>
  *   <li>{@link #WEAPONS} -- the weapon axis alone, with no skills to confound it. This is what
  *       answers "how much does this weapon's damage stat actually buy".</li>
+ *   <li>{@link #RUNES} -- one socketed rune at a time, on the default weapon and against armoured
+ *       targets. Same reasoning as {@link #SKILLS}: a rune's contribution cannot be recovered from a
+ *       build that carries several, and it is a small enough axis to sweep exhaustively.</li>
  *   <li>{@link #SKILLS} -- one skill at a time over its full level range. Isolating a single
  *       skill is what makes a per-skill strength curve readable; a full build mixes several
  *       skills' contributions into one number and cannot be decomposed after the fact.</li>
@@ -43,17 +46,20 @@ import java.util.Optional;
 @Getter
 public enum SimScope {
 
-    /** Role x role-default weapon, no skills, no armour. Phase 1 parity. */
-    MELEE(WeaponAxis.ROLE_DEFAULT, SkillAxis.NONE, false),
+    /** Role x role-default weapon, no skills, no armour, no runes. Phase 1 parity. */
+    MELEE(WeaponAxis.ROLE_DEFAULT, SkillAxis.NONE, RuneAxis.NONE, false),
 
     /** Role x every melee weapon in the registry, no skills. */
-    WEAPONS(WeaponAxis.ALL_MELEE, SkillAxis.NONE, false),
+    WEAPONS(WeaponAxis.ALL_MELEE, SkillAxis.NONE, RuneAxis.NONE, false),
+
+    /** Role x default weapon x one rune at a time, no skills, vs armoured targets. */
+    RUNES(WeaponAxis.ROLE_DEFAULT, SkillAxis.NONE, RuneAxis.ONE_AT_A_TIME, true),
 
     /** Role x one skill at a time x level, on the default and booster weapons, vs armoured targets. */
-    SKILLS(WeaponAxis.DEFAULT_AND_BOOSTER, SkillAxis.ONE_AT_A_TIME, true),
+    SKILLS(WeaponAxis.DEFAULT_AND_BOOSTER, SkillAxis.ONE_AT_A_TIME, RuneAxis.NONE, true),
 
     /** Role x every budget-feasible level vector x every melee weapon, vs armoured targets. */
-    FULL(WeaponAxis.ALL_MELEE, SkillAxis.BUDGET_VECTORS, true);
+    FULL(WeaponAxis.ALL_MELEE, SkillAxis.BUDGET_VECTORS, RuneAxis.NONE, true);
 
     /**
      * Which weapons a build is measured on.
@@ -83,8 +89,26 @@ public enum SimScope {
         BUDGET_VECTORS
     }
 
+    /**
+     * How runes are socketed into the build's weapon.
+     *
+     * <p>Deliberately not a term in {@link #FULL}. Runes multiply the space the same way skills do and
+     * for the same reason -- around twenty registered runes across several sockets -- so folding them
+     * into the full sweep would make an already real-time-bound space unenumerable. And a full build
+     * cannot be decomposed after the fact into "how much of this DPS was the rune", which is the only
+     * question the rune axis is asked: hence {@link #ONE_AT_A_TIME}, on the same reasoning that gives
+     * skills their own tier.
+     */
+    public enum RuneAxis {
+        /** No runes; the weapon as the registry ships it. */
+        NONE,
+        /** One socketed rune per build, swept over every rune the weapon accepts, plus a bare baseline. */
+        ONE_AT_A_TIME
+    }
+
     private final WeaponAxis weaponAxis;
     private final SkillAxis skillAxis;
+    private final RuneAxis runeAxis;
 
     /**
      * Whether targets are also enumerated wearing their role's armour set. Armour is effective HP
@@ -93,9 +117,10 @@ public enum SimScope {
      */
     private final boolean armorSets;
 
-    SimScope(WeaponAxis weaponAxis, SkillAxis skillAxis, boolean armorSets) {
+    SimScope(WeaponAxis weaponAxis, SkillAxis skillAxis, RuneAxis runeAxis, boolean armorSets) {
         this.weaponAxis = weaponAxis;
         this.skillAxis = skillAxis;
+        this.runeAxis = runeAxis;
         this.armorSets = armorSets;
     }
 

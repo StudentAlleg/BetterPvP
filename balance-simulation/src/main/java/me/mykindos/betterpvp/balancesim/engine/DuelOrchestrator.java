@@ -8,6 +8,7 @@ import me.mykindos.betterpvp.balancesim.SimulationGate;
 import me.mykindos.betterpvp.balancesim.catalog.BalanceCatalog;
 import me.mykindos.betterpvp.balancesim.catalog.SimBuildSpec;
 import me.mykindos.betterpvp.balancesim.catalog.SimEquipment;
+import me.mykindos.betterpvp.balancesim.catalog.SimScenario;
 import me.mykindos.betterpvp.balancesim.catalog.SimScope;
 import me.mykindos.betterpvp.balancesim.catalog.SimSkillAllocation;
 import me.mykindos.betterpvp.balancesim.catalog.SimSkillFilter;
@@ -44,23 +45,38 @@ import java.util.function.Consumer;
  *
  * <p>Duels run in real time -- a 30 s fight costs 30 s -- but all combat state is keyed per
  * player UUID, so many run simultaneously in separate arenas and a sweep is minutes rather than
- * hours. Per tick the orchestrator performs due melee swings and (from phase 3) lets the
- * {@link RotationPolicy} synthesise skill inputs.
+ * hours. Per tick the orchestrator performs due melee swings and lets the {@link RotationPolicy}
+ * synthesise skill inputs.
  *
- * <p><b>Phase 2 scope.</b> The catalog's role, weapon, skill and target-armour axes all reach the
- * pipeline, each matchup is measured over {@code gate.getIterations()} Monte-Carlo iterations, and
- * the reduction to mean plus percentiles happens in {@link SimMeasurement}. What is measured is
- * still melee plus <em>passives</em>: an equipped active skill is never activated, because no
- * input is synthesised for it yet. That is the phase 3 rotation policy, and until then a build
- * carrying an active is measured as if it held the slot empty -- which is why {@code sim_build}
- * records the allocation, so such a row can be told apart later rather than silently averaged in.
+ * <p><b>Phase 3 scope.</b> The catalog's role, weapon, rune, skill and target-armour axes all reach
+ * the pipeline; actives are cast through synthesised real inputs
+ * ({@link GreedyRotationPolicy}, {@link SimInputs}); a lethal blow is a real death, so the on-death
+ * mechanics fire; and a duel drives one side or both depending on {@link SimScenario}. Each matchup is
+ * measured over {@code gate.getIterations()} Monte-Carlo iterations and reduced to mean plus
+ * percentiles in {@link SimMeasurement}.
+ *
+ * <p>What is still <em>not</em> measured, and is excluded rather than approximated: the bow archetypes
+ * (they need a real arrow and a ranged engagement, not an input -- {@code SimSkillFilter} keeps them out
+ * of the catalog), and the defender's own build (the target axis is role and armour, so a mutual duel is
+ * a swept attacker against a bare-role defender, and {@code sim_result.target_skills} stays empty rather
+ * than fabricated).
  */
 @Singleton
 @CustomLog
 public class DuelOrchestrator {
 
-    /** Bumped whenever measurement semantics change, so old runs are not diffed against new ones. */
-    private static final String ENGINE_VERSION = "phase2-melee-passives-1";
+    /**
+     * Bumped whenever measurement semantics change, so old runs are not diffed against new ones.
+     *
+     * <p>Phase 3 changes them in three ways that all move numbers: actives are cast, deaths are real
+     * (so on-death mechanics fire), and combatants are resolvable by UUID while fighting -- which is
+     * what finally makes the energy gate bind on a rotation. A phase 2 row and a phase 3 row of the same
+     * build are not the same measurement even at the same {@code config_hash}.
+     */
+    // Bumped from phase3-actives-1: until DEATH_SETTLE_TICKS existed, a duel was torn down before its
+    // recorded kill was applied, so every death aborted partway through the real death path. Runs on
+    // the older version measured a different engine and should not be diffed against these.
+    private static final String ENGINE_VERSION = "phase3-actives-2";
 
     private static final long MILLIS_PER_TICK = 50L;
 
@@ -70,6 +86,25 @@ public class DuelOrchestrator {
     /** Results are flushed in chunks so a long sweep is durable as it goes, not only at the end. */
     private static final int RESULT_FLUSH_CHUNK = 500;
 
+    /**
+     * Ticks a resolved duel is held open before its combatants are torn down.
+     *
+     * <p>A kill is <em>recorded</em> a tick before it is <em>applied</em>.
+     * {@code SimRecorder} timestamps the lethal blow synchronously at {@code MONITOR} on
+     * {@code DamageEvent}, while {@code DamageEventFinalizer.applyFinalDamage} defers the actual
+     * {@code setHealth(0)} by one tick to work around
+     * <a href="https://github.com/PaperMC/Paper/issues/12148">Paper #12148</a>. Tearing down on the
+     * recorded tick therefore destroyed the combatant's client out from under a death that had not
+     * happened yet: {@code ServerPlayer.die} then ran with nothing in {@code ClientManager}'s cache,
+     * and every death handler that calls {@code search().online(player)} kicked the combatant and
+     * threw {@code ClientNotLoadedException} -- which in turn cost the pool its resident.
+     *
+     * <p>Two ticks rather than one, so the deferred task and the death it causes both land inside the
+     * window. This does not touch any measurement: TTK is read from the recording's own lethal-blow
+     * tick, so the extra ticks are held open but never counted.
+     */
+    private static final int DEATH_SETTLE_TICKS = 2;
+
     private final SimulationGate gate;
     private final SimWorldManager worldManager;
     private final BalanceCatalog catalog;
@@ -77,7 +112,12 @@ public class DuelOrchestrator {
     private final SimRecorder recorder;
     private final SimCombatantPool combatantPool;
     private final SimCombatant.SimContext context;
+    private final RotationPolicy rotationPolicy;
+    private final SimConfigDigest configDigest;
     private final BalanceSimulation plugin;
+
+    /** The scenario the in-flight sweep is running, so every duel of a run is the same measurement. */
+    private volatile SimScenario scenario = SimScenario.ONE_WAY;
 
     /** Guards against a second sweep being started while one is in flight. */
     private volatile boolean running;
@@ -101,6 +141,9 @@ public class DuelOrchestrator {
                             SimClientFactory clientFactory,
                             SimEquipment equipment,
                             SimStatePurge statePurge,
+                            SimInputs inputs,
+                            GreedyRotationPolicy rotationPolicy,
+                            SimConfigDigest configDigest,
                             BalanceSimulation plugin) {
         this.gate = gate;
         this.worldManager = worldManager;
@@ -108,6 +151,8 @@ public class DuelOrchestrator {
         this.repository = repository;
         this.recorder = recorder;
         this.combatantPool = combatantPool;
+        this.rotationPolicy = rotationPolicy;
+        this.configDigest = configDigest;
         this.plugin = plugin;
 
         // Both managers come from Champions' own injector, never from Guice injection here. This
@@ -129,7 +174,8 @@ public class DuelOrchestrator {
                 championsInjector.getInstance(RoleManager.class),
                 championsInjector.getInstance(ChampionsSkillManager.class),
                 equipment,
-                statePurge);
+                statePurge,
+                inputs);
     }
 
     /**
@@ -142,8 +188,20 @@ public class DuelOrchestrator {
      *                               running yields a failed future rather than a thrown exception.
      */
     public CompletableFuture<SimSummary> run(SimulationTrigger trigger, SimScope scope) {
-        return run(trigger, scope, progress -> {
+        return run(trigger, scope, configuredScenario(), progress -> {
         });
+    }
+
+    /**
+     * The scenario a run gets when the caller does not name one: whatever the config says, falling back
+     * to {@code ONE_WAY} for an unrecognised value.
+     *
+     * <p>Falling back rather than refusing, because this is only reached when nobody asked for a
+     * scenario at all -- a typed argument is validated by the command and refused there. {@code ONE_WAY}
+     * is the safe default because it is the measurement every existing row was taken with.
+     */
+    private SimScenario configuredScenario() {
+        return SimScenario.parse(gate.getScenario()).orElse(SimScenario.ONE_WAY);
     }
 
     /**
@@ -151,6 +209,9 @@ public class DuelOrchestrator {
      *
      * @param trigger  what kicked it off, recorded on the {@code sim_run} row
      * @param scope    which slice of the permutation space to cover
+     * @param scenario whether a duel drives one side or both. Fixed for the run: mixing the two would
+     *                 make a row ambiguous, since a mutual TTK is "when it won" and a one-way TTK is
+     *                 unconditional
      * @param listener called on the main thread with a periodic snapshot, and once more when the
      *                 run ends. Progress also goes to the server log unconditionally, so a run
      *                 started from the console or by a schedule is still observable.
@@ -160,7 +221,10 @@ public class DuelOrchestrator {
      * @throws IllegalStateException if the simulation gate is closed. A sweep that is already
      *                               running yields a failed future rather than a thrown exception.
      */
-    public CompletableFuture<SimSummary> run(SimulationTrigger trigger, SimScope scope, Consumer<SimProgress> listener) {
+    public CompletableFuture<SimSummary> run(SimulationTrigger trigger,
+                                             SimScope scope,
+                                             SimScenario scenario,
+                                             Consumer<SimProgress> listener) {
         if (!gate.isEnabled()) {
             throw new IllegalStateException("Simulation is disabled");
         }
@@ -172,6 +236,10 @@ public class DuelOrchestrator {
         }
         running = true;
         stopRequested = false;
+        this.scenario = scenario;
+        // Before configHash reads it: a /champions reload between runs can change every balance value,
+        // and a stale digest would group two runs that measured different games.
+        configDigest.invalidate();
 
         final CompletableFuture<SimSummary> done = new CompletableFuture<>();
         final int realm = Core.getCurrentRealm().getId();
@@ -358,24 +426,57 @@ public class DuelOrchestrator {
      * sha256 over every config value that fed the run, so two runs are only comparable when this
      * differs for the reason you think it does.
      *
-     * <p>TODO(phase 3): hash the champions/item config values that actually determine damage.
-     * Skill damage and weapon stats are read live from those configs during a run, so two sweeps
-     * with different balance numbers currently share a hash. Until that is closed, a patch diff
-     * must be pinned by {@code engine_version} and run timestamp rather than by this alone.
+     * <p>This closes design open question 10. Until phase 3 the hash covered only the simulation
+     * knobs, not the champions and item config that skill damage and weapon stats are read from
+     * <em>live</em> during a run -- so two sweeps taken either side of a balance change shared a hash,
+     * which is precisely the case §3.3 says this column exists to distinguish. {@link SimConfigDigest}
+     * supplies the missing half.
+     *
+     * <p>What is hashed, and why each part is here:
+     * <ul>
+     *   <li>the balance config digest -- the numbers the damage came from;</li>
+     *   <li>the scope, because it decides which builds exist;</li>
+     *   <li>the skill filter, because two {@code FULL} runs under different filters cover different
+     *       spaces while sharing a scope, and comparing them would read a narrower sweep's absent
+     *       builds as a balance change;</li>
+     *   <li>the scenario and the channel hold budget, because both change what a row <em>means</em>
+     *       rather than just how much of the space it covers;</li>
+     *   <li>iterations, timeout and concurrency, which bound the measurement's precision;</li>
+     *   <li>the engine version, so a semantics change cannot masquerade as an unchanged config.</li>
+     * </ul>
+     * The retry interval is deliberately absent: it rate-limits attempts the real gates would have
+     * refused anyway, so two runs differing only in it are measuring the same thing.
      */
     private String configHash(SimScope scope) {
-        // The skill filter is in here because it decides which builds exist at all. Two FULL runs
-        // under different filters cover different spaces while sharing a scope, and comparing them
-        // would read a narrower sweep's absent builds as a balance change.
-        return Integer.toHexString((scope + ":" + gate.getIterations() + ":" + gate.getDuelTimeoutSeconds()
-                + ":" + gate.getMaxConcurrentDuels() + ":" + SimSkillFilter.parse(gate.getSkillFilter())
+        return Integer.toHexString((scope + ":" + scenario + ":" + gate.getIterations()
+                + ":" + gate.getDuelTimeoutSeconds() + ":" + gate.getMaxConcurrentDuels()
+                + ":" + SimSkillFilter.parse(gate.getSkillFilter())
+                + ":" + gate.getChannelHoldTicks()
+                + ":" + configDigest.digest()
                 + ":" + ENGINE_VERSION).hashCode());
     }
 
+    /**
+     * The run's own description of what it measured, for a reader who has only the row.
+     *
+     * <p>{@code channel_hold_ticks} is in here because it is the engine's one policy choice rather than
+     * an observation: a channel produces damage for as long as it is held, so a channel build's DPS is
+     * partly this number, and two runs with different budgets are not comparable for those builds.
+     * {@code balance_config} is the digest's own value, so a dashboard can group runs by the balance
+     * numbers they were taken against without unpacking {@code config_hash}.
+     */
     private String scenarioJson(SimScope scope) {
-        return "{\"phase\":2,\"scope\":\"" + scope + "\",\"iterations\":" + Math.max(1, gate.getIterations())
-                + ",\"actives\":false,\"skill_filter\":\"" + SimSkillFilter.parse(gate.getSkillFilter())
-                + "\",\"timeout_s\":" + gate.getDuelTimeoutSeconds() + "}";
+        return "{\"phase\":3"
+                + ",\"scope\":\"" + scope + '"'
+                + ",\"scenario\":\"" + scenario.jsonValue() + '"'
+                + ",\"iterations\":" + Math.max(1, gate.getIterations())
+                + ",\"actives\":true"
+                + ",\"rotation\":\"greedy\""
+                + ",\"channel_hold_ticks\":" + Math.max(1, gate.getChannelHoldTicks())
+                + ",\"skill_filter\":\"" + SimSkillFilter.parse(gate.getSkillFilter()) + '"'
+                + ",\"balance_config\":\"" + configDigest.digest() + '"'
+                + ",\"timeout_s\":" + gate.getDuelTimeoutSeconds()
+                + '}';
     }
 
     /**
@@ -618,9 +719,9 @@ public class DuelOrchestrator {
                     aggregate.dpsBurst(),
                     aggregate.ttkSeconds(),
                     aggregate.hitsToKill(),
-                    // Energy limiting is a property of a rotation, and nothing activates a skill
-                    // yet, so claiming it either way would be a guess. Phase 3.
-                    false,
+                    // Observed, not modelled: SimRecorder watches for a skill use the real chain
+                    // refused for energy rather than for a cooldown.
+                    aggregate.energyLimited(),
                     aggregate.extrasJson()));
         }
 
@@ -659,6 +760,9 @@ public class DuelOrchestrator {
 
         private SimRecorder.Recording recording;
 
+        /** The tick a death resolved this duel on, or -1 while it is still being fought. */
+        private long resolvedAtTick = -1;
+
         private Duel(Matchup matchup, int sequence, long startTick, SimCombatantPool.Slot slot) {
             this.matchup = matchup;
             this.slot = slot;
@@ -683,7 +787,10 @@ public class DuelOrchestrator {
         private SimBuildSpec defenderBuild() {
             final SimTargetSpec target = matchup.target();
             return new SimBuildSpec(target.role(),
-                    // The defender never swings in phase 2, so its weapon is only the standard kit.
+                    // The role's standard kit, which is all the defender needs: under ONE_WAY it never
+                    // swings, and under MUTUAL the weapon axis belongs to the attacker -- sweeping the
+                    // defender's weapon as well would square the space to answer a question no column on
+                    // the row asks.
                     context.equipment().defaultWeapon().key(),
                     target.armorSetId(),
                     List.of(),
@@ -700,24 +807,46 @@ public class DuelOrchestrator {
         }
 
         /**
-         * Performs the tick's swing and reports whether the duel has resolved.
+         * Runs the tick's rotation and swing, and reports whether the duel has resolved.
          *
-         * <p>Only the attacker swings. A mutual exchange would truncate the attacker's
-         * time-to-kill whenever the defender won the race, which is a meaningful measurement but a
-         * different one; it belongs with the phase 3 rotation policy that can drive both sides
-         * properly. Measuring one direction keeps a row unambiguous.
+         * <p>Which sides act is {@link SimScenario}'s answer, fixed for the run. Under
+         * {@code ONE_WAY} only the attacker does anything and the defender is a durable target, which
+         * makes {@code ttk_s} an unconditional "how long this build needs". Under {@code MUTUAL} both
+         * rotations run and both sides swing, which is what makes an attacker's own reactive passives
+         * and {@code DefensiveSkill}s measurable at all -- at the cost that the duel can end with the
+         * attacker dead, so {@code ttk_s} becomes "how long when it won" and {@code kill_rate} carries
+         * the rest of the answer.
+         *
+         * <p>The rotation runs before the swing, in the order a player's own tick would: a prepare
+         * armed on this tick should be paid off by this tick's hit rather than the next one.
          *
          * @return true when the duel is over, by kill or by timeout
          */
         private boolean advance(long currentTick) {
-            // Death is the recorder's call, not the entity's: a lethal blow is intercepted before
-            // it lands so no PlayerDeathEvent ever fires for a fake player. isAlive() still guards
-            // the case where a combatant vanished for some other reason.
-            if (recording.getKilled() != null || !attacker.isAlive() || !defender.isAlive()) {
-                return true;
+            // Already resolved by a death: stop acting, but stay spawned until the deferred kill has
+            // actually landed. See DEATH_SETTLE_TICKS.
+            if (resolvedAtTick >= 0) {
+                return currentTick - resolvedAtTick >= DEATH_SETTLE_TICKS;
             }
+            // The recording owns the duel's notion of death, because only the damage event knows which
+            // tick the lethal blow landed on. isAlive() is the backstop for a combatant that stopped
+            // being fightable some other way.
+            if (recording.getKilled() != null || !attacker.isAlive() || !defender.isAlive()) {
+                resolvedAtTick = currentTick;
+                return false;
+            }
+            // A timeout has nothing pending against it -- non-lethal damage is applied inline, only
+            // the killing blow is deferred -- so it resolves and tears down on the same tick.
             if (currentTick - startTick >= timeoutTicks) {
                 return true;
+            }
+            // Elapsed rather than absolute ticks, so a rotation's timing is identical whenever in the
+            // sweep the duel happens to start -- the same reason hit timestamps are relative.
+            final long elapsed = currentTick - startTick;
+            rotationPolicy.act(attacker, defender, elapsed);
+            if (scenario.isDefenderDriven()) {
+                rotationPolicy.act(defender, attacker, elapsed);
+                defender.swingAt(attacker);
             }
             // Swing every tick and let the pipeline decide what lands. The sim previously paced
             // itself at DamageCause.DEFAULT_DELAY, on the assumption that matching the floor
@@ -773,9 +902,14 @@ public class DuelOrchestrator {
 
             loop.writeEffectiveLevels(matchup.buildId(), attacker.getMeasuredSkills());
 
+            // Recorded rather than inferred from !killed: a duel can also time out with both alive, and
+            // under ONE_WAY the attacker cannot die at all, so a zero here is what distinguishes the
+            // two scenarios on the row as well as on the run.
+            final boolean attackerDied = attacker.getUuid().equals(recording.getKilled());
+
             matchup.measurement().add(
                     new SimMeasurement.Sample(dmgPerHit, dpsSustained, dpsBurst, ttkTicks,
-                            hits.size(), killed),
+                            hits.size(), killed, attackerDied, recording.isEnergyLimited()),
                     reasonCounts(hits));
 
             if (matchup.measurement().isComplete()) {

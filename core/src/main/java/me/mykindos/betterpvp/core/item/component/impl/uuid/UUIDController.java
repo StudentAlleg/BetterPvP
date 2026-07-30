@@ -11,6 +11,7 @@ import me.mykindos.betterpvp.core.client.repository.ClientManager;
 import me.mykindos.betterpvp.core.combat.events.KillContributionEvent;
 import me.mykindos.betterpvp.core.combat.stats.model.Contribution;
 import me.mykindos.betterpvp.core.framework.events.items.SpecialItemLootEvent;
+import me.mykindos.betterpvp.core.framework.simulation.SimulatedEntity;
 import me.mykindos.betterpvp.core.framework.updater.UpdateEvent;
 import me.mykindos.betterpvp.core.item.ItemFactory;
 import me.mykindos.betterpvp.core.item.ItemInstance;
@@ -214,6 +215,10 @@ public class UUIDController implements Listener {
     public void onUUIDItemUserDeath(PlayerDeathEvent event) {
         if (event.isCancelled()) return;
         Player player = event.getPlayer();
+        // A balance-simulation combatant dies through the real pipeline and would log an ITEM_DEATH
+        // row per tracked item per duel, with client context for a client that has no row in the
+        // database. Item history is a record of what real players did with real items.
+        if (SimulatedEntity.isSimulated(player)) return;
         Map<UUIDItem, ItemInstance> uuidItemsList = getUUIDItems(player);
         if (uuidItemsList.isEmpty()) return;
         Location location = player.getLocation();
