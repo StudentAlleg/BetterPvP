@@ -104,6 +104,15 @@ public class SimPlayer extends ServerPlayer {
      */
     private static final Field PLAYERS_BY_UUID = playersByUuidField();
 
+    /**
+     * How long vanilla waits for a client to report its world loaded before assuming it has.
+     *
+     * <p>{@code ServerGamePacketListenerImpl.restartClientLoadTimerAfterRespawn} sets exactly this,
+     * and {@code tickClientLoadTimeout} spends one per tick, so this many calls take a combatant from
+     * "just respawned" to "loaded" without waiting three seconds of duel for it.
+     */
+    private static final int CLIENT_LOAD_TIMEOUT_TICKS = 60;
+
     /** The dead-end channel, kept only so {@link #queuedPacketCount()} can report on it. */
     private EmbeddedChannel channel;
 
@@ -159,6 +168,12 @@ public class SimPlayer extends ServerPlayer {
         // inside ServerPlayer.<init> and cannot be skipped from here, but the listeners can be dropped
         // the moment the entity exists.
         player.getAdvancements().stopListening();
+
+        // A brand-new connection starts its client-load timer at 60, and until it runs out vanilla
+        // treats the player as still on the loading screen and refuses all damage. Left alone, that is
+        // the first three seconds of every duel a freshly spawned combatant takes part in -- silently
+        // added to the time-to-kill of every measurement the sweep has ever produced.
+        player.ensureClientLoaded();
 
         level.addNewPlayer(player);
         return player;
@@ -225,6 +240,11 @@ public class SimPlayer extends ServerPlayer {
         if (!isDeadOrDying() && !dead && getPose() != Pose.DYING) {
             return false;
         }
+        // Before the entity-level unsetting below, because it is the one that actually matters: every
+        // field this method clears was already clear on run 141's poisoned defenders, and they still
+        // could not be hurt. The death set waitingForRespawn on the connection, and that is what made
+        // them invulnerable.
+        ensureClientLoaded();
         dead = false;
         deathTime = 0;
         setHealth(getMaxHealth());
@@ -279,10 +299,61 @@ public class SimPlayer extends ServerPlayer {
         setYRot(at.getYaw());
         setXRot(at.getPitch());
         setYHeadRot(at.getYaw());
+        // The whole reason recycling did not work. The death that made this resident need recycling
+        // also set waitingForRespawn on its connection, and nothing short of a real respawn clears
+        // it -- so without this the re-added entity is invulnerable to everything, forever.
+        ensureClientLoaded();
         ((CraftWorld) at.getWorld()).getHandle().addNewPlayer(this);
         // After the re-add: max health depends on the attribute modifiers, and a level add is entitled
         // to touch them.
         setHealth(getMaxHealth());
+    }
+
+    /**
+     * Tells the server this combatant's client has finished loading, which is the thing that makes it
+     * possible to hurt at all.
+     *
+     * <p><b>This is the bug runs 140 to 150 were chasing.</b> {@code ServerPlayer.isInvulnerableTo}
+     * -- vanilla's first gate, ahead of every Bukkit event and therefore ahead of the entire
+     * BetterPvP pipeline -- returns true whenever {@code connection.hasClientLoaded()} is false, and
+     * that reads {@code !waitingForRespawn && clientLoadedTimeoutTimer <= 0}. Two separate things set
+     * it against a simulation combatant:
+     *
+     * <ul>
+     *   <li><b>Death.</b> {@code ServerPlayer.die} calls {@code markClientUnloadedAfterDeath()},
+     *       which raises {@code waitingForRespawn} and leaves it raised. Vanilla clears it in
+     *       {@code restartClientLoadTimerAfterRespawn}, reached only through the real respawn path --
+     *       so a combatant revived or recycled in place is invulnerable <em>forever</em>, and every
+     *       swing at it is discarded before anything the sim can observe. That is precisely the
+     *       shape of the evidence: {@code REVIVE} and {@code RECYCLE} produce barren duels while both
+     *       respawn strategies work, the poisoned defender's own state reads perfectly healthy
+     *       because the flag is on the connection rather than the entity, and the attacker -- which
+     *       under {@code ONE_WAY} never dies -- takes damage in the same duel.</li>
+     *   <li><b>Being new.</b> The timer starts at {@link #CLIENT_LOAD_TIMEOUT_TICKS} and is spent one
+     *       per tick from {@code ServerPlayer.tick}, so a freshly constructed combatant is
+     *       invulnerable for its first three seconds. Under {@code RESPAWN_NEW} the defender is fresh
+     *       every duel, which means every measurement taken so far has up to 60 ticks of
+     *       invulnerability folded into its time-to-kill.</li>
+     * </ul>
+     *
+     * <p>Both are cleared the same way, and through public API rather than by reflecting at the two
+     * private fields: restart the timer, which is what clears {@code waitingForRespawn}, then spend it
+     * in one go instead of waiting out three seconds of the duel it is supposed to be measuring.
+     * Spending it is what fires {@code PlayerClientLoadedWorldEvent}, once, exactly as a real client
+     * finishing its load would -- which is the correct thing for a combatant that is about to be
+     * treated as loaded.
+     *
+     * @return whether anything needed clearing, so a caller can report on it
+     */
+    public boolean ensureClientLoaded() {
+        if (connection.hasClientLoaded()) {
+            return false;
+        }
+        connection.restartClientLoadTimerAfterRespawn();
+        for (int i = 0; i < CLIENT_LOAD_TIMEOUT_TICKS; i++) {
+            connection.tickClientLoadTimeout();
+        }
+        return true;
     }
 
     /**
@@ -340,64 +411,275 @@ public class SimPlayer extends ServerPlayer {
                 + " inLevelLookup=" + (level().getEntity(getId()) != null)
                 + " bukkitValid=" + asBukkit().isValid()
                 + " bukkitOnline=" + asBukkit().isOnline()
+                // Last because it is the one that turned out to matter, and it is not on the entity at
+                // all: false here means vanilla refuses every hit before Bukkit hears about it.
+                + " clientLoaded=" + connection.hasClientLoaded()
                 + " attackDamage=" + getAttributeValue(Attributes.ATTACK_DAMAGE);
     }
 
+    // ------------------------------------------------------------------------------------------
+    // Pipeline telemetry. Written by SimDamageTelemetry, read by whoever is trying to work out why a
+    // duel measured nothing. Kept on the entity rather than in a map because the whole point is
+    // per-combatant attribution, and a duel that swung 600 times needs to be able to say how many of
+    // those 600 reached each stage -- a run-wide histogram would average its own answer away.
+    // ------------------------------------------------------------------------------------------
+
+    /** Swings this combatant issued at somebody, counted at the call rather than at the landing. */
+    public int pipeSwingsMade;
+    /** Swings issued at this combatant. Under ONE_WAY the defender's copy is the interesting one. */
+    public int pipeSwingsTaken;
+    /** {@code EntityDamageEvent}s raised with this combatant as the damagee. */
+    public int pipeVanilla;
+    /** Of those, how many arrived already cancelled by something ahead of BetterPvP. */
+    public int pipeVanillaPreCancelled;
+    /** {@code EntityCanHurtEntityEvent}s asked about this combatant, and how many said no. */
+    public int pipeCanHurt;
+    public int pipeCanHurtDenied;
+    /** BetterPvP {@code DamageEvent}s for this combatant, and how many were cancelled. */
+    public int pipeDamageEvent;
+    public int pipeDamageCancelled;
+    /** The last cancellation's stated reason, which is the only free-text clue in the chain. */
+    public String pipeLastCancelReason;
+    /** Total post-modifier damage seen on uncancelled events, to catch a hit modified to nothing. */
+    public double pipeDamageAllowed;
+
     /**
-     * Tries to hurt this combatant two different ways and reports what each one did to its health.
+     * Zeroes the counters so they describe one duel rather than the slot's whole career.
      *
-     * <p>The instrument for the question run 146 left open. Every field in
-     * {@link #describeCombatState()} came back healthy on a combatant that had just absorbed 600
-     * swings without taking a point of damage, so the refusal is not in the entity's own state and
-     * the next thing worth knowing is how far down the pipeline a hit gets. Three outcomes, three
-     * different bugs:
+     * <p>Called at duel setup for both sides. A resident survives many duels, and counters that
+     * accumulated across all of them would make the one number worth having -- "this defender was
+     * swung at 600 times and saw zero damage events" -- unreadable.
+     */
+    public void resetPipelineCounters() {
+        pipeSwingsMade = 0;
+        pipeSwingsTaken = 0;
+        pipeVanilla = 0;
+        pipeVanillaPreCancelled = 0;
+        pipeCanHurt = 0;
+        pipeCanHurtDenied = 0;
+        pipeDamageEvent = 0;
+        pipeDamageCancelled = 0;
+        pipeLastCancelReason = null;
+        pipeDamageAllowed = 0.0D;
+    }
+
+    /**
+     * How far this duel's swings against this combatant got, stage by stage, as one line.
+     *
+     * <p>Read as a funnel. Swings taken is the denominator; each subsequent count is what survived
+     * the previous stage. Where it collapses to zero is where the bug is, and no other reading of a
+     * barren duel says that -- the recorder only ever sees hits that landed, so everything upstream of
+     * the landing is invisible to it by construction.
+     */
+    public String describePipeline() {
+        return "swingsMade=" + pipeSwingsMade
+                + " swingsTaken=" + pipeSwingsTaken
+                + " vanillaDamageEvents=" + pipeVanilla
+                + " (preCancelled=" + pipeVanillaPreCancelled + ")"
+                + " canHurtAsked=" + pipeCanHurt
+                + " canHurtDenied=" + pipeCanHurtDenied
+                + " damageEvents=" + pipeDamageEvent
+                + " damageCancelled=" + pipeDamageCancelled
+                + " lastCancelReason=" + pipeLastCancelReason
+                + " damageAllowed=" + pipeDamageAllowed;
+    }
+
+    /**
+     * Hurts this combatant and reports how far down the damage pipeline the hit actually got.
+     *
+     * <p>The instrument run 148 forced. The previous version measured health lost inside the
+     * {@code damage()} call and read {@code 0.0} on the poisoned combatant -- but also {@code 0.0} on
+     * a freshly spawned control that had never died, so the number distinguished nothing. That is a
+     * property of the pipeline rather than of either combatant: {@code DamageEventProcessor} cancels
+     * every vanilla {@code EntityDamageEvent} unconditionally and reapplies the damage through
+     * BetterPvP's own path, where it may be reduced away, delayed, or declined by any of seven gates
+     * on the way to the finalizer. A health delta cannot tell those apart, so this watches the gates
+     * instead of the outcome.
+     *
+     * <p>Each of the three events below is observed at both ends of the chain, so the report says
+     * which gate the hit died at rather than only that it died:
      *
      * <ul>
-     *   <li>Both land -- the target is hurtable and the fault is on the attacker's side of
-     *       {@code ServerPlayer.attack}, before {@code hurtServer} is ever reached.</li>
-     *   <li>Neither lands -- something in the damage pipeline refuses this entity outright,
-     *       independently of who is hitting it.</li>
-     *   <li>Only the sourceless one lands -- the refusal is about the pairing rather than the
-     *       target, which points at the attacker/defender relationship the managers hold.</li>
+     *   <li>No {@code EntityDamageEvent} at all -- nothing above BetterPvP was reached, and the
+     *       refusal is in vanilla {@code hurtServer} or in the entity's level registration.</li>
+     *   <li>Vanilla fired but no {@code EntityCanHurtEntityEvent} -- rejected by the entry checks in
+     *       {@code processDamageEvent} or by {@code DamageDelayManager.processPreEventDelay}, which
+     *       is the one rejection a duel could never see, since it happens before any event fires.</li>
+     *   <li>{@code canHurtResult=DENY} -- a listener refuses the <em>pairing</em>, which is the shape
+     *       an identity-keyed map holding a stale entry would take.</li>
+     *   <li>{@code DamageEvent} cancelled -- {@code cancelReason} names the culprit outright.</li>
+     *   <li>Everything allowed and health still unchanged -- the damage was modified to nothing, and
+     *       the fault is in the modifier stack rather than in any gate.</li>
      * </ul>
      *
-     * <p>Invulnerability frames are cleared between the two attempts, because the first hit sets them
-     * and would otherwise guarantee the second reads as refused on a perfectly healthy combatant.
+     * <p>Run once with a source and once without. The sourced hit is what a duel does; the sourceless
+     * one skips {@code EntityCanHurtEntityEvent} entirely, so a difference between them isolates the
+     * refusal to the attacker/defender relationship rather than to the target. Invulnerability frames
+     * are cleared between the two, because the first hit sets them and would otherwise guarantee the
+     * second reads as refused on a perfectly healthy combatant.
      *
-     * <p>Mutates the combatant, deliberately. It is only ever called on a slot the barren branch is
-     * about to replace anyway, and only on the first barren duel of a run, so it cannot affect a
-     * measurement -- the duel that would have been measured here already failed.
+     * <p>Mutates the combatant, deliberately, then puts its health back. The poisoned subject is about
+     * to be despawned so it makes no difference there, but the control is a fresh resident going
+     * straight back into service, and one that started its next duel two hearts down would quietly
+     * bias that measurement.
      */
     public String probeDamage(SimPlayer source) {
-        final double start = getHealth();
-        String sourced;
-        try {
-            asBukkit().damage(1.0D, source.asBukkit());
-            sourced = String.valueOf(start - getHealth());
-        } catch (Throwable t) {
-            sourced = "threw " + t;
-        }
-
-        final double mid = getHealth();
+        final String sourced = watchOneHit(source);
         invulnerableTime = 0;
         hurtTime = 0;
+        final String sourceless = watchOneHit(null);
+        invulnerableTime = 0;
+        hurtTime = 0;
+        final String direct = directHurt();
 
-        String sourceless;
-        try {
-            asBukkit().damage(1.0D);
-            sourceless = String.valueOf(mid - getHealth());
-        } catch (Throwable t) {
-            sourceless = "threw " + t;
-        }
-
-        // Left as it was found. The poisoned subject is about to be despawned so it makes no
-        // difference there, but the control is a fresh resident going straight back into service, and
-        // a combatant that starts its next duel two hearts down would quietly bias that measurement.
         setHealth(getMaxHealth());
         invulnerableTime = 0;
         hurtTime = 0;
 
-        return "healthLostToSourcedHit=" + sourced + " healthLostToSourcelessHit=" + sourceless;
+        return "sourced[" + sourced + "] sourceless[" + sourceless + "] " + direct;
+    }
+
+    /**
+     * Bypasses Bukkit entirely and reports what vanilla itself says about hurting this combatant.
+     *
+     * <p>Run 149 reported {@code vanillaFired=false} on all four probes -- poisoned and control, sourced
+     * and sourceless -- which is a stronger claim than anything about the recycled entity: the
+     * {@code EntityDamageEvent} is raised from inside {@code LivingEntity.hurtServer}, so a combatant
+     * that never raises one was refused before BetterPvP was reachable, and the control was a
+     * combatant spawned seconds earlier that goes on to fight measurable duels. Either the probe never
+     * reaches vanilla, or vanilla declines both alike for a reason that has nothing to do with dying.
+     *
+     * <p>So this calls {@code hurtServer} directly and prints its verdict next to each predicate that
+     * can produce it. {@code isInvulnerableTo} is the whole of the first gate; the rest are the
+     * environment the {@code CraftLivingEntity.damage} wrapper checks before it delegates, and which a
+     * teardown-time probe is the most likely thing in the codebase to be violating.
+     */
+    /**
+     * Decomposes {@code isInvulnerableTo} into the individual predicates it is an or-chain of.
+     *
+     * <p>Run 150 found the answer and could not name it: the barren duel's defender reported
+     * {@code invulnerableTo=true} while its attacker, in the same duel and against the same damage
+     * source, reported false and took a clean six points of damage through the whole pipeline. So the
+     * refusal is vanilla's first gate and nothing further down -- but every flag the state dump prints
+     * reads identically on both, which means the term that is firing is one the dump does not contain.
+     *
+     * <p>{@code isInvulnerableTo} is {@code isRemoved() || invulnerable&&.. || isInvulnerableToBase()},
+     * and the last of those is overridden twice on the way down to {@code ServerPlayer}, picking up
+     * conditions that have nothing to do with combat: whether the entity is mid-dimension-change, and
+     * whether the client has finished loading. A fake player has no client to finish loading, and
+     * nothing in the simulator ever tells the server otherwise -- which would make every combatant
+     * invulnerable until something else cleared it, and would explain why the one combatant that has
+     * never been recycled is the one that can be hurt.
+     */
+    private String describeInvulnerability(ServerLevel serverLevel,
+                                           net.minecraft.world.damagesource.DamageSource source) {
+        return "invulnerableTo=" + isInvulnerableTo(serverLevel, source)
+                + " [base=" + isInvulnerableToBase(source)
+                + " clientLoaded=" + connection.hasClientLoaded()
+                + " changingDimension=" + isChangingDimension()
+                + " fireImmune=" + fireImmune() + "]";
+    }
+
+    private String directHurt() {
+        final ServerLevel serverLevel = (ServerLevel) level();
+        final net.minecraft.world.damagesource.DamageSource generic = damageSources().generic();
+        final double before = getHealth();
+        String hurt;
+        try {
+            hurt = String.valueOf(hurtServer(serverLevel, generic, 1.0F));
+        } catch (Throwable t) {
+            hurt = "threw " + t;
+        }
+        return "nms[" + describeInvulnerability(serverLevel, generic)
+                + " hurtServer=" + hurt
+                + " healthLost=" + (before - getHealth())
+                + " dimension=" + serverLevel.dimension()
+                + " levelMatchesBukkit=" + (serverLevel == ((CraftWorld) asBukkit().getWorld()).getHandle())
+                + " chunkLoaded=" + serverLevel.hasChunkAt(blockPosition())
+                + " gameMode=" + asBukkit().getGameMode()
+                + " mainThread=" + org.bukkit.Bukkit.isPrimaryThread()
+                + "]";
+    }
+
+    /**
+     * Lands a single point of damage with a listener attached to every stage of the pipeline.
+     *
+     * <p>The listener is registered and torn down around the one call rather than kept for the run:
+     * {@code DamageEvent} shares a static {@code HandlerList} with every other
+     * {@code CustomCancellableEvent}, so a permanent registration here would sit in the dispatch path
+     * of the whole server for the sake of at most two hits per sweep.
+     */
+    private String watchOneHit(SimPlayer source) {
+        final ProbeWatcher watcher = new ProbeWatcher();
+        final org.bukkit.plugin.Plugin plugin =
+                org.bukkit.plugin.java.JavaPlugin.getProvidingPlugin(SimPlayer.class);
+        org.bukkit.Bukkit.getPluginManager().registerEvents(watcher, plugin);
+        final double start = getHealth();
+        try {
+            if (source == null) {
+                asBukkit().damage(1.0D);
+            } else {
+                asBukkit().damage(1.0D, source.asBukkit());
+            }
+        } catch (Throwable t) {
+            watcher.threw = String.valueOf(t);
+        } finally {
+            org.bukkit.event.HandlerList.unregisterAll(watcher);
+        }
+        return watcher.describe(start - getHealth());
+    }
+
+    /**
+     * Records what each stage of the damage pipeline did to a single probe hit.
+     *
+     * <p>Everything is at {@code MONITOR} so the reading is of the chain's verdict rather than of some
+     * intermediate state, except the entry flags, which only need to know the event was constructed at
+     * all. Nothing here mutates an event; a probe that changed the answer would not be one.
+     */
+    private static final class ProbeWatcher implements org.bukkit.event.Listener {
+
+        private boolean vanillaFired;
+        private boolean vanillaCancelled;
+        private boolean canHurtFired;
+        private String canHurtResult = "-";
+        private boolean damageEventFired;
+        private boolean damageEventCancelled;
+        private String cancelReason;
+        private double finalDamage = -1.0D;
+        private String threw;
+
+        @org.bukkit.event.EventHandler(priority = org.bukkit.event.EventPriority.MONITOR, ignoreCancelled = false)
+        public void onVanilla(org.bukkit.event.entity.EntityDamageEvent event) {
+            vanillaFired = true;
+            vanillaCancelled = event.isCancelled();
+        }
+
+        @org.bukkit.event.EventHandler(priority = org.bukkit.event.EventPriority.MONITOR)
+        public void onCanHurt(me.mykindos.betterpvp.core.combat.events.EntityCanHurtEntityEvent event) {
+            canHurtFired = true;
+            canHurtResult = String.valueOf(event.getResult());
+        }
+
+        @org.bukkit.event.EventHandler(priority = org.bukkit.event.EventPriority.MONITOR, ignoreCancelled = false)
+        public void onDamage(me.mykindos.betterpvp.core.combat.events.DamageEvent event) {
+            damageEventFired = true;
+            damageEventCancelled = event.isCancelled();
+            cancelReason = event.getCancelReason();
+            finalDamage = event.getDamage();
+        }
+
+        private String describe(double healthLost) {
+            return "healthLost=" + healthLost
+                    + " vanillaFired=" + vanillaFired
+                    + " vanillaCancelled=" + vanillaCancelled
+                    + " canHurtFired=" + canHurtFired
+                    + " canHurtResult=" + canHurtResult
+                    + " damageEventFired=" + damageEventFired
+                    + " damageEventCancelled=" + damageEventCancelled
+                    + " cancelReason=" + cancelReason
+                    + " finalDamage=" + finalDamage
+                    + (threw == null ? "" : " threw=" + threw);
+        }
     }
 
     @SuppressWarnings("unchecked")
@@ -498,6 +780,11 @@ public class SimPlayer extends ServerPlayer {
         // whichever matchup happened to inherit the slot.
         bukkit.setNoDamageTicks(0);
         bukkit.setLastDamage(0);
+        // The other, much larger invulnerability, and the one nothing here could see for ten runs.
+        // Belt and braces alongside the calls in the spawn and recycle paths: this runs before every
+        // duel on every combatant, so whatever else a slot has been through, the fight starts with a
+        // target the damage pipeline is allowed to reach.
+        ensureClientLoaded();
     }
 
     /**

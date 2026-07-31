@@ -13,51 +13,61 @@ import java.util.Optional;
  * provoke at most of another 10.2%. Getting off {@link #RESPAWN_NEW} is worth about a third of the
  * sweep's throughput.
  *
- * <h2>What is actually known</h2>
- * A combatant that has died cannot be hurt again, and no amount of unsetting the post-death state on
- * the entity changes that. Run 140 unset three fields and 95.6% of its duels landed no hit; run 141
- * unset everything anyone could name -- pose and dimensions out of the 0.2x0.2 {@code DYING} box,
- * combat tracker, last-hurt-by, hurt and invulnerability counters, absorption, fire, freeze -- and
- * came out at 49.2%, the exact alternating pattern of a slot that works once with fresh residents and
- * never again. Run 142 replaced the dead resident outright and measured 0 barren duels in 32,713.
+ * <h2>Why this was ever a question</h2>
+ * For eleven runs a combatant that had died could not be hurt again, and no amount of unsetting the
+ * post-death state on the entity changed it. Run 140 unset three fields and 95.6% of its duels landed
+ * no hit; run 141 unset everything anyone could name -- pose and dimensions out of the 0.2x0.2
+ * {@code DYING} box, combat tracker, last-hurt-by, hurt and invulnerability counters, absorption,
+ * fire, freeze -- and still measured nothing. Only a full respawn worked, so {@link #RESPAWN_NEW} was
+ * the default and the other three were experiments.
  *
- * <p>So a new entity with a new UUID is known to work and a revived one is known not to. What run 141
- * could not separate is <em>why</em>, because replacement changes the entity and the UUID together.
- * These four values pull those apart:
+ * <p>None of that was about the entity. {@code ServerPlayer.die} calls
+ * {@code connection.markClientUnloadedAfterDeath()}, and {@code ServerPlayer.isInvulnerableTo} --
+ * vanilla's first gate, ahead of {@code EntityDamageEvent} and therefore ahead of everything the
+ * simulator can observe -- returns true while {@code connection.hasClientLoaded()} is false. Vanilla
+ * clears that flag only on the real respawn path, so an in-place revival produced an entity whose own
+ * state was flawless and which the server would not let anything touch. Run 150 caught it by dumping
+ * the two combatants of a barren duel side by side: identical in every field, and the one that had
+ * died reported {@code invulnerableTo=true} while the one that had not took damage normally.
+ *
+ * <p>{@code SimPlayer.ensureClientLoaded} clears it on every path back into a duel, and all three
+ * in-place strategies started working at once. Over the same 864 duels: {@link #RESPAWN_NEW} 95.7
+ * ms/duel, {@link #RECYCLE} 54.0, {@link #REVIVE} 40.1, none of them barren. Runs 151 and 152 reported
+ * identical pipeline counts down to the swing -- 73,254 swings, 73,254 vanilla damage events, 10,038
+ * {@code DamageEvent}s -- so the cheaper strategy is not cheaper by measuring less. What is left is a
+ * cost ordering:
  *
  * <ul>
- *   <li>{@link #REVIVE} -- same entity, same UUID, same level registration. Known broken; kept because
- *       it is the control, and because if a later change fixes the underlying cause this is the value
- *       that shows it.</li>
- *   <li>{@link #RECYCLE} -- same entity and UUID, but removed from the level and re-added. If this
- *       works, the residue is level or entity-tracking registration, and the fix is nearly free: it
- *       skips {@code ServerPlayer.<init>}, which is 8.84% of the server thread and carries the
- *       advancement listener registration and the stats-file lookup with it.</li>
- *   <li>{@link #RESPAWN_SAME_UUID} -- new entity, same UUID. If this works but {@link #RECYCLE} does
- *       not, the residue is held against the entity object -- a {@code WeakHashMap<Player, ?>} in a
- *       skill that does not override {@code invalidatePlayer}, or something similar. If it
- *       <em>fails</em>, the residue is keyed by UUID and {@code SimStatePurge} is missing a manager.</li>
- *   <li>{@link #RESPAWN_NEW} -- new entity, new UUID. Run 142's behaviour, and the only value proven
- *       to work, which is why it is the default and the fallback.</li>
+ *   <li>{@link #REVIVE} -- same entity, same UUID, same level registration. Nothing is added to or
+ *       removed from the level, so none of Moonrise's six area maps is touched. The default.</li>
+ *   <li>{@link #RECYCLE} -- same entity and UUID, removed from the level and re-added. Works, and
+ *       costs a third more than {@link #REVIVE} for the re-registration. Skips
+ *       {@code ServerPlayer.<init>}, which run 142's profile put at 8.84% of the server thread, along
+ *       with the entity add/remove and chunk-ticket churn behind another ~35%.</li>
+ *   <li>{@link #RESPAWN_SAME_UUID} -- new entity, same UUID. Costs what {@link #RESPAWN_NEW} costs;
+ *       kept as the diagnostic that separates entity-held residue from UUID-held residue, should
+ *       something ever look like it is carrying between duels again.</li>
+ *   <li>{@link #RESPAWN_NEW} -- new entity, new UUID. The most expensive value, and still the
+ *       fallback: it is the one that cannot depend on any in-place recovery being correct.</li>
  * </ul>
  *
- * <p>One short {@code MELEE} sweep per value answers this: the barren timeout count on the progress
- * line is the whole result, and a broken strategy shows up within the first few hundred duels.
- * {@code SimCombatantPool} demotes itself to {@link #RESPAWN_NEW} if the value it was given turns out
- * not to work, so an experiment costs a slower sweep rather than a useless one.
+ * <p>The barren timeout count on the progress line remains the whole result, and a broken strategy
+ * shows up within the first few hundred duels. {@code SimCombatantPool} demotes itself to
+ * {@link #RESPAWN_NEW} if the configured value stops working, so trying one costs a slower sweep
+ * rather than a useless one.
  */
 public enum ResidentRecycleStrategy {
 
-    /** Unset the death on the entity in place. The control; known not to work. */
+    /** Unset the death on the entity in place. The cheapest recovery, and the default. */
     REVIVE,
 
-    /** Same entity and UUID, removed from the level and re-added. */
+    /** Same entity and UUID, removed from the level and re-added. Works; costs a third more. */
     RECYCLE,
 
-    /** A freshly constructed entity that keeps the old resident's UUID. */
+    /** A freshly constructed entity that keeps the old resident's UUID. A diagnostic, not a saving. */
     RESPAWN_SAME_UUID,
 
-    /** A freshly constructed entity with a new UUID. Proven, and the fallback. */
+    /** A freshly constructed entity with a new UUID. The most expensive value, and the fallback. */
     RESPAWN_NEW;
 
     /**

@@ -137,6 +137,16 @@ public class DuelOrchestrator {
     private volatile boolean running;
 
     /**
+     * The in-flight sweep's damage-pipeline watcher, or null between runs.
+     *
+     * <p>Per run rather than per plugin, because {@code DamageEvent} shares one static handler list
+     * with every {@code CustomCancellableEvent} on the server and a sweep is the only time anyone
+     * wants this. Started with the world and stopped in {@link #finish}, so an aborted run
+     * unregisters through the same path a completed one does.
+     */
+    private SimDamageTelemetry telemetry;
+
+    /**
      * Set by {@link #requestStop()}; cleared when a run starts.
      *
      * <p>Volatile rather than synchronised because the two sides are a single boolean written by
@@ -370,6 +380,7 @@ public class DuelOrchestrator {
                     // Creating the world here rather than lazily inside a duel keeps the one
                     // blocking, main-thread-only operation out of the tick loop.
                     worldManager.getOrCreate();
+                    telemetry = SimDamageTelemetry.start(plugin);
                     // The matchup count is pending.size() / iterations, but taken from the queue
                     // rather than recomputed, so a build skipped above is not counted as planned.
                     new SweepLoop(runId, scope, pending, pending.size() / iterations, done, listener).start();
@@ -399,6 +410,14 @@ public class DuelOrchestrator {
         // Before the world goes: residents are entities inside it, and the pool's slots describe
         // arenas that stop existing the moment it is unloaded.
         combatantPool.drain();
+        // Unconditionally, including on a run where nothing went wrong. The funnel is only readable
+        // against a baseline, and a healthy run is the baseline -- logging it only when something
+        // looks broken would mean never having one to compare against.
+        if (telemetry != null) {
+            log.info("Simulation run {} damage pipeline: {}", runId, telemetry.describe()).submit();
+            telemetry.stop();
+            telemetry = null;
+        }
         worldManager.teardown();
         CompletableFuture.allOf(inFlight.toArray(new CompletableFuture[0]))
                 .thenCompose(ignored -> repository.insertResults(runId, tail))
@@ -713,6 +732,51 @@ public class DuelOrchestrator {
         }
 
         /**
+         * Dumps everything knowable about the first barren duel of the run, while it is still alive.
+         *
+         * <p>The placement is the point. Every previous dissection ran from
+         * {@code SimCombatantPool.release}, which is after {@code teardown} has despawned both
+         * combatants -- dropped their clients, unregistered their lookup entries and purged their
+         * manager state -- and run 149 showed that a combatant probed there refuses damage before the
+         * vanilla event is even raised, including a freshly spawned control that had never died. That
+         * makes every teardown-time reading a statement about teardown rather than about the bug.
+         *
+         * <p>Here the duel has resolved but nothing has been torn down: both sides are still spawned,
+         * still equipped, still registered, exactly as they were for the 600 swings that measured
+         * nothing. Whatever the funnel says here is what was true during the fight.
+         *
+         * <p>Once per run, on the first one, because the interesting output is a single detailed case
+         * and 300 copies of it would bury the rest of the log.
+         */
+        private void dissectFirstBarrenDuel(Duel duel) {
+            if (barrenTimeouts != 1) {
+                return;
+            }
+            final SimPlayer attackerHandle = duel.attacker.getHandle();
+            final SimPlayer defenderHandle = duel.defender.getHandle();
+            log.warn("Simulation run {} [{}]: dissecting the first barren duel, live, before teardown."
+                            + " Both combatants are still spawned and registered, so unlike every"
+                            + " previous dump this describes the fight rather than its cleanup."
+                            + "\n  arena          {}"
+                            + "\n  matchup        build {} vs target {}"
+                            + "\n  attacker state {}"
+                            + "\n  attacker funnel{}"
+                            + "\n  defender state {}"
+                            + "\n  defender funnel{}"
+                            + "\n  defender probe {}"
+                            + "\n  attacker probe {}",
+                    runId, scope,
+                    duel.slot.getArena().index(),
+                    duel.matchup.build().fingerprint(), duel.matchup.target().role(),
+                    attackerHandle.describeCombatState(),
+                    " " + attackerHandle.describePipeline(),
+                    defenderHandle.describeCombatState(),
+                    " " + defenderHandle.describePipeline(),
+                    defenderHandle.probeDamage(attackerHandle),
+                    attackerHandle.probeDamage(defenderHandle)).submit();
+        }
+
+        /**
          * Closes the run with what fraction of it measured nothing, when any of it did.
          *
          * <p>Next to the summary rather than inside it, because it is a verdict on whether the rows
@@ -929,6 +993,10 @@ public class DuelOrchestrator {
         private void setUp() {
             attacker.spawn(context, slot.getArena().spawnA());
             defender.spawn(context, slot.getArena().spawnB());
+            // After the spawn, so a resident starts this duel's funnel at zero rather than carrying
+            // its predecessor's counts into the one line that is supposed to describe this fight.
+            attacker.getHandle().resetPipelineCounters();
+            defender.getHandle().resetPipelineCounters();
             recording = recorder.startDuel(attacker.getUuid(), defender.getUuid());
         }
 
@@ -973,6 +1041,7 @@ public class DuelOrchestrator {
             if (scenario.isDefenderDriven()) {
                 rotationPolicy.act(defender, attacker, elapsed);
                 defender.swingAt(attacker);
+                noteSwing(defender, attacker);
             }
             // Swing every tick and let the pipeline decide what lands. The sim previously paced
             // itself at DamageCause.DEFAULT_DELAY, on the assumption that matching the floor
@@ -987,7 +1056,21 @@ public class DuelOrchestrator {
             // processPreEventDelay returns before DamageEventProcessor fires DamageEvent, so the
             // recorder only ever sees hits that actually landed.
             attacker.swingAt(defender);
+            noteSwing(attacker, defender);
             return false;
+        }
+
+        /**
+         * Counts a swing against the funnel, if this run is watching one.
+         *
+         * <p>Counted at the call rather than at the landing, which is the entire point: the recorder
+         * already knows about hits that landed, and the number nobody has ever had is how many swings
+         * were issued against a combatant that then measured nothing.
+         */
+        private void noteSwing(SimCombatant from, SimCombatant to) {
+            if (telemetry != null) {
+                telemetry.noteSwing(from.getHandle(), to.getHandle());
+            }
         }
 
         /** Reduces the recording into one iteration's sample and files it against the matchup. */
@@ -1007,6 +1090,7 @@ public class DuelOrchestrator {
             if (resolvedAtTick < 0 && hits.isEmpty()) {
                 barren = true;
                 loop.noteBarrenTimeout();
+                loop.dissectFirstBarrenDuel(this);
             }
 
             // The fight is measured from the first landed hit, not from when the duel object was

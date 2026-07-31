@@ -235,17 +235,22 @@ public class SimCombatantPool {
             slot.hostedDeath = false;
 
             // The control, on the same tick, in the same arena, through the same pipeline, differing
-            // only in being a combatant that has never died. If it loses health where the poisoned one
-            // did not, the refusal is real and belongs to the recycled entity. If it loses none either,
-            // the probe measures nothing and the zero above never meant what it appeared to.
+            // only in being a combatant that has never died. Run 149 had it refuse damage exactly as
+            // the poisoned one did, and refuse it before the vanilla damage event was even raised --
+            // which condemns the probe's surroundings rather than either combatant, since this same
+            // fresh entity goes straight back into service and fights measurable duels. So its own
+            // state is now dumped alongside the poisoned pair's, on equal terms: if the control reads
+            // healthy here and still cannot be hurt here, the difference is teardown, not death.
             if (poisonedProbe != null) {
                 log.warn("First barren duel under strategy {}, on arena {}. Neither combatant's own"
                                 + " state explains this on its face, so here is all of it, plus what"
                                 + " happens when each of them is hurt directly rather than swung at."
                                 + "\n  attacker: {}"
                                 + "\n  poisoned probe: {}"
+                                + "\n  control  state: {}"
                                 + "\n  control  probe: {}  (a freshly spawned replacement, never died)",
                         strategy(), slot.arena.index(), poisonedState, poisonedProbe,
+                        slot.defender.describeCombatState(),
                         slot.defender.probeDamage(slot.attacker)).submit();
             }
         } else {
@@ -322,10 +327,15 @@ public class SimCombatantPool {
                         + " using RESPAWN_NEW. Valid values: REVIVE, RECYCLE, RESPAWN_SAME_UUID,"
                         + " RESPAWN_NEW", configured).submit();
                 strategy = ResidentRecycleStrategy.RESPAWN_NEW;
-            } else if (strategy != ResidentRecycleStrategy.RESPAWN_NEW) {
-                log.info("Sim residents will be recovered by {} rather than RESPAWN_NEW. This is an"
-                        + " experiment: watch the barren timeout count on the progress line, and expect"
-                        + " an automatic fallback if it starts climbing", strategy).submit();
+            } else if (strategy != ResidentRecycleStrategy.REVIVE) {
+                // Only when the run is not on the default. All four values work since run 151, so this
+                // is no longer a warning that something experimental is in play -- it is a note that
+                // the sweep is paying more than it has to, and why its timings will not line up with
+                // the last one's.
+                log.info("Sim residents will be recovered by {} rather than the default REVIVE, which"
+                        + " costs more per duel: RESPAWN_NEW measured 95.7 ms/duel, RECYCLE 54.0 and"
+                        + " REVIVE 40.1 over the same 864. The pool still falls back to RESPAWN_NEW if"
+                        + " the barren timeout count starts climbing", strategy).submit();
             }
         }
         return strategy;

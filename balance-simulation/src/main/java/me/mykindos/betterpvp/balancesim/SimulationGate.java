@@ -92,14 +92,16 @@ public class SimulationGate {
      * {@code ResidentRecycleStrategy}, which documents what each value tests and why the question is
      * still open.
      *
-     * <p>Defaults to the only value proven to produce real measurements, which is also the most
-     * expensive one -- a duel kills its defender essentially every time, so this is paid once per duel
-     * and is about a third of the sweep's cost. The cheaper values are experiments; the pool falls back
-     * to {@code RESPAWN_NEW} on its own if the configured one does not work, so trying one costs a
-     * slower sweep rather than a run of nulls.
+     * <p>Defaults to {@code REVIVE}, which keeps the {@code ServerPlayer} and never touches its level
+     * registration at all. A duel kills its defender essentially every time, so this is paid once per
+     * duel and used to be about a third of the sweep's cost. Over the same 864 duels: {@code
+     * RESPAWN_NEW} 95.7 ms/duel, {@code RECYCLE} 54.0, {@code REVIVE} 40.1 -- and the last two produced
+     * identical pipeline counts, so the saving is not bought by measuring less. The pool falls back to
+     * {@code RESPAWN_NEW} on its own if the configured value stops working, so trying a cheaper one
+     * costs a slower sweep rather than a run of nulls.
      */
     @Inject
-    @Config(path = "champions.simulation.residentRecycleStrategy", defaultValue = "RESPAWN_NEW")
+    @Config(path = "champions.simulation.residentRecycleStrategy", defaultValue = "REVIVE")
     private String residentRecycleStrategy;
 
     /**
