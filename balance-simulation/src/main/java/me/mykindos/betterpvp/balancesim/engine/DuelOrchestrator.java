@@ -5,6 +5,10 @@ import com.google.inject.Singleton;
 import lombok.CustomLog;
 import me.mykindos.betterpvp.balancesim.BalanceSimulation;
 import me.mykindos.betterpvp.balancesim.SimulationGate;
+import me.mykindos.betterpvp.balancesim.audit.AuditThresholds;
+import me.mykindos.betterpvp.balancesim.audit.SkillAuditReport;
+import me.mykindos.betterpvp.balancesim.audit.SkillRelevanceAudit;
+import me.mykindos.betterpvp.balancesim.audit.SkillVerdict;
 import me.mykindos.betterpvp.balancesim.catalog.BalanceCatalog;
 import me.mykindos.betterpvp.balancesim.catalog.SimBuildSpec;
 import me.mykindos.betterpvp.balancesim.catalog.SimEquipment;
@@ -25,6 +29,7 @@ import org.bukkit.Bukkit;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.scheduler.BukkitTask;
 
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -38,6 +43,7 @@ import java.util.Set;
 import java.util.TreeMap;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
+import java.util.stream.Collectors;
 
 /**
  * Runs the sweep: pairs every catalog build against every target, drives both sides through the
@@ -76,7 +82,11 @@ public class DuelOrchestrator {
     // Bumped from phase3-actives-1: until DEATH_SETTLE_TICKS existed, a duel was torn down before its
     // recorded kill was applied, so every death aborted partway through the real death path. Runs on
     // the older version measured a different engine and should not be diffed against these.
-    private static final String ENGINE_VERSION = "phase3-actives-2";
+    // Bumped for the activation and energy ledgers: extras gained two blocks, and the SKILLS tier now
+    // enumerates skill-less baselines alongside its single-skill builds. Neither changes what an
+    // existing figure means, but a SKILLS run at -2 has no baseline rows and cannot be audited, which
+    // is exactly the kind of difference this string exists to keep visible.
+    private static final String ENGINE_VERSION = "phase3-actives-3";
 
     private static final long MILLIS_PER_TICK = 50L;
 
@@ -145,6 +155,15 @@ public class DuelOrchestrator {
      * unregisters through the same path a completed one does.
      */
     private SimDamageTelemetry telemetry;
+
+    /**
+     * The in-flight sweep's skill relevance audit, or null when the run was not asked for one.
+     *
+     * <p>Per run for the same reason the telemetry is: it accumulates this sweep's baselines and
+     * single-skill observations, and carrying them into the next run would compare a build against a
+     * baseline measured under a different configuration.
+     */
+    private SkillRelevanceAudit audit;
 
     /**
      * Set by {@link #requestStop()}; cleared when a run starts.
@@ -249,6 +268,24 @@ public class DuelOrchestrator {
                                              SimScope scope,
                                              SimScenario scenario,
                                              Consumer<SimProgress> listener) {
+        return run(trigger, scope, scenario, false, listener);
+    }
+
+    /**
+     * Starts a sweep, optionally auditing which of its skills could move a result at all.
+     *
+     * <p>The audit is a reporting mode over an ordinary sweep rather than a different kind of run:
+     * every {@code sim_result} row is written exactly as it would have been, and the verdicts are
+     * derived from those rows. That keeps a run's data the same whether or not anyone asked for an
+     * audit, and means a future re-audit at a different threshold needs no new duels.
+     *
+     * @param audit whether to classify each skill's relevance and write the artifact
+     */
+    public CompletableFuture<SimSummary> run(SimulationTrigger trigger,
+                                             SimScope scope,
+                                             SimScenario scenario,
+                                             boolean audit,
+                                             Consumer<SimProgress> listener) {
         if (!gate.isEnabled()) {
             throw new IllegalStateException("Simulation is disabled");
         }
@@ -261,6 +298,11 @@ public class DuelOrchestrator {
         running = true;
         stopRequested = false;
         this.scenario = scenario;
+        // Constructed per run rather than injected, because it accumulates that run's observations
+        // and a singleton would carry one sweep's baselines into the next.
+        this.audit = audit
+                ? new SkillRelevanceAudit(context.skillManager(), AuditThresholds.defaults())
+                : null;
         // Before configHash, and before anything else reads a knob: from here to the summary the run
         // is parameterised by this snapshot and not by the gate.
         this.settings = SweepSettings.from(gate);
@@ -333,7 +375,9 @@ public class DuelOrchestrator {
             context.equipment().invalidate();
 
             final List<SimBuildSpec> builds = catalog.enumerateBuilds(scope, settings.maxBuilds());
-            final List<SimTargetSpec> targets = catalog.enumerateTargets(scope);
+            // The scenario is passed because it decides whether the target axis may be reduced: a
+            // MUTUAL defender fights back, so its role is not reducible to a health total.
+            final List<SimTargetSpec> targets = catalog.enumerateTargets(scope, scenario);
             final int iterations = settings.iterations();
 
             final long duels = (long) builds.size() * targets.size() * iterations;
@@ -419,6 +463,7 @@ public class DuelOrchestrator {
             telemetry = null;
         }
         worldManager.teardown();
+        writeAudit(runId, summary);
         CompletableFuture.allOf(inFlight.toArray(new CompletableFuture[0]))
                 .thenCompose(ignored -> repository.insertResults(runId, tail))
                 .thenCompose(ignored -> repository.closeRun(runId, summary.status()))
@@ -434,6 +479,56 @@ public class DuelOrchestrator {
                     logSummary(summary);
                     done.complete(summary);
                 });
+    }
+
+    /**
+     * Classifies the run's skills and writes the audit artifact, if this run was asked for one.
+     *
+     * <p>Runs for a cancelled or failed sweep too, deliberately. A {@code FULL} audit is not expected
+     * to finish and stopping it early is the normal way to use it, so refusing to report on a partial
+     * run would mean never reporting at all -- and the enumeration is interleaved by role, so an early
+     * stop is a uniformly thinner sweep rather than a biased one. The artifact carries the run's
+     * status, and a partial sweep's verdicts are proposals against thinner evidence rather than
+     * different in kind.
+     *
+     * <p>Failures here are logged and swallowed. The audit is a report over rows that are already
+     * durable, so losing it costs a re-derivation and nothing else -- whereas letting an IO error
+     * escape would fail a run whose measurements were fine.
+     */
+    private void writeAudit(long runId, SimSummary summary) {
+        if (audit == null) {
+            return;
+        }
+        final SkillRelevanceAudit finished = audit;
+        audit = null;
+        try {
+            if (!finished.hasBaselines()) {
+                // Every verdict is a delta against a skill-less build of the same role and weapon, so
+                // without one there is nothing to subtract and every skill would read as relevant.
+                log.warn("Simulation run {} was asked for a skill audit but measured no skill-less"
+                        + " baseline builds, so no verdict can be reached. Audit scopes must enumerate"
+                        + " baselines -- SKILLS does; MELEE and WEAPONS have no skills to audit.",
+                        runId).submit();
+                return;
+            }
+            final List<SkillVerdict> verdicts = finished.classify();
+            final Path artifact = SkillAuditReport.write(
+                    plugin.getDataFolder().toPath().resolve("audits"),
+                    runId,
+                    summary.scope().name(),
+                    scenario.name(),
+                    configHash(summary.scope()),
+                    finished.thresholds(),
+                    verdicts,
+                    finished.multiSkillBuildsSkipped());
+            log.info("Simulation run {} skill audit: {}. Written to {} -- review before applying"
+                            + " anything to config.",
+                    runId, SkillAuditReport.summarise(verdicts), artifact).submit();
+        } catch (Exception e) {
+            log.error("Simulation run {} finished but its skill audit could not be written."
+                    + " The rows are unaffected and the audit can be re-derived from them.",
+                    runId, e).submit();
+        }
     }
 
     /**
@@ -475,6 +570,10 @@ public class DuelOrchestrator {
      *   <li>the skill filter, because two {@code FULL} runs under different filters cover different
      *       spaces while sharing a scope, and comparing them would read a narrower sweep's absent
      *       builds as a balance change;</li>
+     *   <li>the relevant-skill list, for the same reason one step down: under
+     *       {@code SimSkillFilter.RELEVANT} the filter name is constant and the <em>list</em> is what
+     *       decides which builds exist, so hashing the filter alone would group two sweeps of
+     *       different skill sets;</li>
      *   <li>the scenario and the channel hold budget, because both change what a row <em>means</em>
      *       rather than just how much of the space it covers;</li>
      *   <li>iterations, timeout and concurrency, which bound the measurement's precision;</li>
@@ -487,6 +586,7 @@ public class DuelOrchestrator {
         return Integer.toHexString((scope + ":" + scenario + ":" + settings.iterations()
                 + ":" + settings.duelTimeoutSeconds() + ":" + settings.maxConcurrentDuels()
                 + ":" + settings.skillFilter()
+                + ":" + settings.relevantSkillsCanonical()
                 + ":" + settings.channelHoldTicks()
                 + ":" + configDigest.digest()
                 + ":" + ENGINE_VERSION).hashCode());
@@ -510,6 +610,9 @@ public class DuelOrchestrator {
                 + ",\"rotation\":\"greedy\""
                 + ",\"channel_hold_ticks\":" + settings.channelHoldTicks()
                 + ",\"skill_filter\":\"" + settings.skillFilter() + '"'
+                // The count rather than the names: the list runs to dozens of entries and this column
+                // is read at a glance, while config_hash already makes two different lists distinct.
+                + ",\"relevant_skills\":" + settings.relevantSkills().size()
                 + ",\"balance_config\":\"" + configDigest.digest() + '"'
                 + ",\"timeout_s\":" + settings.duelTimeoutSeconds()
                 + '}';
@@ -551,6 +654,11 @@ public class DuelOrchestrator {
      * @param channelHoldTicks        how long the rotation holds a channel -- hashed, so a run that
      *                                changed it mid-flight would be incomparable to itself
      * @param skillFilter             which skills the catalog was allowed to build from
+     * @param relevantSkills          the reviewed audit list {@code SimSkillFilter.RELEVANT} sweeps.
+     *                                Snapshotted and hashed rather than only named by the filter,
+     *                                because two {@code RELEVANT} runs against different lists cover
+     *                                different spaces while agreeing on every other knob -- and the
+     *                                whole point of the list is that it is edited between runs
      */
     private record SweepSettings(int iterations,
                                  int maxBuilds,
@@ -559,11 +667,12 @@ public class DuelOrchestrator {
                                  int duelSetupsPerTick,
                                  double progressIntervalSeconds,
                                  int channelHoldTicks,
-                                 SimSkillFilter skillFilter) {
+                                 SimSkillFilter skillFilter,
+                                 Set<String> relevantSkills) {
 
         /** Stands in before the first run, so the field is never null for a reader that beats it. */
         private static final SweepSettings NONE =
-                new SweepSettings(1, 0, 0, 0, 1, 15, 1, SimSkillFilter.OFFENSIVE);
+                new SweepSettings(1, 0, 0, 0, 1, 15, 1, SimSkillFilter.OFFENSIVE, Set.of());
 
         private static SweepSettings from(SimulationGate gate) {
             return new SweepSettings(Math.max(1, gate.getIterations()),
@@ -573,7 +682,18 @@ public class DuelOrchestrator {
                     gate.getDuelSetupsPerTick(),
                     gate.getProgressIntervalSeconds(),
                     Math.max(1, gate.getChannelHoldTicks()),
-                    SimSkillFilter.parse(gate.getSkillFilter()));
+                    SimSkillFilter.parse(gate.getSkillFilter()),
+                    SimSkillFilter.parseRelevantSkills(gate.getRelevantSkills()));
+        }
+
+        /**
+         * The relevant-skill list in a stable order, for hashing and for the scenario JSON.
+         *
+         * <p>Sorted, because the list is hand-edited config: reordering it while reviewing an audit
+         * must not read as a different sweep, and adding or removing a name must.
+         */
+        private String relevantSkillsCanonical() {
+            return relevantSkills.stream().sorted().collect(Collectors.joining(","));
         }
     }
 
@@ -892,6 +1012,12 @@ public class DuelOrchestrator {
         private void complete(Matchup matchup) {
             completedMatchups++;
             final SimMeasurement.Aggregate aggregate = matchup.measurement().aggregate();
+            // Fed the reduced matchup rather than the row, because the audit needs the build spec and
+            // the typed ledgers, none of which survive into SimResultRow. Reading the same aggregate
+            // the row is built from is what keeps the verdicts and the stored data consistent.
+            if (audit != null) {
+                audit.observe(matchup.build(), matchup.target(), aggregate);
+            }
             results.add(new SimResultRow(matchup.buildId(),
                     matchup.target(),
                     aggregate.dmgPerHit(),
@@ -987,7 +1113,14 @@ public class DuelOrchestrator {
                     target.skills(),
                     target.pointsSpent(),
                     false,
-                    "target:" + target.role() + ":" + target.armorSetId());
+                    "target:" + target.role() + ":" + target.armorSetId(),
+                    // Carried because a build spec is what equips a combatant and the record requires
+                    // it, not because anything reads it: this spec never reaches sim_build, so the
+                    // defender's weapon profile is recorded nowhere. It stands for itself alone --
+                    // the weapon dedupe applies to the swept attacker axis, and claiming the
+                    // defender's fixed kit stood for other weapons would be false.
+                    context.equipment().profileOf(context.equipment().defaultWeapon().key()),
+                    List.of(context.equipment().defaultWeapon().key()));
         }
 
         private void setUp() {
@@ -1128,9 +1261,15 @@ public class DuelOrchestrator {
             // two scenarios on the row as well as on the run.
             final boolean attackerDied = attacker.getUuid().equals(recording.getKilled());
 
+            // The attacker's side of both ledgers, for the same reason every other figure on the row
+            // is the attacker's: a sim_result row describes the attacker's build. The defender's
+            // counts are recorded too and are reachable from the recording, which is what the
+            // defensive half of the relevance audit will read once defenders can carry skills.
             matchup.measurement().add(
                     new SimMeasurement.Sample(dmgPerHit, dpsSustained, dpsBurst, ttkTicks,
-                            hits.size(), killed, attackerDied, recording.isEnergyLimited()),
+                            hits.size(), killed, attackerDied, recording.isEnergyLimited(),
+                            recording.activationsOf(attacker.getUuid()),
+                            recording.energyOf(attacker.getUuid())),
                     reasonCounts(hits));
 
             if (matchup.measurement().isComplete()) {

@@ -5,6 +5,7 @@ import com.google.inject.Singleton;
 import lombok.CustomLog;
 import me.mykindos.betterpvp.balancesim.catalog.SimBuildSpec;
 import me.mykindos.betterpvp.balancesim.catalog.SimSkillAllocation;
+import me.mykindos.betterpvp.balancesim.catalog.SimWeaponProfile;
 import me.mykindos.betterpvp.balancesim.database.jooq.tables.records.SimResultRecord;
 import me.mykindos.betterpvp.balancesim.engine.SimulationTrigger;
 import me.mykindos.betterpvp.core.database.Database;
@@ -40,9 +41,9 @@ public class SimResultRepository {
 
     /**
      * How many build rows go up per statement. Postgres binds every value of a multi-row insert as
-     * a parameter and caps a statement at 65535 of them; at eight columns per row this leaves an
-     * order of magnitude of headroom while still cutting a thousand-build catalog to a handful of
-     * round trips.
+     * a parameter and caps a statement at 65535 of them; at sixteen columns per row this still leaves
+     * most of an order of magnitude of headroom while cutting a thousand-build catalog to a handful
+     * of round trips. Worth re-checking against the cap if the column count doubles again.
      */
     private static final int BUILD_INSERT_CHUNK = 500;
 
@@ -117,19 +118,39 @@ public class SimResultRepository {
 
                 var insert = trx.insertInto(SIM_BUILD,
                         SIM_BUILD.RUN_ID, SIM_BUILD.ROLE, SIM_BUILD.WEAPON, SIM_BUILD.RUNES,
-                        SIM_BUILD.SKILLS, SIM_BUILD.POINTS_SPENT, SIM_BUILD.BOOSTER, SIM_BUILD.FINGERPRINT);
+                        SIM_BUILD.SKILLS, SIM_BUILD.POINTS_SPENT, SIM_BUILD.BOOSTER, SIM_BUILD.FINGERPRINT,
+                        SIM_BUILD.WEAPON_DAMAGE_BASE, SIM_BUILD.WEAPON_DAMAGE_MIN, SIM_BUILD.WEAPON_DAMAGE_MAX,
+                        SIM_BUILD.WEAPON_ATTACK_SPEED_BASE, SIM_BUILD.WEAPON_ATTACK_SPEED_MIN,
+                        SIM_BUILD.WEAPON_ATTACK_SPEED_MAX, SIM_BUILD.WEAPON_SLOT, SIM_BUILD.WEAPON_ALIASES);
                 for (SimBuildSpec build : chunk) {
+                    final SimWeaponProfile weapon = build.weapon();
                     insert = insert.values(runId,
                             build.role(),
                             build.weaponKey(),
-                            jsonb(runesToJson(build.runeKeys()), "[]"),
+                            jsonb(stringsToJson(build.runeKeys()), "[]"),
                             // Allocated levels only at insert time. The effective level depends on
                             // the equipped weapon and can only be read off a live combatant, so it
                             // is written back by updateBuildSkills once the build has been spawned.
                             jsonb(skillsToJson(build.skills()), "[]"),
                             build.pointsSpent(),
                             build.booster(),
-                            build.fingerprint());
+                            build.fingerprint(),
+                            // The weapon's configured figures, denormalised so a row stays readable
+                            // after the item config it was measured under has moved on. Only the base
+                            // is exercised -- MeleeDamageStatHandler applies stat.getValue() and
+                            // ItemFactory.create rolls nothing -- so the min/max pair describes what
+                            // the item could roll, not what this build swung for.
+                            BigDecimal.valueOf(weapon.damageBase()),
+                            BigDecimal.valueOf(weapon.damageMin()),
+                            BigDecimal.valueOf(weapon.damageMax()),
+                            BigDecimal.valueOf(weapon.attackSpeedBase()),
+                            BigDecimal.valueOf(weapon.attackSpeedMin()),
+                            BigDecimal.valueOf(weapon.attackSpeedMax()),
+                            weapon.skillSlot(),
+                            // Every weapon key this row's measurement covers. A dashboard resolving a
+                            // weapon through this list is the difference between "never swept" and
+                            // "swept under an equivalent key", which are opposite conclusions.
+                            jsonb(stringsToJson(build.weaponAliases()), "[]"));
                 }
 
                 insert.returning(SIM_BUILD.ID, SIM_BUILD.FINGERPRINT)
@@ -183,6 +204,10 @@ public class SimResultRepository {
                 // resistance effects, so it is stored alongside the measurement.
                 record.setTargetSkills(jsonb(skillsToJson(row.target().skills()), "[]"));
                 record.setTargetPoints(row.target().pointsSpent());
+                // The roles this one measurement stands for. Written on every row, including the
+                // un-reduced tiers where it is just the target's own role -- an empty array would be
+                // indistinguishable from "collapsed onto nothing" for a dashboard unpacking it.
+                record.setTargetRoleAliases(jsonb(stringsToJson(row.target().roleAliases()), "[]"));
                 // Nullable: a matchup that timed out has no TTK, and the figures derived from it
                 // are null with it.
                 record.setDmgPerHit(decimal(row.dmgPerHit()));
@@ -263,17 +288,24 @@ public class SimResultRepository {
         return json.append(']').toString();
     }
 
-    /** Rune keys as a JSON string array, matching the {@code sim_build.runes} column's shape. */
-    private static String runesToJson(List<String> runeKeys) {
-        if (runeKeys == null || runeKeys.isEmpty()) {
+    /**
+     * A JSON string array, the shape every list-of-identifiers column on these tables uses.
+     *
+     * <p>Shared by the rune list and by both alias lists rather than written per column, so the three
+     * cannot drift into shapes a dashboard has to special-case. Written by hand for the reason
+     * {@link #skillsToJson} is: the values are short identifiers and a JSON binder would be a
+     * dependency carried for two loops.
+     */
+    private static String stringsToJson(List<String> values) {
+        if (values == null || values.isEmpty()) {
             return "[]";
         }
         final StringBuilder json = new StringBuilder("[");
-        for (int i = 0; i < runeKeys.size(); i++) {
+        for (int i = 0; i < values.size(); i++) {
             if (i > 0) {
                 json.append(',');
             }
-            json.append('"').append(escape(runeKeys.get(i))).append('"');
+            json.append('"').append(escape(values.get(i))).append('"');
         }
         return json.append(']').toString();
     }

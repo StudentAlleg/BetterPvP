@@ -5,8 +5,11 @@ import me.mykindos.betterpvp.champions.champions.skills.Skill;
 import me.mykindos.betterpvp.champions.champions.skills.types.OffensiveSkill;
 import me.mykindos.betterpvp.champions.champions.skills.types.PassiveSkill;
 
+import java.util.Arrays;
+import java.util.LinkedHashSet;
 import java.util.Locale;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * Which skills are allowed into the permutation space.
@@ -65,16 +68,48 @@ public enum SimSkillFilter {
     PASSIVES,
 
     /** Passives the skill declares as offensive. The phase 2 default, kept for reproducing those runs. */
-    OFFENSIVE_PASSIVES;
+    OFFENSIVE_PASSIVES,
 
-    /** Whether a sweep under this filter should enumerate builds containing {@code skill}. */
-    public boolean admits(Skill skill) {
+    /**
+     * Only the skills a reviewed audit named relevant, read from
+     * {@code champions.simulation.relevantSkills}.
+     *
+     * <p>The strongest available prune, and the only one derived from measurement rather than from a
+     * marker interface: {@link #OFFENSIVE} trusts what a skill author declared, whereas this trusts
+     * what a sweep observed the skill doing. That closes the gap {@code SimSkillFilter}'s own docs
+     * name -- an author's missing {@code OffensiveSkill} marker silently dropping a skill that
+     * matters -- because a skill measured relevant is admitted whatever it is labelled.
+     *
+     * <p>Read from config rather than from the newest audit artifact, which is the whole point.
+     * {@code SkillAuditReport} generates a proposal and refuses to apply it, because an
+     * {@code INERT} verdict means "moved nothing measurable in this scenario" and not "does nothing":
+     * a crowd-control skill lands there correctly and would be excluded forever by an automatic
+     * pipeline. Generate, review, commit -- so the list a run sweeps is one a human agreed to.
+     *
+     * <p><b>This filter goes stale.</b> A skill buffed from zero stays excluded until the audit is
+     * re-run and the list re-committed; that is why the artifact records {@code config_hash} and warns
+     * about it, and why an empty list is refused rather than treated as "exclude everything".
+     */
+    RELEVANT;
+
+    /**
+     * Whether a sweep under this filter should enumerate builds containing {@code skill}.
+     *
+     * @param relevant skill names a reviewed audit named relevant. Only consulted by
+     *                 {@link #RELEVANT}; every other filter answers from the skill alone
+     */
+    public boolean admits(Skill skill, Set<String> relevant) {
         return switch (this) {
             case ALL -> true;
             case EXERCISABLE -> exercisable(skill);
             case OFFENSIVE -> exercisable(skill) && skill instanceof OffensiveSkill;
             case PASSIVES -> skill instanceof PassiveSkill;
             case OFFENSIVE_PASSIVES -> skill instanceof PassiveSkill && skill instanceof OffensiveSkill;
+            // Still gated on exercisability. A skill the audit called relevant is by definition one
+            // this engine drove, so the test is redundant today -- but the list is hand-edited config,
+            // and a name typed into it for a bow archetype would otherwise enumerate builds that
+            // measure as an empty slot while claiming a skill.
+            case RELEVANT -> exercisable(skill) && relevant.contains(skill.getName());
         };
     }
 
@@ -99,6 +134,38 @@ public enum SimSkillFilter {
         return raw == null || raw.isBlank()
                 ? OFFENSIVE
                 : Optional.ofNullable(lookup(raw.trim().toUpperCase(Locale.ROOT))).orElse(OFFENSIVE);
+    }
+
+    /**
+     * Parses the committed relevant-skill list: comma-separated skill names, as they appear in the
+     * audit artifact's {@code relevantSkills} block.
+     *
+     * <p>Order is preserved and duplicates dropped, so the set reads back in the order it was
+     * reviewed in. Names are kept verbatim rather than case-folded, because they are matched against
+     * {@code Skill.getName} -- a fuzzy match here would admit a skill nobody put on the list.
+     */
+    public static Set<String> parseRelevantSkills(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return Set.of();
+        }
+        final Set<String> names = new LinkedHashSet<>();
+        Arrays.stream(raw.split(","))
+                .map(String::trim)
+                .filter(name -> !name.isEmpty())
+                .forEach(names::add);
+        return Set.copyOf(names);
+    }
+
+    /**
+     * Whether this filter cannot enumerate anything without a relevant-skill list to consult.
+     *
+     * <p>Asked so an empty list is refused at the top of a run rather than silently producing a sweep
+     * with no skills in it. That failure is particularly worth catching because the result is a valid
+     * sweep -- skill-less builds against every target, completing normally -- whose rows answer a
+     * question nobody asked, and nothing on them says the skill axis was empty.
+     */
+    public boolean requiresRelevantSkills() {
+        return this == RELEVANT;
     }
 
     private static SimSkillFilter lookup(String name) {

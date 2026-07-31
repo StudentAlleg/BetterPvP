@@ -16,6 +16,9 @@ import me.mykindos.betterpvp.core.item.ItemRegistry;
 import me.mykindos.betterpvp.core.item.component.impl.socketables.Socketable;
 import me.mykindos.betterpvp.core.item.component.impl.socketables.SocketableContainerComponent;
 import me.mykindos.betterpvp.core.item.component.impl.socketables.SocketableRegistry;
+import me.mykindos.betterpvp.core.item.component.impl.stat.ItemStat;
+import me.mykindos.betterpvp.core.item.component.impl.stat.StatContainerComponent;
+import me.mykindos.betterpvp.core.item.component.impl.stat.StatTypes;
 import me.mykindos.betterpvp.core.item.model.ArmorItem;
 import me.mykindos.betterpvp.core.item.model.WeaponItem;
 import org.bukkit.Material;
@@ -29,8 +32,10 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.EnumMap;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * Resolves the loadout axes against the <em>live</em> {@code ItemRegistry}, never against a
@@ -87,9 +92,15 @@ public class SimEquipment {
     private List<WeaponOption> meleeWeaponCache;
     @Nullable
     private WeaponOption defaultWeaponCache;
+    @Nullable
+    private List<WeaponOption> distinctMeleeWeaponCache;
     private final Map<String, SkillType> skillTypeCache = new HashMap<>();
     private final Map<Role, List<BaseItem>> armorCache = new EnumMap<>(Role.class);
     private final Map<String, List<RuneOption>> runeCache = new HashMap<>();
+    private final Map<String, SimWeaponProfile> profileCache = new HashMap<>();
+
+    /** Representative weapon key to every key sharing its profile, including the representative. */
+    private final Map<String, List<String>> aliasCache = new HashMap<>();
 
     /**
      * Core's rune registry.
@@ -120,9 +131,12 @@ public class SimEquipment {
     public void invalidate() {
         meleeWeaponCache = null;
         defaultWeaponCache = null;
+        distinctMeleeWeaponCache = null;
         skillTypeCache.clear();
         armorCache.clear();
         runeCache.clear();
+        profileCache.clear();
+        aliasCache.clear();
     }
 
     /**
@@ -187,6 +201,129 @@ public class SimEquipment {
     /** Every melee weapon that carries the booster {@code +1}. */
     public List<WeaponOption> boosterWeapons() {
         return meleeWeapons().stream().filter(WeaponOption::booster).toList();
+    }
+
+    /**
+     * One representative per distinct {@link SimWeaponProfile}, ordered by key.
+     *
+     * <p>This is the reduction the full sweep is built on. The weapon axis multiplies every other
+     * axis, so a duplicate weapon is not paid once but once per build per target per iteration -- and
+     * duplicates are the common case, because a weapon tier is typically several models sharing one
+     * stat block. Two weapons with the same profile produce the same duel by construction: everything
+     * a duel can read off a weapon is in the profile (see {@link SimWeaponProfile} for what is in the
+     * key and why).
+     *
+     * <p>The representative is the lowest key of its group, which is arbitrary but stable -- the same
+     * requirement the armour set resolution has, and for the same reason. A run that picked a
+     * different representative each time would produce build fingerprints that do not join across
+     * runs, which is the one thing the patch-diff dashboard needs.
+     *
+     * <p>Nothing is dropped: {@link #weaponAliases} names every key a representative stands for, and
+     * the catalog writes that list onto the build so the reduction is legible from the row rather
+     * than only from this code.
+     */
+    public List<WeaponOption> distinctMeleeWeapons() {
+        if (distinctMeleeWeaponCache != null) {
+            return distinctMeleeWeaponCache;
+        }
+
+        // Insertion-ordered over a key-sorted input, so representatives come out key-sorted too.
+        final Map<SimWeaponProfile, String> representatives = new LinkedHashMap<>();
+        final Map<String, List<String>> aliases = new HashMap<>();
+        final List<WeaponOption> distinct = new ArrayList<>();
+        for (WeaponOption weapon : meleeWeapons()) {
+            final SimWeaponProfile profile = profileOf(weapon.key());
+            final String existing = representatives.get(profile);
+            if (existing == null) {
+                representatives.put(profile, weapon.key());
+                aliases.computeIfAbsent(weapon.key(), key -> new ArrayList<>()).add(weapon.key());
+                distinct.add(weapon);
+                continue;
+            }
+            aliases.get(existing).add(weapon.key());
+        }
+
+        aliasCache.clear();
+        aliases.forEach((key, group) -> aliasCache.put(key, List.copyOf(group)));
+        distinctMeleeWeaponCache = List.copyOf(distinct);
+
+        final int folded = meleeWeapons().size() - distinct.size();
+        // Logged even at zero, for the reason the catalog logs its exclusion count: "0 folded" is the
+        // only thing that distinguishes a registry of genuinely distinct weapons from a profile that
+        // has stopped telling them apart, and neither is recoverable from a build total afterwards.
+        log.info("Weapon axis: {} registered melee weapons reduce to {} distinct profiles ({} folded"
+                + " into a representative and recorded as aliases)",
+                meleeWeapons().size(), distinct.size(), folded).submit();
+        // Every fold is named rather than only counted. A weapon disappearing from the sweep is
+        // exactly the kind of reduction that should be arguable from the log: if two weapons that a
+        // designer considers different were folded, the profile behind it is printed beside them.
+        representatives.forEach((profile, key) -> {
+            final List<String> group = aliasCache.get(key);
+            if (group.size() > 1) {
+                log.info("  {} stands for {} -- {}", key, group.subList(1, group.size()),
+                        profile.describe()).submit();
+            }
+        });
+        return distinctMeleeWeaponCache;
+    }
+
+    /**
+     * Every weapon key that shares {@code weaponKey}'s profile, {@code weaponKey} first.
+     *
+     * <p>A single-element list for a weapon that dedupes with nothing, and for any weapon at all when
+     * {@link #distinctMeleeWeapons()} has not been called -- an un-reduced sweep measured each weapon
+     * in its own right, and claiming it stood for others would be false.
+     */
+    public List<String> weaponAliases(String weaponKey) {
+        return aliasCache.getOrDefault(weaponKey, List.of(weaponKey));
+    }
+
+    /**
+     * The measurable identity of a weapon: its melee stats, slot, booster status and rune options.
+     *
+     * <p>Read off the registered {@code BaseItem}'s own {@code StatContainerComponent}, which is what
+     * {@code WeaponItem.reload} writes the configured {@code damage.*} and {@code attack_speed.*}
+     * values into -- so the figures recorded on a build row are the ones the item is configured with,
+     * not a second reading of the same YAML.
+     *
+     * <p>An item with no stat container yields zeroes rather than throwing. That is a weapon in
+     * {@code Group.MELEE} carrying no melee profile, which should not happen; measuring it as a
+     * distinct profile means it is swept in its own right and its zeroes are visible on the row,
+     * whereas throwing would take down an otherwise valid sweep for one malformed item.
+     *
+     * @throws IllegalArgumentException if the key is not registered
+     */
+    public SimWeaponProfile profileOf(String weaponKey) {
+        return profileCache.computeIfAbsent(weaponKey, key -> {
+            final BaseItem item = itemRegistry.getItem(key);
+            if (item == null) {
+                throw new IllegalArgumentException("No registered item for weapon key " + key);
+            }
+            final SkillType slot = skillTypeOf(key);
+            final List<String> runes = weaponRunes(key).stream().map(RuneOption::key).toList();
+            final boolean booster = SkillWeapons.isBooster(item.getModel().getType());
+
+            final Optional<StatContainerComponent> stats = item.getComponent(StatContainerComponent.class);
+            if (stats.isEmpty()) {
+                log.warn("Melee weapon {} has no stat container; it will be swept as its own profile"
+                        + " and recorded with zero damage", key).submit();
+                return new SimWeaponProfile(0, 0, 0, 0, 0, 0, booster,
+                        slot == null ? SimWeaponProfile.UNKNOWN_SLOT : slot.name(), runes);
+            }
+
+            final Optional<ItemStat<Double>> damage = stats.get().getStat(StatTypes.MELEE_DAMAGE);
+            final Optional<ItemStat<Double>> speed = stats.get().getStat(StatTypes.MELEE_ATTACK_SPEED);
+            return new SimWeaponProfile(
+                    damage.map(ItemStat::getValue).orElse(0.0),
+                    damage.map(ItemStat::getRangeMin).orElse(0.0),
+                    damage.map(ItemStat::getRangeMax).orElse(0.0),
+                    speed.map(ItemStat::getValue).orElse(0.0),
+                    speed.map(ItemStat::getRangeMin).orElse(0.0),
+                    speed.map(ItemStat::getRangeMax).orElse(0.0),
+                    booster,
+                    slot == null ? SimWeaponProfile.UNKNOWN_SLOT : slot.name(),
+                    runes);
+        });
     }
 
     /**

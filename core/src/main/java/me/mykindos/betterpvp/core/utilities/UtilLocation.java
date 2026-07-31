@@ -592,6 +592,18 @@ public class UtilLocation {
      */
     public static Optional<Location> getClosestSurfaceBlock(final Location location, final double maxHeightDifference, final boolean keepXZ, final Predicate<Block> filter) {
         Preconditions.checkState(maxHeightDifference > 0, "Max height difference must be greater than 0");
+        // An unloaded column has no surface to find, and asking would load -- in a fresh world,
+        // generate -- the chunk synchronously on the main thread. The whole search is one chunk
+        // column (it only ever steps UP and DOWN), so this single check covers every step of it.
+        //
+        // Skills call this every tick against speculative positions: BlockToss re-derives its cast
+        // location from the caster's facing on each update, and in a void world with no ground the
+        // downward walk runs its full height budget before giving up. That path was ~19% of the
+        // server thread in a run-142 profile, 99% of it inside chunk loads. An empty result is the
+        // answer those callers already handle -- they fall back to the unadjusted location.
+        if (!location.getWorld().isChunkLoaded(location.getBlockX() >> 4, location.getBlockZ() >> 4)) {
+            return Optional.empty();
+        }
         final int y = location.getBlockY();
         Block block = location.getBlock();
         while (filter.test(block)) { // Replacing the solid block with the one above it until we hit a non-solid block
@@ -627,6 +639,12 @@ public class UtilLocation {
 
     public static Optional<Location> getClosestSurfaceBelow(final Location location, final double maxHeight, final @NotNull Predicate<@NotNull Location> filter) {
         Preconditions.checkState(maxHeight > 0, "Max height must be greater than 0");
+        // Same one-chunk-column search as getClosestSurfaceBlock, and the same guard for the same
+        // reason: the default filter reads block types, and a downward walk through an unloaded
+        // column would generate chunks to find out there is nothing in them.
+        if (!location.getWorld().isChunkLoaded(location.getBlockX() >> 4, location.getBlockZ() >> 4)) {
+            return Optional.empty();
+        }
         final Location clone = location.clone();
         while (Math.abs(clone.getY() - location.getY()) <= maxHeight) {
             if (filter.test(clone)) {

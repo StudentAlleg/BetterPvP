@@ -21,6 +21,12 @@ import java.util.List;
  * @param pointsSpent  sum of allocated levels, bounded by {@code RoleBuild.points} (12)
  * @param booster      whether the weapon is a skill booster (from {@code SkillWeapons.isBooster})
  * @param fingerprint  stable hash over the allocated configuration, for cross-run diffing
+ * @param weapon       the equipped weapon's measurable identity, denormalised onto the row so a
+ *                     result carries the damage figures it was taken under rather than requiring
+ *                     the config of the day to be reconstructed
+ * @param weaponAliases every weapon key this build's measurement covers, {@link #weaponKey()}
+ *                      first. Longer than one element only when the weapon axis was reduced to
+ *                      distinct profiles; see {@code SimEquipment.distinctMeleeWeapons}
  */
 public record SimBuildSpec(String role,
                            String weaponKey,
@@ -29,5 +35,16 @@ public record SimBuildSpec(String role,
                            List<SimSkillAllocation> skills,
                            int pointsSpent,
                            boolean booster,
-                           String fingerprint) {
+                           String fingerprint,
+                           SimWeaponProfile weapon,
+                           List<String> weaponAliases) {
+
+    public SimBuildSpec {
+        weaponAliases = List.copyOf(weaponAliases);
+    }
+
+    /** Whether this build's measurement was reused for weapons other than the one it names. */
+    public boolean isWeaponCollapsed() {
+        return weaponAliases.size() > 1;
+    }
 }

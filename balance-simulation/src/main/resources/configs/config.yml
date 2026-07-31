@@ -24,7 +24,17 @@ champions:
     #   WEAPONS - role x every melee weapon, no skills to confound the weapon axis.
     #   RUNES   - role x default weapon x one socketed rune at a time, plus a bare baseline.
     #   SKILLS  - one skill at a time over its level range, on plain and booster weapons.
+    #             The only tier --audit works on: it is the one that measures a skill-less
+    #             baseline to subtract.
+    #   LOADOUT - distinct weapon profiles x every rune each accepts, no skills. Neither
+    #             WEAPONS nor RUNES crosses those two axes, so until this tier a rune had
+    #             only ever been measured on the default weapon.
     #   FULL    - every budget-feasible build. Expect hours; check the logged count first.
+    #   BASELINE- FULL with every lossless reduction applied: weapons deduplicated by stat
+    #             profile, targets collapsed by health, skills limited to relevantSkills
+    #             below. The reductions are what make an exhaustive run finishable, which is
+    #             what makes it a baseline -- a stopped FULL is a sample, not one. Runes are
+    #             not a term here (see LOADOUT); the two tiers together are the baseline.
     # A running sweep can be stopped with "/simulate stop", which drains the duels in
     # flight and writes everything measured so far under status CANCELLED.
     scope: MELEE
@@ -54,9 +64,33 @@ champions:
     #   ALL                - no filter, including the bow archetypes this engine cannot
     #                        drive. Those measure as an empty slot, so this is for sizing
     #                        that gap rather than for balance work.
+    #   RELEVANT           - only the skills listed in relevantSkills below. The strongest
+    #                        prune, and the only one derived from measurement rather than
+    #                        from a marker interface -- so a skill whose author forgot the
+    #                        OffensiveSkill marker is still swept if a sweep saw it work.
     # Recorded in config_hash: two runs at one scope with different filters are not
     # comparable, and nothing else on the row would say so.
     skillFilter: OFFENSIVE
+    # The reviewed output of a skill relevance audit: comma-separated skill names that a
+    # RELEVANT sweep is allowed to build permutations from.
+    #
+    # Populate it by hand, from an audit you have read:
+    #   1. /simulate SKILLS ONE_WAY --audit
+    #   2. read plugins/<this plugin>/audits/skill-audit-run-<id>.yml
+    #   3. paste its relevantSkills names here, minus any you disagree with
+    #
+    # Nothing writes to this automatically, and that is deliberate. An INERT verdict means
+    # "moved nothing measurable in this scenario", not "does nothing" -- a crowd-control or
+    # repositioning skill lands there correctly and would be excluded forever by a pipeline
+    # that applied its own findings. It also goes stale in the other direction: a skill
+    # buffed from zero stays off this list until the audit is re-run, which is why the
+    # artifact records the config_hash it was taken under.
+    #
+    # Empty is a hard error for the RELEVANT filter rather than a skill-less sweep, because
+    # a sweep with no skills in it completes normally and looks perfectly healthy.
+    # Hashed into config_hash (sorted), so two runs of different lists are never diffed as
+    # though they swept the same space, while reordering it during review is not a change.
+    relevantSkills: ""
     # How long the rotation holds right click for a channel or charge skill, in ticks.
     # This is the engine's one policy choice rather than an observation -- a channel deals
     # damage for as long as it is held -- so it is written into sim_run.scenario, and two

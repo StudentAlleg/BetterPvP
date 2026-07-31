@@ -3,6 +3,7 @@ package me.mykindos.betterpvp.balancesim.world;
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
 import lombok.CustomLog;
+import me.mykindos.betterpvp.balancesim.BalanceSimulation;
 import me.mykindos.betterpvp.balancesim.SimulationGate;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
@@ -44,12 +45,63 @@ public class SimWorldManager {
      */
     private static final int ARENA_SPACING = 64;
     private static final int ARENA_Y = 64;
-    /** Half-width of the square platform each duel is fought on. */
-    private static final int PLATFORM_RADIUS = 8;
+
+    /**
+     * Offset from the grid step to the middle of a chunk, so an arena sits inside one chunk rather
+     * than on the corner where four meet.
+     *
+     * <p>{@link #ARENA_SPACING} is a multiple of 16, so an unshifted centre lands on a chunk
+     * boundary and a square platform around it straddles a 2x2 block of chunks. Every ground probe
+     * near the middle of the arena then has a chance of crossing into a neighbouring chunk, which is
+     * the difference between a block read that hits the cache and one that loads a chunk.
+     */
+    private static final int CHUNK_CENTRE_OFFSET = 8;
+
+    /**
+     * Half-width of the square platform each duel is fought on.
+     *
+     * <p>Sized so that everything a skill is likely to probe lands on solid ground. It was 8, giving
+     * a 17x17 pad, and the profile of run 142 is what that cost: in a void world a probe that misses
+     * the pad finds nothing solid beneath it, so {@code UtilLocation.getClosestSurfaceBlock} walks
+     * its full height budget through empty chunks and {@code UtilBlock.isGrounded} reads four corners
+     * that are not there. Every one of those reads was a {@code getBlockState} on a chunk that had to
+     * be loaded and generated first, synchronously, on the main thread.
+     *
+     * <p>16 covers the arena's whole centre chunk and eight blocks into each neighbour, at a
+     * one-off cost of 33x33 rather than 17x17 barrier placements per slot.
+     */
+    private static final int PLATFORM_RADIUS = 16;
+
+    /**
+     * How many chunks either side of an arena's own chunk are pinned loaded while a sweep runs.
+     *
+     * <p>Deliberately equal to the view distance {@link #shrinkTrackingDistances} sets, so pinning
+     * adds no chunk that the combatants standing there were not already keeping loaded. The ticket
+     * does not widen the resident set; it stops it <em>churning</em>.
+     *
+     * <p>That churn was the whole cost. Without a ticket a chunk is held only by the fake players
+     * near it, so it unloads and reloads as combatants die, respawn and are recycled -- and every
+     * reload runs a full chunk status change, which re-registers every entity in the chunk with
+     * every player in the level. In run 142 that path,
+     * {@code ChunkEntitySlices.updateStatus -> entityStatusChange -> onTrackingStart ->
+     * ChunkMap.addEntity -> TrackedEntity.updatePlayers}, was 52% of the entire server thread,
+     * because {@code updatePlayers} is linear in resident players and 600 of them were resident.
+     */
+    private static final int ARENA_TICKET_CHUNK_RADIUS = 2;
+
     /** How far each combatant spawns from the arena centre, so they start a couple of swings apart. */
     private static final int SPAWN_OFFSET = 2;
 
     private final SimulationGate gate;
+
+    /**
+     * The plugin the chunk tickets are held under, so they can be released as a set at teardown.
+     *
+     * <p>Plugin tickets rather than {@code setForceLoaded}: force-load is world state that survives
+     * a crash and would leave a dev server pinning a sim world's chunks forever, whereas a plugin
+     * ticket dies with the plugin whatever happens to this class.
+     */
+    private final BalanceSimulation plugin;
 
     /**
      * Arena indices whose duel has finished, ready to be handed out again.
@@ -70,8 +122,9 @@ public class SimWorldManager {
     private World world;
 
     @Inject
-    public SimWorldManager(SimulationGate gate) {
+    public SimWorldManager(SimulationGate gate, BalanceSimulation plugin) {
         this.gate = gate;
+        this.plugin = plugin;
     }
 
     /**
@@ -158,8 +211,10 @@ public class SimWorldManager {
      */
     public Location arenaCentre(int index) {
         final int columns = 32;
-        final int x = (index % columns) * ARENA_SPACING;
-        final int z = (index / columns) * ARENA_SPACING;
+        // Shifted to the middle of a chunk rather than the corner four of them share -- see
+        // CHUNK_CENTRE_OFFSET. The grid step is unchanged, so arenas stay ARENA_SPACING apart.
+        final int x = (index % columns) * ARENA_SPACING + CHUNK_CENTRE_OFFSET;
+        final int z = (index / columns) * ARENA_SPACING + CHUNK_CENTRE_OFFSET;
         return new Location(getOrCreate(), x + 0.5, ARENA_Y, z + 0.5);
     }
 
@@ -189,8 +244,10 @@ public class SimWorldManager {
     /**
      * Returns a finished duel's arena to the pool.
      *
-     * <p>The platform is left standing: it is barrier blocks in a void world that the next duel
-     * would only lay again, and the chunks stay loaded either way while the sweep is running.
+     * <p>The platform is left standing, and its chunk tickets with it: it is barrier blocks in a
+     * void world that the next duel would only lay again, and the slot is about to be handed out
+     * again anyway. Dropping the ticket here would mean unloading a chunk that is reloaded seconds
+     * later, which is the churn {@link #pinChunks} exists to prevent.
      */
     public void releaseArena(ArenaSlot slot) {
         freeIndices.add(slot.index());
@@ -216,6 +273,11 @@ public class SimWorldManager {
         final World simWorld = centre.getWorld();
 
         if (prepared.add(index)) {
+            // Pinned before a single block is touched. Laying the platform is itself thousands of
+            // block writes across nine chunks, and without the ticket the first of them loads a
+            // chunk that a later one may find unloaded again.
+            pinChunks(simWorld, centre);
+
             final int floorY = ARENA_Y - 1;
             final int cx = centre.getBlockX();
             final int cz = centre.getBlockZ();
@@ -233,6 +295,27 @@ public class SimWorldManager {
         final Location west = new Location(simWorld, centre.getX() - SPAWN_OFFSET, ARENA_Y, centre.getZ(), -90f, 0f);
         final Location east = new Location(simWorld, centre.getX() + SPAWN_OFFSET, ARENA_Y, centre.getZ(), 90f, 0f);
         return new ArenaSlot(index, centre, west, east);
+    }
+
+    /**
+     * Holds the chunks around an arena loaded for as long as the plugin is enabled.
+     *
+     * <p>Once per slot, at the point the platform is laid, because arenas are recycled rather than
+     * retired -- a slot handed back by {@code releaseArena} will be handed straight out again, so
+     * releasing its ticket in between would reintroduce exactly the load/unload cycle this exists to
+     * stop. They are released together in {@link #teardown()}.
+     *
+     * <p>{@code addPluginChunkTicket} is idempotent per (chunk, plugin), so a slot rebuilt after a
+     * teardown re-pins without accumulating anything.
+     */
+    private void pinChunks(World simWorld, Location centre) {
+        final int chunkX = centre.getBlockX() >> 4;
+        final int chunkZ = centre.getBlockZ() >> 4;
+        for (int dx = -ARENA_TICKET_CHUNK_RADIUS; dx <= ARENA_TICKET_CHUNK_RADIUS; dx++) {
+            for (int dz = -ARENA_TICKET_CHUNK_RADIUS; dz <= ARENA_TICKET_CHUNK_RADIUS; dz++) {
+                simWorld.addPluginChunkTicket(chunkX + dx, chunkZ + dz, plugin);
+            }
+        }
     }
 
     /**
@@ -255,6 +338,9 @@ public class SimWorldManager {
             return;
         }
         log.info("Unloading simulation world '{}'", world.getName()).submit();
+        // Before the unload, not after: a world holding plugin tickets will not unload, and after
+        // the call there is no World left to release them against.
+        world.removePluginChunkTickets(plugin);
         Bukkit.unloadWorld(world, false);
         world = null;
         // The pool describes blocks in a world that no longer exists. Keeping it would hand the

@@ -136,6 +136,11 @@ public class SimResult extends TableImpl<SimResultRecord> {
      */
     public final TableField<SimResultRecord, JSONB> EXTRAS = createField(DSL.name("extras"), SQLDataType.JSONB.nullable(false).defaultValue(DSL.field(DSL.raw("'{}'::jsonb"), SQLDataType.JSONB)), this, "");
 
+    /**
+     * The column <code>public.sim_result.target_role_aliases</code>.
+     */
+    public final TableField<SimResultRecord, JSONB> TARGET_ROLE_ALIASES = createField(DSL.name("target_role_aliases"), SQLDataType.JSONB.nullable(false).defaultValue(DSL.field(DSL.raw("'[]'::jsonb"), SQLDataType.JSONB)), this, "");
+
     private SimResult(Name alias, Table<SimResultRecord> aliased) {
         this(alias, aliased, (Field<?>[]) null, null);
     }

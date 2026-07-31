@@ -126,6 +126,24 @@ public class SimulationGate {
     private String skillFilter;
 
     /**
+     * The reviewed output of a skill relevance audit: comma-separated skill names that a sweep under
+     * {@code SimSkillFilter.RELEVANT} is allowed to build permutations from.
+     *
+     * <p>Empty by default, and an empty value is a hard error for that filter rather than a silent
+     * skill-less sweep. Populating it is a deliberate act: run {@code /simulate SKILLS --audit}, read
+     * the artifact, disagree with what deserves disagreeing with, and paste the names in. Nothing
+     * writes to this automatically, for the reason {@code SkillAuditReport} refuses to write config at
+     * all -- an {@code INERT} verdict is a measurement of one scenario, not a permanent fact, and a
+     * skill excluded by a robot stays excluded through every buff it later receives.
+     *
+     * <p>Part of {@code config_hash}, so two runs that swept different skill sets are never diffed as
+     * though they swept the same one.
+     */
+    @Inject
+    @Config(path = "champions.simulation.relevantSkills", defaultValue = "")
+    private String relevantSkills;
+
+    /**
      * How many duels may be set up in a single tick.
      *
      * <p>Setting a duel up is expensive and strictly main-thread: two {@code ServerPlayer}s are

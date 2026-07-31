@@ -1,6 +1,7 @@
 package me.mykindos.betterpvp.balancesim.engine;
 
 import com.google.inject.Inject;
+import com.google.inject.Injector;
 import com.google.inject.Singleton;
 import lombok.CustomLog;
 import lombok.Getter;
@@ -10,6 +11,10 @@ import me.mykindos.betterpvp.core.Core;
 import me.mykindos.betterpvp.core.combat.events.DamageEvent;
 import me.mykindos.betterpvp.core.components.champions.events.PlayerUseSkillEvent;
 import me.mykindos.betterpvp.core.cooldowns.CooldownManager;
+import me.mykindos.betterpvp.core.energy.EnergyService;
+import me.mykindos.betterpvp.core.energy.events.DegenerateEnergyEvent;
+import me.mykindos.betterpvp.core.energy.events.EnergyEvent;
+import me.mykindos.betterpvp.core.energy.events.RegenerateEnergyEvent;
 import me.mykindos.betterpvp.core.listener.BPvPListener;
 import org.bukkit.Bukkit;
 import org.bukkit.entity.Entity;
@@ -57,13 +62,45 @@ public class SimRecorder implements Listener {
      */
     private final CooldownManager cooldownManager;
 
+    /**
+     * Core's energy service, read for the current and maximum energy behind an observed flow.
+     *
+     * <p>From Core's injector for the same reason as the cooldown manager above: a just-in-time
+     * binding would build a second service with an empty energy map, whose answers would have nothing
+     * to do with the one the skill listeners spend from.
+     *
+     * <p>Only ever <em>read</em> here. The flows themselves come off the events, so nothing in this
+     * class re-implements {@code EnergyService.use}'s decision.
+     */
+    private final EnergyService energyService;
+
     /** Every participant UUID of an in-flight duel, mapped to that duel's recording. */
     private final Map<UUID, Recording> active = new ConcurrentHashMap<>();
 
     @Inject
     public SimRecorder(SimWorldManager worldManager) {
         this.worldManager = worldManager;
-        this.cooldownManager = JavaPlugin.getPlugin(Core.class).getInjector().getInstance(CooldownManager.class);
+        final Injector core = JavaPlugin.getPlugin(Core.class).getInjector();
+        this.cooldownManager = core.getInstance(CooldownManager.class);
+        this.energyService = core.getInstance(EnergyService.class);
+    }
+
+    /**
+     * Notes that a rotation pressed {@code skillName}'s button for {@code combatant}.
+     *
+     * <p>Called by the rotation policy rather than observed, because it is the one part of an
+     * activation that no listener can see: a press the rotation rate-limits away, or one that reaches
+     * a chain which drops it before any event fires, produces nothing to listen for. An attempt count
+     * of zero is what tells the audit a skill was never driven, as opposed to driven and useless.
+     *
+     * <p>Silently does nothing when the combatant is not in a registered duel, so a rotation running
+     * during setup or teardown cannot file counts against a fight that is not being measured.
+     */
+    public void noteActivationAttempt(UUID combatant, String skillName) {
+        final Recording recording = active.get(combatant);
+        if (recording != null) {
+            recording.skills.attempted(combatant, skillName);
+        }
     }
 
     /**
@@ -173,20 +210,94 @@ public class SimRecorder implements Listener {
      */
     @EventHandler(priority = EventPriority.MONITOR)
     public void onUseSkill(PlayerUseSkillEvent event) {
-        if (!event.isCancelled() || !(event.getSkill() instanceof EnergySkill)) {
-            return;
-        }
         final Player player = event.getPlayer();
         final Recording recording = active.get(player.getUniqueId());
-        if (recording == null || cooldownManager.hasCooldown(player, event.getSkill().getName())) {
+        if (recording == null) {
             return;
         }
-        // The attacker only. sim_result describes the attacker's build, so under MUTUAL a defender
-        // running dry would otherwise set a column that claims something about the wrong side.
-        if (!recording.getCombatantA().equals(player.getUniqueId())) {
+
+        final String skillName = event.getSkill().getName();
+        final boolean onCooldown = cooldownManager.hasCooldown(player, skillName);
+        final SimActivationOutcome outcome = classify(event, onCooldown);
+        recording.skills.outcome(player.getUniqueId(), skillName, outcome);
+
+        // The energy_limited column predates the ledger and keeps its original, narrower meaning:
+        // the attacker only, because sim_result describes the attacker's build and a defender running
+        // dry would set a column that claims something about the wrong side. The ledger records both
+        // sides, so the defensive audit is not blocked by this column's asymmetry.
+        if (outcome == SimActivationOutcome.ENERGY
+                && recording.getCombatantA().equals(player.getUniqueId())) {
+            recording.markEnergyLimited();
+        }
+    }
+
+    /**
+     * What the real chain did with this use.
+     *
+     * <p>The cooldown/energy split is the inference {@link #onUseSkill} has always made, unchanged
+     * and for the same reason: {@code SkillListener.onUseSkill} cancels for three separable causes and
+     * only two of them can apply to a combatant fighting in an empty void world, so a cancelled use of
+     * an energy skill with no cooldown outstanding is an energy refusal. Reading
+     * {@code EnergyService.getEnergy} against {@code EnergySkill.getEnergy} instead would re-derive
+     * the rule {@code EnergyService.use} owns.
+     *
+     * <p>{@code DECLINED} is the residue, and it is deliberately not folded into either named cause.
+     * Neither refusal should be able to produce it, so a build accumulating declines is evidence that
+     * this engine is driving the skill wrongly -- exactly the finding that must not be silently
+     * relabelled as a balance result.
+     */
+    private static SimActivationOutcome classify(PlayerUseSkillEvent event, boolean onCooldown) {
+        if (!event.isCancelled()) {
+            return SimActivationOutcome.SUCCESS;
+        }
+        if (onCooldown) {
+            return SimActivationOutcome.COOLDOWN;
+        }
+        if (event.getSkill() instanceof EnergySkill) {
+            return SimActivationOutcome.ENERGY;
+        }
+        return SimActivationOutcome.DECLINED;
+    }
+
+    /**
+     * Records energy leaving a combatant, at {@code MONITOR} so the amount is the one that was
+     * actually deducted rather than the one the caller asked for.
+     *
+     * <p>{@code DegenerateEnergyEvent} is both cancellable and mutable -- {@code EnergyService}
+     * reduces by {@code event.getEnergy()} after the call -- so reading it any earlier would record a
+     * figure no combatant ever paid.
+     */
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onDegenerateEnergy(DegenerateEnergyEvent event) {
+        note(event.getPlayer(), event.getEnergy(), event.getCause(), true);
+    }
+
+    /** Records energy arriving at a combatant. Same reasoning as {@link #onDegenerateEnergy}. */
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onRegenerateEnergy(RegenerateEnergyEvent event) {
+        note(event.getPlayer(), event.getEnergy(), event.getCause(), false);
+    }
+
+    /**
+     * Files one energy flow against the duel the player is fighting, and samples their current and
+     * maximum energy while there is a reason to look.
+     *
+     * <p>The maximum is what makes {@code Energy Pool} measurable: it raises max energy through
+     * {@code UpdateMaxEnergyEvent} and moves no energy at all, so it appears in no flow and in no
+     * damage figure. Without this sample its entire effect would be invisible to the sweep.
+     */
+    private void note(Player player, double amount, EnergyEvent.Cause cause, boolean outgoing) {
+        final UUID uuid = player.getUniqueId();
+        final Recording recording = active.get(uuid);
+        if (recording == null) {
             return;
         }
-        recording.markEnergyLimited();
+        if (outgoing) {
+            recording.energy.degenerated(uuid, amount, cause);
+        } else {
+            recording.energy.regenerated(uuid, amount, cause);
+        }
+        recording.energy.observed(uuid, energyService.getEnergy(uuid), energyService.getMax(uuid));
     }
 
     /**
@@ -221,6 +332,18 @@ public class SimRecorder implements Listener {
         private final UUID combatantB;
         private final int startTick = Bukkit.getCurrentTick();
         private final List<HitRecord> hits = new ArrayList<>();
+
+        /**
+         * What happened to every button the rotation pressed this duel, per combatant.
+         *
+         * <p>Not {@code @Getter}-exposed as a mutable ledger: callers take an immutable
+         * {@link #activationsOf snapshot} for one side, so a reduction running off the main thread
+         * cannot observe counts still being written by the pipeline on it.
+         */
+        private final SimSkillLedger skills = new SimSkillLedger();
+
+        /** Every unit of energy that moved this duel, per combatant and per cause. */
+        private final SimEnergyLedger energy = new SimEnergyLedger();
 
         /**
          * Whoever took the lethal blow, or null while both are alive.
@@ -264,6 +387,23 @@ public class SimRecorder implements Listener {
                 killed = victim;
                 killedElapsedTicks = elapsedTicks;
             }
+        }
+
+        /**
+         * An immutable snapshot of one combatant's per-skill activation counts.
+         *
+         * <p>Taken per side rather than whole, because every figure on a {@code sim_result} row
+         * describes one combatant and a merged view would silently attribute the defender's casts to
+         * the attacker's build.
+         */
+        public Map<String, SimSkillLedger.SkillActivation> activationsOf(UUID combatant) {
+            return skills.snapshot(combatant);
+        }
+
+        /** One combatant's energy accounting for this duel, or null if none was observed. */
+        @Nullable
+        public SimEnergyLedger.EnergyUse energyOf(UUID combatant) {
+            return energy.snapshot(combatant);
         }
 
         /** An immutable snapshot of the hits dealt by {@code damager} to {@code damagee}. */

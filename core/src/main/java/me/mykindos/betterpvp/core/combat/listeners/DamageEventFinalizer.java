@@ -94,14 +94,24 @@ public class DamageEventFinalizer {
         // Apply final damage
         applyFinalDamage(event);
 
-        // Update last damaged
+        // Update last damaged.
+        //
+        // Through the Optional lookup rather than online(Player), which kicks whoever it cannot
+        // resolve. This is combat bookkeeping, not a load-bearing read: if a client is absent there
+        // is nothing to mark, and severing the player's connection is a wildly disproportionate
+        // response to that. It is also reachable with no client at all -- the balance simulator
+        // leaves combatants resident in the world between duels with their ephemeral clients
+        // unloaded, and a lingering projectile from a finished duel lands on one.
         if (event.getDamagee() instanceof Player player && event.getDamager() != null) {
-            clientManager.search().online(player).getGamer().markDamaged();
+            clientManager.search().online(player.getUniqueId())
+                    .ifPresent(client -> client.getGamer().markDamaged());
         }
         if (event.getDamager() instanceof Player player) {
-            final Gamer gamer = clientManager.search().online(player).getGamer();
-            gamer.markDamaged();
-            gamer.setLastDealtDamageValue(event.getModifiedDamage());
+            clientManager.search().online(player.getUniqueId()).ifPresent(client -> {
+                final Gamer gamer = client.getGamer();
+                gamer.markDamaged();
+                gamer.setLastDealtDamageValue(event.getModifiedDamage());
+            });
         }
 
         log.debug("Finalized damage: {} dealt {} damage to {}",

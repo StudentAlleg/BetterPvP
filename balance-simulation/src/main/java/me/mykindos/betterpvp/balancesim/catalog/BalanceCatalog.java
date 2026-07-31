@@ -23,6 +23,7 @@ import java.util.EnumMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -156,7 +157,7 @@ public class BalanceCatalog {
      * {@code StatTypes.HEALTH} through {@code EntityHealthService} -- the same code that computes
      * the live entity's max health -- so the column and the entity cannot disagree.
      */
-    public List<SimTargetSpec> enumerateTargets(SimScope scope) {
+    public List<SimTargetSpec> enumerateTargets(SimScope scope, SimScenario scenario) {
         final List<SimTargetSpec> targets = new ArrayList<>();
         for (Role role : Role.values()) {
             targets.add(target(role, SimEquipment.NO_ARMOR));
@@ -164,7 +165,77 @@ public class BalanceCatalog {
                 targets.add(target(role, SimEquipment.ROLE_ARMOR));
             }
         }
-        return List.copyOf(targets);
+        return scope.isCollapseTargets()
+                ? collapseByDurability(targets, scenario)
+                : List.copyOf(targets);
+    }
+
+    /**
+     * Folds unarmoured, skill-less defenders that share a health total into one measured target.
+     *
+     * <p>The premise is narrow and stated in full because the reduction is only sound while all of it
+     * holds: a defender that carries no skills, wears no armour and never swings contributes nothing
+     * to a duel except how much damage it takes to kill. Two roles satisfying that with equal health
+     * are not similar, they are interchangeable -- the attacker cannot address the difference.
+     *
+     * <p>Three conditions, each of which alone would break it:
+     * <ul>
+     *   <li><b>{@code ONE_WAY} only.</b> Under {@code MUTUAL} the defender fights back with its role's
+     *       weapon and rotation, and role stops being a health total.</li>
+     *   <li><b>Unarmoured only.</b> Armour is per-role and contributes whatever stats its pieces
+     *       carry; {@code durability} sums only {@code StatTypes.HEALTH}, so two armour sets agreeing
+     *       on health could still differ elsewhere and equal HP would not mean equal duel. Armoured
+     *       targets are therefore never collapsed, even when their totals match.</li>
+     *   <li><b>Skill-less only.</b> A defender build's {@code DefensiveSkill} passives fire on being
+     *       hit. Targets carry no skills today, so this is a guard against the axis the design already
+     *       plans rather than a live condition -- but it is the condition most likely to be added
+     *       without anyone revisiting this method.</li>
+     * </ul>
+     *
+     * <p>Where the premise does not hold every target is kept, so widening the sweep silently
+     * un-reduces it rather than silently producing wrong rows.
+     */
+    // Package-private rather than private so the premise above can be tested directly. It is a claim
+    // that two permutations are the same measurement, which is the kind of claim that should fail a
+    // test rather than quietly produce rows nobody can distinguish afterwards.
+    static List<SimTargetSpec> collapseByDurability(List<SimTargetSpec> targets,
+                                                    SimScenario scenario) {
+        if (scenario.isDefenderDriven()) {
+            log.info("Target axis: {} targets kept whole -- a {} defender fights back, so its role is"
+                    + " not reducible to a health total", targets.size(), scenario).submit();
+            return List.copyOf(targets);
+        }
+
+        // Keyed on the health total of collapsible targets; everything else keeps its own entry.
+        final Map<Double, SimTargetSpec> byDurability = new LinkedHashMap<>();
+        final Map<Double, List<String>> aliases = new LinkedHashMap<>();
+        final List<SimTargetSpec> kept = new ArrayList<>();
+        for (SimTargetSpec target : targets) {
+            if (!SimEquipment.NO_ARMOR.equals(target.armorSetId()) || !target.skills().isEmpty()) {
+                kept.add(target);
+                continue;
+            }
+            final SimTargetSpec existing = byDurability.get(target.hp());
+            if (existing == null) {
+                byDurability.put(target.hp(), target);
+                aliases.put(target.hp(), new ArrayList<>(List.of(target.role())));
+                continue;
+            }
+            aliases.get(target.hp()).add(target.role());
+        }
+
+        final List<SimTargetSpec> collapsed = new ArrayList<>(byDurability.size() + kept.size());
+        byDurability.forEach((hp, target) -> collapsed.add(new SimTargetSpec(target.role(),
+                target.armorSetId(), target.hp(), target.skills(), target.pointsSpent(),
+                List.copyOf(aliases.get(hp)))));
+        collapsed.addAll(kept);
+
+        final int folded = targets.size() - collapsed.size();
+        log.info("Target axis: {} targets reduce to {} ({} unarmoured skill-less roles folded onto a"
+                + " role of equal health)", targets.size(), collapsed.size(), folded).submit();
+        aliases.values().stream().filter(group -> group.size() > 1).forEach(group ->
+                log.info("  {} measured for {}", group.get(0), group.subList(1, group.size())).submit());
+        return List.copyOf(collapsed);
     }
 
     private SimTargetSpec target(Role role, String armorSetId) {
@@ -195,6 +266,14 @@ public class BalanceCatalog {
     private int enumerateSingleSkill(Role role, SimScope scope, List<SimBuildSpec> out, int maxBuilds) {
         final int budget = buildPoints();
         final SkillPool pool = skillsByType(role);
+        // The bare build on each weapon of the axis, so every single-skill row has a row of the same
+        // sweep to be read against. Without it the tier's own stated purpose -- a readable per-skill
+        // strength curve -- has no zero point, and the relevance audit has nothing to subtract: a
+        // baseline carried over from a MELEE run would be at a different config_hash and often a
+        // different weapon axis, which is exactly the comparison the patch-diff dashboard refuses to
+        // make. It is the same set enumerateSkilless emits, so a skill-less build is identical here to
+        // the one a WEAPONS sweep would measure.
+        enumerateSkilless(role, scope, out);
         for (Map.Entry<SkillType, List<Skill>> entry : pool.byType().entrySet()) {
             for (Skill skill : entry.getValue()) {
                 final int maxLevel = Math.min(skill.getMaxLevel(), budget);
@@ -301,13 +380,23 @@ public class BalanceCatalog {
      */
     private SkillPool skillsByType(Role role) {
         final SimSkillFilter filter = SimSkillFilter.parse(gate.getSkillFilter());
+        final Set<String> relevant = SimSkillFilter.parseRelevantSkills(gate.getRelevantSkills());
+        // Refused here rather than allowed to produce a skill-less sweep. See requiresRelevantSkills:
+        // the failure otherwise looks exactly like a healthy run.
+        if (filter.requiresRelevantSkills() && relevant.isEmpty()) {
+            throw new IllegalStateException("Skill filter " + filter + " needs"
+                    + " champions.simulation.relevantSkills to be populated, and it is empty. Run"
+                    + " /simulate SKILLS --audit, review the generated artifact, and commit its"
+                    + " relevantSkills list -- an empty list would enumerate no skills at all and the"
+                    + " resulting sweep would look healthy while measuring nothing.");
+        }
         final Map<SkillType, List<Skill>> byType = new EnumMap<>(SkillType.class);
         int excluded = 0;
         for (Skill skill : skillManager.getSkillsForRole(role)) {
             if (!skill.isEnabled()) {
                 continue;
             }
-            if (!filter.admits(skill)) {
+            if (!filter.admits(skill, relevant)) {
                 excluded++;
                 continue;
             }
@@ -354,6 +443,9 @@ public class BalanceCatalog {
         return switch (scope.getWeaponAxis()) {
             case ROLE_DEFAULT -> List.of(equipment.defaultWeapon());
             case ALL_MELEE -> equipment.meleeWeapons();
+            // One representative per stat/rune profile. The duplicates it stands for are recorded on
+            // the build row rather than dropped -- see SimEquipment.distinctMeleeWeapons.
+            case DISTINCT_MELEE -> equipment.distinctMeleeWeapons();
             case DEFAULT_AND_BOOSTER -> {
                 final List<WeaponOption> weapons = new ArrayList<>();
                 weapons.add(equipment.defaultWeapon());
@@ -414,6 +506,11 @@ public class BalanceCatalog {
         }
         // The attacker never wears armour: it is effective HP, so it changes how long the attacker
         // survives and nothing about the damage it deals, which is what a sim_result row measures.
+        //
+        // The profile and alias list are denormalised onto the build rather than left to a join. A
+        // weapon's configured damage is what a balance question is usually actually about, and it is
+        // only recoverable from the row's weapon key by reading the config the run was taken under --
+        // which is exactly the thing that will have changed by the time anyone asks.
         return new SimBuildSpec(role.name(),
                 weapon.key(),
                 SimEquipment.NO_ARMOR,
@@ -421,7 +518,9 @@ public class BalanceCatalog {
                 skills,
                 points,
                 weapon.booster(),
-                fingerprint(role, weapon, runeKeys, skills));
+                fingerprint(role, weapon, runeKeys, skills),
+                equipment.profileOf(weapon.key()),
+                equipment.weaponAliases(weapon.key()));
     }
 
     /**

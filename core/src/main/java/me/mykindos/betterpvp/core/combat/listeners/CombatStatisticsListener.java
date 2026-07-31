@@ -11,6 +11,7 @@ import me.mykindos.betterpvp.core.combat.cause.VanillaDamageCause;
 import me.mykindos.betterpvp.core.combat.damagelog.DamageLog;
 import me.mykindos.betterpvp.core.combat.damagelog.DamageLogManager;
 import me.mykindos.betterpvp.core.combat.events.DamageEvent;
+import me.mykindos.betterpvp.core.framework.simulation.SimulatedEntity;
 import me.mykindos.betterpvp.core.listener.BPvPListener;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
@@ -36,6 +37,16 @@ public class CombatStatisticsListener implements Listener {
     
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     void onDamageStatistics(DamageEvent event) {
+        // Simulated combat is not real combat, and none of it belongs in a player's stats or in the
+        // damage log. The balance simulator drives fake players through this exact pipeline, so
+        // without this guard a sweep writes millions of damage statistics against ephemeral clients
+        // -- and worse, looks those clients up: a combatant between duels is resident in the world
+        // but has had its client unloaded, so the lookup misses. This is the same chokepoint guard
+        // KillEventListener, DurabilityProcessor and RoleStatsListener already apply.
+        if (SimulatedEntity.isSimulated(event.getDamagee()) || SimulatedEntity.isSimulated(event.getDamager())) {
+            return;
+        }
+
         // Skip if no damage was dealt
         if (event.getDamage() <= 0) {
             return;

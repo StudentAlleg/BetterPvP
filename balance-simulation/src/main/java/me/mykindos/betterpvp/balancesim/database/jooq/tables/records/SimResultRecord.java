@@ -245,6 +245,21 @@ public class SimResultRecord extends UpdatableRecordImpl<SimResultRecord> {
         return (JSONB) get(14);
     }
 
+    /**
+     * Setter for <code>public.sim_result.target_role_aliases</code>.
+     */
+    public SimResultRecord setTargetRoleAliases(JSONB value) {
+        set(15, value);
+        return this;
+    }
+
+    /**
+     * Getter for <code>public.sim_result.target_role_aliases</code>.
+     */
+    public JSONB getTargetRoleAliases() {
+        return (JSONB) get(15);
+    }
+
     // -------------------------------------------------------------------------
     // Primary key information
     // -------------------------------------------------------------------------
@@ -268,7 +283,7 @@ public class SimResultRecord extends UpdatableRecordImpl<SimResultRecord> {
     /**
      * Create a detached, initialised SimResultRecord
      */
-    public SimResultRecord(Long id, Long runId, Long buildId, String targetRole, String targetArmor, BigDecimal targetHp, JSONB targetSkills, Integer targetPoints, BigDecimal dmgPerHit, BigDecimal dpsSustained, BigDecimal dpsBurst, BigDecimal ttkS, BigDecimal hitsToKill, Boolean energyLimited, JSONB extras) {
+    public SimResultRecord(Long id, Long runId, Long buildId, String targetRole, String targetArmor, BigDecimal targetHp, JSONB targetSkills, Integer targetPoints, BigDecimal dmgPerHit, BigDecimal dpsSustained, BigDecimal dpsBurst, BigDecimal ttkS, BigDecimal hitsToKill, Boolean energyLimited, JSONB extras, JSONB targetRoleAliases) {
         super(SimResult.SIM_RESULT);
 
         setId(id);
@@ -286,6 +301,7 @@ public class SimResultRecord extends UpdatableRecordImpl<SimResultRecord> {
         setHitsToKill(hitsToKill);
         setEnergyLimited(energyLimited);
         setExtras(extras);
+        setTargetRoleAliases(targetRoleAliases);
         resetChangedOnNotNull();
     }
 }

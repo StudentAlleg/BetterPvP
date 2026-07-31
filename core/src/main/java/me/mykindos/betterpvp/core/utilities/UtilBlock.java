@@ -34,6 +34,7 @@ import org.bukkit.util.BlockIterator;
 import org.bukkit.util.BoundingBox;
 import org.bukkit.util.Vector;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -370,17 +371,17 @@ public class UtilBlock {
 
         for (int i = 0; i < numBlocks; i++) {
             final BoundingBox collisionBox = reference.clone().shift(0, -0.1 - i, 0);
-            Block block = new Location(world, reference.getMinX(), reference.getMinY() - 0.1 - i, reference.getMinZ()).getBlock();
+            Block block = blockIfLoaded(world, reference.getMinX(), reference.getMinY() - 0.1 - i, reference.getMinZ());
             if (solid(block) && doesBoundingBoxCollide(collisionBox, block)) {
                 return true;
             }
 
-            block = new Location(world, reference.getMinX(), reference.getMinY() - 0.1 - i, reference.getMaxZ()).getBlock();
+            block = blockIfLoaded(world, reference.getMinX(), reference.getMinY() - 0.1 - i, reference.getMaxZ());
             if (solid(block) && doesBoundingBoxCollide(collisionBox, block)) {
                 return true;
             }
 
-            block = new Location(world, reference.getMaxX(), reference.getMinY() - 0.1 - i, reference.getMinZ()).getBlock();
+            block = blockIfLoaded(world, reference.getMaxX(), reference.getMinY() - 0.1 - i, reference.getMinZ());
             if (solid(block) && doesBoundingBoxCollide(collisionBox, block)) {
                 return true;
             }
@@ -389,9 +390,36 @@ public class UtilBlock {
         }
 
         final BoundingBox collisionBox = reference.clone().shift(0, -0.1, 0);
-        Block block = new Location(world, reference.getMaxX(), reference.getMinY() - 0.1, reference.getMaxZ()).getBlock();
+        Block block = blockIfLoaded(world, reference.getMaxX(), reference.getMinY() - 0.1, reference.getMaxZ());
         return solid(block) && doesBoundingBoxCollide(collisionBox, block);
 
+    }
+
+    /**
+     * The block at these coordinates, or {@code null} if its chunk is not loaded.
+     *
+     * <p>{@code Location.getBlock()} is not a read. Resolving the block is free, but asking it for a
+     * type calls {@code Level.getBlockState}, which loads -- and in a fresh world <em>generates</em> --
+     * the chunk synchronously on the main thread if it is not resident. Predicates like
+     * {@link #isGrounded} probe speculative coordinates every tick, so they force that work for
+     * positions nothing is standing in.
+     *
+     * <p>A run-142 profile of the balance simulator put 65% of the entire server thread inside those
+     * loads, reached through {@code isGrounded} and {@code UtilLocation.getClosestSurfaceBlock}: a
+     * void world has nothing solid off the arena platform, so every probe that missed it generated
+     * chunks to discover as much. The multiplier is that each load re-registers every entity in the
+     * chunk with every player in the level.
+     *
+     * <p>Treating an unloaded chunk as "no block" is the correct answer for a support check as well
+     * as the cheap one. A player is never standing on terrain that has not been loaded, and a ground
+     * check has no business generating the world as a side effect of asking.
+     */
+    @Nullable
+    public static Block blockIfLoaded(World world, double x, double y, double z) {
+        if (!world.isChunkLoaded(((int) Math.floor(x)) >> 4, ((int) Math.floor(z)) >> 4)) {
+            return null;
+        }
+        return new Location(world, x, y, z).getBlock();
     }
 
     /**

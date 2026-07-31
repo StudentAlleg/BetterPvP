@@ -2,6 +2,7 @@ package me.mykindos.betterpvp.core.utilities.search;
 
 import lombok.CustomLog;
 import me.mykindos.betterpvp.core.client.exception.ClientNotLoadedException;
+import me.mykindos.betterpvp.core.framework.simulation.SimulatedEntity;
 import me.mykindos.betterpvp.core.utilities.model.manager.PlayerManager;
 import net.kyori.adventure.text.Component;
 import org.bukkit.Bukkit;
@@ -67,7 +68,18 @@ public class SearchEngineBase<T> {
 
         return online.orElseThrow(() -> {
             log.warn(PlayerManager.RETRIEVE_ERROR_FORMAT_SERVER, player.getName()).submit();
-            player.kick(Component.text(PlayerManager.LOAD_ERROR_FORMAT_ENTITY));
+            // Never kick a simulated combatant. The kick is a recovery for a real session that has
+            // desynced from its stored data -- disconnect, reconnect, reload. A balance-simulator
+            // combatant has no session to recover: it is a resident entity owned by a pool, and
+            // kicking it destroys the arena slot mid-sweep and fans PlayerQuitEvent out to three
+            // dozen listeners that were never meant to see one, each of which then fails on the
+            // same missing client. That turns one stray damage event into a cascading run failure.
+            //
+            // The exception is still thrown, so callers cannot silently treat a missing client as a
+            // present one. Callers that legitimately tolerate absence should ask for the Optional.
+            if (!SimulatedEntity.isSimulated(player)) {
+                player.kick(Component.text(PlayerManager.LOAD_ERROR_FORMAT_ENTITY));
+            }
             return new ClientNotLoadedException(player);
         });
     }

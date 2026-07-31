@@ -27,6 +27,7 @@ public class Indexes {
     public static final Index IDX_SIM_BUILD_FINGERPRINT = Internal.createIndex(DSL.name("idx_sim_build_fingerprint"), SimBuild.SIM_BUILD, new OrderField[] { SimBuild.SIM_BUILD.FINGERPRINT }, false);
     public static final Index IDX_SIM_BUILD_RUN = Internal.createIndex(DSL.name("idx_sim_build_run"), SimBuild.SIM_BUILD, new OrderField[] { SimBuild.SIM_BUILD.RUN_ID }, false);
     public static final Index IDX_SIM_BUILD_RUN_FINGERPRINT = Internal.createIndex(DSL.name("idx_sim_build_run_fingerprint"), SimBuild.SIM_BUILD, new OrderField[] { SimBuild.SIM_BUILD.RUN_ID, SimBuild.SIM_BUILD.FINGERPRINT }, true);
+    public static final Index IDX_SIM_BUILD_WEAPON_DAMAGE = Internal.createIndex(DSL.name("idx_sim_build_weapon_damage"), SimBuild.SIM_BUILD, new OrderField[] { SimBuild.SIM_BUILD.RUN_ID, SimBuild.SIM_BUILD.WEAPON_DAMAGE_BASE }, false);
     public static final Index IDX_SIM_RESULT_BUILD = Internal.createIndex(DSL.name("idx_sim_result_build"), SimResult.SIM_RESULT, new OrderField[] { SimResult.SIM_RESULT.BUILD_ID }, false);
     public static final Index IDX_SIM_RESULT_RUN = Internal.createIndex(DSL.name("idx_sim_result_run"), SimResult.SIM_RESULT, new OrderField[] { SimResult.SIM_RESULT.RUN_ID }, false);
     public static final Index IDX_SIM_RUN_CONFIG_HASH = Internal.createIndex(DSL.name("idx_sim_run_config_hash"), SimRun.SIM_RUN, new OrderField[] { SimRun.SIM_RUN.CONFIG_HASH }, false);

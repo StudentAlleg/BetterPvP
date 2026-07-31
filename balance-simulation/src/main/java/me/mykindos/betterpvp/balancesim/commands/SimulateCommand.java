@@ -19,6 +19,7 @@ import net.kyori.adventure.text.Component;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
@@ -39,6 +40,18 @@ public class SimulateCommand extends Command implements IConsoleCommand {
 
     /** First argument that asks the running sweep to stop rather than naming a tier to start. */
     private static final String STOP_ARGUMENT = "stop";
+
+    /**
+     * Asks the run to classify each of its skills as relevant, inert or undrivable and write the
+     * artifact.
+     *
+     * <p>A flag rather than a scope, because the audit is a reporting mode over an ordinary sweep --
+     * the {@code sim_result} rows are identical either way, and the verdicts are derived from them.
+     */
+    private static final String AUDIT_FLAG = "--audit";
+
+    /** Every flag this command accepts, so an unrecognised one can be refused by name. */
+    private static final List<String> FLAGS = List.of(AUDIT_FLAG);
 
     private final SimulationGate gate;
     private final DuelOrchestrator orchestrator;
@@ -70,6 +83,30 @@ public class SimulateCommand extends Command implements IConsoleCommand {
             UtilMessage.message(sender, "core.prefix.command", "balancesim.command.simulate.disabled");
             return;
         }
+
+        // Flags are pulled out first so they can be written in any position, and an unrecognised one
+        // is refused rather than ignored -- for the same reason a mistyped scope is. A silently
+        // dropped "--audti" would produce a sweep that looks exactly like an audited one and writes
+        // no artifact, which is a failure nobody would notice until they went looking for the file.
+        final List<String> unknownFlags = new ArrayList<>();
+        final List<String> positional = new ArrayList<>();
+        boolean audit = false;
+        for (String arg : args) {
+            if (!arg.startsWith("--")) {
+                positional.add(arg);
+            } else if (AUDIT_FLAG.equalsIgnoreCase(arg)) {
+                audit = true;
+            } else {
+                unknownFlags.add(arg);
+            }
+        }
+        if (!unknownFlags.isEmpty()) {
+            UtilMessage.message(sender, "core.prefix.command", "balancesim.command.simulate.badFlag",
+                    Component.text(String.join(", ", unknownFlags)),
+                    Component.text(String.join(", ", FLAGS)));
+            return;
+        }
+        args = positional.toArray(new String[0]);
 
         // Checked before the scope is parsed, so "stop" cannot be mistaken for a mistyped tier and
         // answered with the list of valid scopes.
@@ -112,7 +149,18 @@ public class SimulateCommand extends Command implements IConsoleCommand {
 
         UtilMessage.message(sender, "core.prefix.command", "balancesim.command.simulate.started",
                 Component.text(scope.name()), Component.text(scenario.name()));
-        orchestrator.run(SimulationTrigger.COMMAND, scope, scenario, progress -> report(sender, progress))
+        if (audit) {
+            // Warned rather than refused. A skill audit needs skill-less baseline builds to subtract,
+            // which only the tiers that enumerate skills produce -- but an admin auditing a scope that
+            // cannot answer should be told why the artifact will be missing, not blocked from a sweep
+            // that is otherwise perfectly valid.
+            UtilMessage.message(sender, "core.prefix.command",
+                    scope.isAuditable()
+                            ? "balancesim.command.simulate.auditing"
+                            : "balancesim.command.simulate.auditScope",
+                    Component.text(scope.name()));
+        }
+        orchestrator.run(SimulationTrigger.COMMAND, scope, scenario, audit, progress -> report(sender, progress))
                 .thenAccept(summary -> report(sender, summary))
                 .exceptionally(ex -> {
                     log.error("Simulation run failed", ex).submit();
@@ -209,12 +257,25 @@ public class SimulateCommand extends Command implements IConsoleCommand {
         }
         if (args.length == 2) {
             final String prefix = args[1].toUpperCase(Locale.ROOT);
-            return Arrays.stream(SimScenario.values())
+            final List<String> options = Arrays.stream(SimScenario.values())
                     .map(Enum::name)
                     .filter(name -> name.startsWith(prefix))
                     .collect(Collectors.toList());
+            options.addAll(matchingFlags(args[1]));
+            return options;
+        }
+        // Offered past the positional arguments too, so a flag stays discoverable however far along
+        // the line the cursor is -- the alternative is an admin having to read the source to learn the
+        // audit exists.
+        if (args.length > 2) {
+            return matchingFlags(args[args.length - 1]);
         }
         return super.processTabComplete(sender, args);
+    }
+
+    private static List<String> matchingFlags(String prefix) {
+        final String lower = prefix.toLowerCase(Locale.ROOT);
+        return FLAGS.stream().filter(flag -> flag.startsWith(lower)).collect(Collectors.toList());
     }
 
     private static String scopeNames() {

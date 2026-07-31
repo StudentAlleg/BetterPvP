@@ -5,6 +5,8 @@ import com.github.retrooper.packetevents.PacketEvents;
 import com.github.retrooper.packetevents.protocol.item.ItemStack;
 import com.github.retrooper.packetevents.protocol.player.Equipment;
 import com.github.retrooper.packetevents.protocol.player.EquipmentSlot;
+import com.github.retrooper.packetevents.protocol.player.User;
+import com.github.retrooper.packetevents.wrapper.PacketWrapper;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEntityEquipment;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerSetSlot;
 import com.google.inject.Inject;
@@ -42,7 +44,7 @@ public class HatProtocol implements Listener {
             );
 
             for (Player player : wearer.getTrackedBy()) {
-                PacketEvents.getAPI().getPlayerManager().getUser(player).sendPacket(packet);
+                sendPacket(player, packet);
             }
         }
 
@@ -52,7 +54,26 @@ public class HatProtocol implements Listener {
                 0, // Allows changing player inventory
                 5,
                 helmet);
-        PacketEvents.getAPI().getPlayerManager().getUser(wearer).sendPacket(packet2);
+        sendPacket(wearer, packet2);
+    }
+
+    /**
+     * Sends a packet to a player that packetevents knows about, and does nothing for one it does not.
+     *
+     * <p>{@code getUser} returns null for any Player that never came through a real login: a
+     * balance-simulator combatant is a {@code ServerPlayer} on an embedded channel, so it equips a
+     * helmet like anyone else and reaches this code, with no packetevents user behind it. The
+     * five-tick delay on {@code onArmor} widens the window further -- by the time it runs, even a
+     * real player may have disconnected.
+     *
+     * <p>Nothing is lost by skipping: this is a cosmetic re-send of a helmet slot, and its audience
+     * is a client. An entity with no connection has no client to show it to.
+     */
+    private static void sendPacket(Player player, PacketWrapper<?> packet) {
+        final User user = PacketEvents.getAPI().getPlayerManager().getUser(player);
+        if (user != null) {
+            user.sendPacket(packet);
+        }
     }
 
     @EventHandler

@@ -72,6 +72,16 @@ public class GreedyRotationPolicy implements RotationPolicy {
     private final SimInputs inputs;
 
     /**
+     * Where a press is reported so it can be counted.
+     *
+     * <p>The press is the one part of an activation no listener can observe. A skill the rotation
+     * never pressed and a skill the chain refused every time both end a duel having done nothing, and
+     * only the count taken here separates them -- which is the distinction the relevance audit turns
+     * on, since the first is a bug in this engine and the second is a fact about the game.
+     */
+    private final SimRecorder recorder;
+
+    /**
      * Core's cooldown manager, pulled from Core's injector rather than injected.
      *
      * <p>Same hazard {@code SimStatePurge} documents: none of Core's singletons is bound in this
@@ -82,9 +92,10 @@ public class GreedyRotationPolicy implements RotationPolicy {
     private final CooldownManager cooldownManager;
 
     @Inject
-    public GreedyRotationPolicy(SimulationGate gate, SimInputs inputs) {
+    public GreedyRotationPolicy(SimulationGate gate, SimInputs inputs, SimRecorder recorder) {
         this.gate = gate;
         this.inputs = inputs;
+        this.recorder = recorder;
         this.cooldownManager = JavaPlugin.getPlugin(Core.class).getInjector().getInstance(CooldownManager.class);
     }
 
@@ -119,10 +130,12 @@ public class GreedyRotationPolicy implements RotationPolicy {
             }
             switch (driven.getArchetype()) {
                 case INTERACT, PREPARE -> {
+                    notePress(player, driven);
                     inputs.rightClick(player);
                     driven.attemptedAt(tick, retryIntervalTicks());
                 }
                 case CHANNEL, CHARGE -> {
+                    notePress(player, driven);
                     inputs.rightClick(player);
                     inputs.beginHold(player);
                     driven.holdUntil(tick + holdTicks());
@@ -162,8 +175,24 @@ public class GreedyRotationPolicy implements RotationPolicy {
         if (!isPressable(driven, player, tick)) {
             return;
         }
+        notePress(player, driven);
         inputs.dropKey(player);
         driven.attemptedAt(tick, retryIntervalTicks());
+    }
+
+    /**
+     * Reports a press so the duel's ledger can count it.
+     *
+     * <p>Before the input rather than after, so a press whose synthesised event throws is still
+     * counted as attempted -- an attempt that produced an exception is emphatically not a skill that
+     * was never driven, and the audit reads those two the opposite way.
+     *
+     * <p>Note that a {@code PASSIVE} never reaches here: it has no button, and its attempt count is
+     * therefore zero by construction rather than by failure. The audit reads the archetype alongside
+     * the count for exactly this reason.
+     */
+    private void notePress(Player player, SimCombatant.DrivenSkill driven) {
+        recorder.noteActivationAttempt(player.getUniqueId(), driven.getSkill().getName());
     }
 
     /**

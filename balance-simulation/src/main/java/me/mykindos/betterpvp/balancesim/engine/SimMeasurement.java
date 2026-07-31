@@ -42,6 +42,15 @@ public final class SimMeasurement {
      */
     private final Map<String, Integer> reasonCounts = new TreeMap<>();
 
+    /**
+     * Per-skill activation counts summed across every iteration of this matchup.
+     *
+     * <p>Summed rather than averaged, because the question the audit asks of them is "did this ever
+     * fire", and a mean of 0.4 successes answers it less clearly than a total of 2. The iteration
+     * count travels alongside in {@code extras}, so a rate is recoverable.
+     */
+    private final Map<String, SimSkillLedger.SkillActivation> activationTotals = new TreeMap<>();
+
     public SimMeasurement(int expectedIterations) {
         this.expectedIterations = Math.max(1, expectedIterations);
     }
@@ -64,6 +73,11 @@ public final class SimMeasurement {
      *                      duel can produce. Recorded rather than inferred from {@code !killed},
      *                      because a duel can also simply time out with both alive.
      * @param energyLimited whether a skill was refused for want of energy during this duel
+     * @param activations   per-skill activation counts for the side this sample describes, keyed by
+     *                      skill name. Empty for a build with no skills, and zero-attempt for a
+     *                      passive, which has no button to press
+     * @param energy        the side's energy accounting, or null when no energy moved and none was
+     *                      observed -- which is a different claim from "spent nothing"
      */
     public record Sample(@Nullable Double dmgPerHit,
                          @Nullable Double dpsSustained,
@@ -72,7 +86,9 @@ public final class SimMeasurement {
                          int hits,
                          boolean killed,
                          boolean attackerDied,
-                         boolean energyLimited) {
+                         boolean energyLimited,
+                         Map<String, SimSkillLedger.SkillActivation> activations,
+                         @Nullable SimEnergyLedger.EnergyUse energy) {
     }
 
     /**
@@ -81,6 +97,10 @@ public final class SimMeasurement {
      * @param energyLimited true when any iteration of this matchup had a skill refused for energy.
      *                      Any rather than all: a rotation that runs dry in some iterations and not
      *                      others is energy-limited, and the fraction is not what the column claims.
+     * @param activations   per-skill activation totals across the matchup's iterations, exposed as
+     *                      typed data as well as inside {@code extrasJson} so the relevance audit
+     *                      reads the figures rather than re-parsing its own JSON
+     * @param energy        mean per-duel energy accounting, or null when none was observed
      */
     public record Aggregate(@Nullable Double dmgPerHit,
                             @Nullable Double dpsSustained,
@@ -88,12 +108,17 @@ public final class SimMeasurement {
                             @Nullable Double ttkSeconds,
                             @Nullable Double hitsToKill,
                             boolean energyLimited,
+                            Map<String, SimSkillLedger.SkillActivation> activations,
+                            @Nullable SimEnergyLedger.EnergyUse energy,
+                            int iterations,
                             String extrasJson) {
     }
 
     public void add(Sample sample, Map<String, Integer> hitReasons) {
         samples.add(sample);
         hitReasons.forEach((reason, count) -> reasonCounts.merge(reason, count, Integer::sum));
+        sample.activations().forEach((skill, counts) ->
+                activationTotals.merge(skill, counts, SimSkillLedger.SkillActivation::plus));
     }
 
     /** Whether every planned iteration of this matchup has been measured. */
@@ -144,6 +169,17 @@ public final class SimMeasurement {
         extras.put("dps_p90", percentile(samples, Sample::dpsSustained, 90));
         extras.put("dmg_per_hit_stddev", stddev(samples, Sample::dmgPerHit));
         extras.put("reasons", reasonCounts);
+        // The two blocks the relevance audit reads. Both are absent rather than empty when there is
+        // nothing to say: a build with no skills has no activations, and a duel where no energy moved
+        // has no energy accounting -- and "absent" and "all zero" are different claims, the second of
+        // which would read as a measured result.
+        if (!activationTotals.isEmpty()) {
+            extras.put("activations", activationsJson());
+        }
+        final SimEnergyLedger.EnergyUse energy = meanEnergy();
+        if (energy != null) {
+            extras.put("energy", energyJson(energy));
+        }
 
         return new Aggregate(dmgPerHit,
                 dpsSustained,
@@ -151,7 +187,78 @@ public final class SimMeasurement {
                 ttkTicks == null ? null : ticksToSeconds(ttkTicks),
                 hitsToKill,
                 energyLimited,
+                Map.copyOf(activationTotals),
+                energy,
+                samples.size(),
                 toJson(extras));
+    }
+
+    /** Per-skill activation totals, as a nested object keyed by skill name. */
+    private Map<String, Object> activationsJson() {
+        final Map<String, Object> bySkill = new LinkedHashMap<>();
+        activationTotals.forEach((skill, counts) -> {
+            final Map<String, Object> entry = new LinkedHashMap<>();
+            entry.put("attempts", counts.attempts());
+            entry.put("successes", counts.successes());
+            entry.put("cooldown_refusals", counts.cooldownRefusals());
+            entry.put("energy_refusals", counts.energyRefusals());
+            entry.put("declined", counts.declined());
+            bySkill.put(skill, entry);
+        });
+        return bySkill;
+    }
+
+    /**
+     * The matchup's energy accounting, averaged per duel.
+     *
+     * <p>Means rather than totals, unlike the activation counts. The audit's question here is
+     * comparative -- "did this build move more energy than the baseline" -- and two matchups can be
+     * reduced from different numbers of iterations, so totals would make a matchup that ran more
+     * duels look like a bigger energy user. The activation counts are asked a different question
+     * ("did this ever fire at all"), which totals answer better.
+     *
+     * <p>{@code minEnergy} takes the lowest floor any duel reached and {@code maxEnergy} the highest
+     * capacity any duel had, because neither is a flow: the floor is the worst case the rotation hit,
+     * and the capacity is a property of the build that {@code Energy Pool} moves and nothing else does.
+     */
+    @Nullable
+    private SimEnergyLedger.EnergyUse meanEnergy() {
+        final List<SimEnergyLedger.EnergyUse> uses = samples.stream()
+                .map(Sample::energy)
+                .filter(use -> use != null && !use.isEmpty())
+                .toList();
+        if (uses.isEmpty()) {
+            return null;
+        }
+        final int n = uses.size();
+        return new SimEnergyLedger.EnergyUse(
+                sum(uses, SimEnergyLedger.EnergyUse::spentOnSkills) / n,
+                sum(uses, SimEnergyLedger.EnergyUse::drainedCustom) / n,
+                sum(uses, SimEnergyLedger.EnergyUse::drainedNatural) / n,
+                sum(uses, SimEnergyLedger.EnergyUse::regenNatural) / n,
+                sum(uses, SimEnergyLedger.EnergyUse::regenCustom) / n,
+                uses.stream().mapToDouble(SimEnergyLedger.EnergyUse::minEnergy).min().orElse(0),
+                uses.stream().mapToDouble(SimEnergyLedger.EnergyUse::maxEnergy).max().orElse(0));
+    }
+
+    /** The per-duel energy means, named so a dashboard reader knows they are not totals. */
+    private Map<String, Object> energyJson(SimEnergyLedger.EnergyUse energy) {
+        final Map<String, Object> json = new LinkedHashMap<>();
+        json.put("spent_on_skills_per_duel", energy.spentOnSkills());
+        json.put("drained_custom_per_duel", energy.drainedCustom());
+        json.put("drained_natural_per_duel", energy.drainedNatural());
+        json.put("regen_natural_per_duel", energy.regenNatural());
+        json.put("regen_custom_per_duel", energy.regenCustom());
+        json.put("min_energy", energy.minEnergy());
+        json.put("max_energy", energy.maxEnergy());
+        json.put("iterations_observed", samples.stream()
+                .map(Sample::energy).filter(use -> use != null && !use.isEmpty()).count());
+        return json;
+    }
+
+    private static double sum(List<SimEnergyLedger.EnergyUse> uses,
+                              java.util.function.ToDoubleFunction<SimEnergyLedger.EnergyUse> field) {
+        return uses.stream().mapToDouble(field).sum();
     }
 
     /**
@@ -221,10 +328,12 @@ public final class SimMeasurement {
 
     /**
      * Serialises the extras map by hand rather than pulling in a binder: every value is a
-     * primitive, a null, or a flat string-to-int map, and the column is read by Grafana with
-     * {@code ->>} rather than deserialised into a type.
+     * primitive, a null, or a map of those, and the column is read by Grafana with {@code ->>} and
+     * {@code ->} rather than deserialised into a type.
+     *
+     * <p>Nesting is handled recursively rather than at a fixed depth, because the activation block is
+     * a map of maps and the next thing the engine learns to measure will not be flat either.
      */
-    @SuppressWarnings("unchecked")
     private static String toJson(Map<String, Object> extras) {
         final StringBuilder json = new StringBuilder("{");
         boolean first = true;
@@ -234,31 +343,26 @@ public final class SimMeasurement {
             }
             first = false;
             json.append('"').append(escape(entry.getKey())).append("\":");
-            final Object value = entry.getValue();
-            if (value instanceof Map<?, ?> map) {
-                json.append(mapToJson((Map<String, Integer>) map));
-            } else if (value instanceof Number || value instanceof Boolean) {
-                json.append(value);
-            } else if (value == null) {
-                json.append("null");
-            } else {
-                json.append('"').append(escape(value.toString())).append('"');
-            }
+            appendValue(json, entry.getValue());
         }
         return json.append('}').toString();
     }
 
-    private static String mapToJson(Map<String, Integer> map) {
-        final StringBuilder json = new StringBuilder("{");
-        boolean first = true;
-        for (Map.Entry<String, Integer> entry : map.entrySet()) {
-            if (!first) {
-                json.append(',');
-            }
-            first = false;
-            json.append('"').append(escape(entry.getKey())).append("\":").append(entry.getValue());
+    @SuppressWarnings("unchecked")
+    private static void appendValue(StringBuilder json, Object value) {
+        if (value == null) {
+            json.append("null");
+        } else if (value instanceof Map<?, ?> map) {
+            json.append(toJson((Map<String, Object>) map));
+        } else if (value instanceof Double number && !Double.isFinite(number)) {
+            // A non-finite double is not valid JSON, and Postgres rejects the whole document rather
+            // than the field -- which would lose an entire matchup's extras to one degenerate divide.
+            json.append("null");
+        } else if (value instanceof Number || value instanceof Boolean) {
+            json.append(value);
+        } else {
+            json.append('"').append(escape(value.toString())).append('"');
         }
-        return json.append('}').toString();
     }
 
     private static String escape(String raw) {

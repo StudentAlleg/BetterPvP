@@ -35,6 +35,7 @@ import org.jooq.impl.DSL;
 import org.jooq.impl.SQLDataType;
 import org.jooq.impl.TableImpl;
 
+import java.math.BigDecimal;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
@@ -106,6 +107,46 @@ public class SimBuild extends TableImpl<SimBuildRecord> {
      */
     public final TableField<SimBuildRecord, String> FINGERPRINT = createField(DSL.name("fingerprint"), SQLDataType.CLOB.nullable(false), this, "");
 
+    /**
+     * The column <code>public.sim_build.weapon_damage_base</code>.
+     */
+    public final TableField<SimBuildRecord, BigDecimal> WEAPON_DAMAGE_BASE = createField(DSL.name("weapon_damage_base"), SQLDataType.NUMERIC(10, 3), this, "");
+
+    /**
+     * The column <code>public.sim_build.weapon_damage_min</code>.
+     */
+    public final TableField<SimBuildRecord, BigDecimal> WEAPON_DAMAGE_MIN = createField(DSL.name("weapon_damage_min"), SQLDataType.NUMERIC(10, 3), this, "");
+
+    /**
+     * The column <code>public.sim_build.weapon_damage_max</code>.
+     */
+    public final TableField<SimBuildRecord, BigDecimal> WEAPON_DAMAGE_MAX = createField(DSL.name("weapon_damage_max"), SQLDataType.NUMERIC(10, 3), this, "");
+
+    /**
+     * The column <code>public.sim_build.weapon_attack_speed_base</code>.
+     */
+    public final TableField<SimBuildRecord, BigDecimal> WEAPON_ATTACK_SPEED_BASE = createField(DSL.name("weapon_attack_speed_base"), SQLDataType.NUMERIC(10, 3), this, "");
+
+    /**
+     * The column <code>public.sim_build.weapon_attack_speed_min</code>.
+     */
+    public final TableField<SimBuildRecord, BigDecimal> WEAPON_ATTACK_SPEED_MIN = createField(DSL.name("weapon_attack_speed_min"), SQLDataType.NUMERIC(10, 3), this, "");
+
+    /**
+     * The column <code>public.sim_build.weapon_attack_speed_max</code>.
+     */
+    public final TableField<SimBuildRecord, BigDecimal> WEAPON_ATTACK_SPEED_MAX = createField(DSL.name("weapon_attack_speed_max"), SQLDataType.NUMERIC(10, 3), this, "");
+
+    /**
+     * The column <code>public.sim_build.weapon_slot</code>.
+     */
+    public final TableField<SimBuildRecord, String> WEAPON_SLOT = createField(DSL.name("weapon_slot"), SQLDataType.CLOB, this, "");
+
+    /**
+     * The column <code>public.sim_build.weapon_aliases</code>.
+     */
+    public final TableField<SimBuildRecord, JSONB> WEAPON_ALIASES = createField(DSL.name("weapon_aliases"), SQLDataType.JSONB.nullable(false).defaultValue(DSL.field(DSL.raw("'[]'::jsonb"), SQLDataType.JSONB)), this, "");
+
     private SimBuild(Name alias, Table<SimBuildRecord> aliased) {
         this(alias, aliased, (Field<?>[]) null, null);
     }
@@ -175,7 +216,7 @@ public class SimBuild extends TableImpl<SimBuildRecord> {
 
     @Override
     public List<Index> getIndexes() {
-        return Arrays.asList(Indexes.IDX_SIM_BUILD_FINGERPRINT, Indexes.IDX_SIM_BUILD_RUN, Indexes.IDX_SIM_BUILD_RUN_FINGERPRINT);
+        return Arrays.asList(Indexes.IDX_SIM_BUILD_FINGERPRINT, Indexes.IDX_SIM_BUILD_RUN, Indexes.IDX_SIM_BUILD_RUN_FINGERPRINT, Indexes.IDX_SIM_BUILD_WEAPON_DAMAGE);
     }
 
     @Override
