@@ -4,6 +4,7 @@ import com.google.inject.Inject;
 import com.google.inject.Singleton;
 import me.mykindos.betterpvp.balancesim.BalanceSimulation;
 import me.mykindos.betterpvp.balancesim.SimulationGate;
+import me.mykindos.betterpvp.balancesim.engine.DuelOrchestrator;
 import me.mykindos.betterpvp.balancesim.listeners.BalanceSimulationListenerLoader;
 import me.mykindos.betterpvp.core.client.Client;
 import me.mykindos.betterpvp.core.client.Rank;
@@ -88,6 +89,9 @@ public class BalanceSimCommand extends Command implements IConsoleCommand {
         @Inject
         private BalanceSimulationListenerLoader listenerLoader;
 
+        @Inject
+        private DuelOrchestrator orchestrator;
+
         @Override
         public String getName() {
             return "reload";
@@ -105,6 +109,20 @@ public class BalanceSimCommand extends Command implements IConsoleCommand {
 
         @Override
         public void execute(CommandSender sender, String[] args) {
+            // Refused rather than queued or applied. Reloading re-injects every @Config field on
+            // SimulationGate in place, and the pool and the rotation policy hold that gate and read it
+            // per tick -- so a reload mid-sweep silently re-parameterises a running measurement.
+            // Run 140 is the case: a reload eleven minutes in took concurrency from 300 to 400, the
+            // pool spawned a hundred fresh arenas, and sim_run.config_hash went on claiming 300.
+            // The orchestrator now snapshots its own knobs, which keeps the tick loop honest, but the
+            // other two consumers still read live and there is no reading of a half-reloaded sweep
+            // that is worth having. Stopping first costs a drain; a run whose settings changed
+            // underneath it cannot be compared to anything, including itself.
+            if (orchestrator.isRunning()) {
+                UtilMessage.message(sender, "core.prefix.command", "balancesim.command.reload.sweepRunning");
+                return;
+            }
+
             plugin.reload();
             plugin.getReloadables().forEach(Reloadable::reload);
             commandLoader.reload(plugin.getClass().getPackageName());

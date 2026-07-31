@@ -88,6 +88,21 @@ public class SimulationGate {
     private int skillRetryIntervalTicks;
 
     /**
+     * How a slot's resident is made fit to fight again after it has died. See
+     * {@code ResidentRecycleStrategy}, which documents what each value tests and why the question is
+     * still open.
+     *
+     * <p>Defaults to the only value proven to produce real measurements, which is also the most
+     * expensive one -- a duel kills its defender essentially every time, so this is paid once per duel
+     * and is about a third of the sweep's cost. The cheaper values are experiments; the pool falls back
+     * to {@code RESPAWN_NEW} on its own if the configured one does not work, so trying one costs a
+     * slower sweep rather than a run of nulls.
+     */
+    @Inject
+    @Config(path = "champions.simulation.residentRecycleStrategy", defaultValue = "RESPAWN_NEW")
+    private String residentRecycleStrategy;
+
+    /**
      * Ceiling on how many builds a scope may enumerate. A scope over this is refused with its
      * count rather than truncated: a prefix of an enumeration is a biased sample, and nothing on
      * the resulting rows would say so.

@@ -14,6 +14,8 @@ import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.network.CommonListenerCookie;
 import net.minecraft.server.network.ServerGamePacketListenerImpl;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.Pose;
+import net.minecraft.world.entity.ai.attributes.Attributes;
 import org.bukkit.Location;
 import org.bukkit.craftbukkit.CraftWorld;
 import org.bukkit.entity.Player;
@@ -150,6 +152,14 @@ public class SimPlayer extends ServerPlayer {
         player.connection = new ServerGamePacketListenerImpl(server, connection, player,
                 CommonListenerCookie.createInitial(profile, false));
 
+        // Advancements are pure overhead for a combatant nobody is watching, and they are not free at
+        // rest: run 142's profile caught PlayerAdvancements.updateTreeVisibility,
+        // AdvancementRequirements.anyMatch and PlayerTrigger.trigger together at about 2% of the server
+        // thread, all of it criterion listeners firing during combat. The registration itself happens
+        // inside ServerPlayer.<init> and cannot be skipped from here, but the listeners can be dropped
+        // the moment the entity exists.
+        player.getAdvancements().stopListening();
+
         level.addNewPlayer(player);
         return player;
     }
@@ -198,40 +208,196 @@ public class SimPlayer extends ServerPlayer {
     }
 
     /**
-     * Brings a combatant that actually died back to a fightable state, in place.
+     * Unsets the death on this entity, in place.
      *
-     * <p>Phase 3 stopped intercepting lethal blows, so the loser of a duel is a genuinely dead
-     * {@code ServerPlayer}. Two things follow, and both are why this exists rather than a respawn:
-     * <ul>
-     *   <li>{@code LivingEntity.tickDeath} removes a dead entity from the level 20 ticks after the
-     *       kill, so a corpse left alone stops being a resident at all -- which would silently return
-     *       the pool to spawning a fresh pair per duel and give back the 43.8% of a profile that
-     *       residency bought.</li>
-     *   <li>{@code PlayerList.respawn} is the other option and is worse on every count: it is the
-     *       client-driven path, it fires {@code PlayerRespawnEvent}, and it constructs a
-     *       <em>new</em> {@code ServerPlayer} -- a new entity is exactly what a resident is not.</li>
-     * </ul>
+     * <p>{@link ResidentRecycleStrategy#REVIVE}. Known not to be sufficient -- see that class for the
+     * two runs that measured it -- and kept as the control the other strategies are graded against.
+     * Everything vanilla sets on death that anyone here could name is unset, including the pose, whose
+     * {@code Player} dimensions are a fixed 0.2x0.2 box rather than a standing hitbox. It is still not
+     * enough, which is the finding rather than an oversight.
      *
-     * <p>So the fields vanilla sets on death are unset directly. That is a narrow, sim-only
-     * liberty: the alternative is a per-duel respawn whose cost and side effects are both larger
-     * than the death being undone. Health is only lifted off zero here; the duel's real starting
-     * health is set by {@code SimCombatant.spawn} once role and armour are equipped.
-     *
-     * @return true if the combatant had died and was revived
+     * @return true if the combatant had died and the death was unset
      */
     public boolean reviveIfDead() {
-        if (!isDeadOrDying() && !isRemoved()) {
+        if (isRemoved()) {
             return false;
         }
-        // A corpse that already passed the 20-tick window is gone from the level and cannot be
-        // revived; the caller replaces the slot's residents instead.
-        if (isRemoved()) {
+        if (!isDeadOrDying() && !dead && getPose() != Pose.DYING) {
             return false;
         }
         dead = false;
         deathTime = 0;
         setHealth(getMaxHealth());
+        // refreshDimensions explicitly rather than relying on setPose to reach it through the
+        // synced-data callback: this entity's data watcher feeds a connection that is a dead end.
+        setPose(Pose.STANDING);
+        refreshDimensions();
+        getCombatTracker().recheckStatus();
+        setLastHurtByMob(null);
+        hurtTime = 0;
+        hurtDuration = 0;
+        invulnerableTime = 0;
+        setAbsorptionAmount(0f);
+        setRemainingFireTicks(0);
+        setTicksFrozen(0);
         return true;
+    }
+
+    /**
+     * Takes this entity out of the level and puts it straight back in, keeping the instance.
+     *
+     * <p>{@link ResidentRecycleStrategy#RECYCLE}. The interesting strategy: it differs from
+     * {@link #reviveIfDead()} only in the level and entity-tracking registration, and from a respawn
+     * only in that the {@code ServerPlayer} instance survives. So it separates "the residue is
+     * registration state" from "the residue is on the object", and if it is the former it is nearly
+     * free -- {@code ServerPlayer.<init>} is 8.84% of the server thread and carries the advancement
+     * listener registration and the stats-file lookup with it.
+     *
+     * <p>The death is unset before the re-add rather than after, so the entity is never added to a
+     * level in a dying state.
+     */
+    public void recycle(Location at) {
+        unregisterForLookup();
+        remove(Entity.RemovalReason.DISCARDED);
+        // Clears the removal reason, without which the entity cannot be added to a level again.
+        unsetRemoved();
+
+        dead = false;
+        deathTime = 0;
+        setPose(Pose.STANDING);
+        refreshDimensions();
+        getCombatTracker().recheckStatus();
+        setLastHurtByMob(null);
+        hurtTime = 0;
+        hurtDuration = 0;
+        invulnerableTime = 0;
+        setAbsorptionAmount(0f);
+        setRemainingFireTicks(0);
+        setTicksFrozen(0);
+
+        setPos(at.getX(), at.getY(), at.getZ());
+        setYRot(at.getYaw());
+        setXRot(at.getPitch());
+        setYHeadRot(at.getYaw());
+        ((CraftWorld) at.getWorld()).getHandle().addNewPlayer(this);
+        // After the re-add: max health depends on the attribute modifiers, and a level add is entitled
+        // to touch them.
+        setHealth(getMaxHealth());
+    }
+
+    /**
+     * Whether this combatant is in a state that could take part in a duel.
+     *
+     * <p>What {@link SimCombatantPool} tests a resident against before handing its slot out again, and
+     * since phase 3 stopped intercepting lethal blows the ordinary way to fail it is to have lost the
+     * last duel. A combatant that fails is discarded and respawned rather than repaired -- see that
+     * class for the two runs that established that reviving a dead {@code ServerPlayer} in place does
+     * not work, however much of the post-death state is unset.
+     *
+     * <p><b>Necessary, not sufficient.</b> Run 141's defenders passed every check here and still could
+     * not be hurt: something a death leaves behind is not visible in the entity's own state at all.
+     * So this is deliberately about the entity only -- whether the managers hold stale per-UUID state
+     * is {@code SimStatePurge}'s question, and whether the combatant can actually be <em>hurt</em> is
+     * only answerable by hurting it, which is what the barren duel tripwire in
+     * {@code DuelOrchestrator} does one duel later.
+     */
+    public boolean isFightable() {
+        return !isRemoved()
+                && !dead
+                && !isDeadOrDying()
+                && getHealth() > 0
+                && getPose() != Pose.DYING;
+    }
+
+    /**
+     * Every piece of state that can make {@code ServerPlayer.attack} decline to land a hit, as one line.
+     *
+     * <p>Exists because {@link #isFightable()} is not sufficient and never was: a poisoned combatant
+     * passes it and still cannot be hurt, so runs 140, 141 and 144 could each only report *that* the
+     * duel measured nothing. The engine attacks by direct reference -- {@code handle.attack(opponent)},
+     * no entity lookup -- so the refusal is somewhere between {@code isAttackable} and the damage
+     * actually applying, and everything on that path that is cheap to read is read here.
+     *
+     * <p>{@code inLevelLookup} is the one that is not about the entity's own state: it asks the level
+     * whether it still knows about this entity by id. A {@code RECYCLE}d resident that answers
+     * {@code false} there was never really re-added, whatever {@code addNewPlayer} appeared to do, and
+     * that is a different bug from anything the invulnerability flags would show.
+     */
+    public String describeCombatState() {
+        return "removed=" + isRemoved()
+                + " dead=" + dead
+                + " deadOrDying=" + isDeadOrDying()
+                + " alive=" + isAlive()
+                + " health=" + getHealth() + "/" + getMaxHealth()
+                + " pose=" + getPose()
+                + " attackable=" + isAttackable()
+                + " invulnerable=" + isInvulnerable()
+                + " abilitiesInvulnerable=" + getAbilities().invulnerable
+                + " invulnerableTime=" + invulnerableTime
+                + " hurtTime=" + hurtTime
+                + " spectator=" + isSpectator()
+                + " deathTime=" + deathTime
+                + " inLevelLookup=" + (level().getEntity(getId()) != null)
+                + " bukkitValid=" + asBukkit().isValid()
+                + " bukkitOnline=" + asBukkit().isOnline()
+                + " attackDamage=" + getAttributeValue(Attributes.ATTACK_DAMAGE);
+    }
+
+    /**
+     * Tries to hurt this combatant two different ways and reports what each one did to its health.
+     *
+     * <p>The instrument for the question run 146 left open. Every field in
+     * {@link #describeCombatState()} came back healthy on a combatant that had just absorbed 600
+     * swings without taking a point of damage, so the refusal is not in the entity's own state and
+     * the next thing worth knowing is how far down the pipeline a hit gets. Three outcomes, three
+     * different bugs:
+     *
+     * <ul>
+     *   <li>Both land -- the target is hurtable and the fault is on the attacker's side of
+     *       {@code ServerPlayer.attack}, before {@code hurtServer} is ever reached.</li>
+     *   <li>Neither lands -- something in the damage pipeline refuses this entity outright,
+     *       independently of who is hitting it.</li>
+     *   <li>Only the sourceless one lands -- the refusal is about the pairing rather than the
+     *       target, which points at the attacker/defender relationship the managers hold.</li>
+     * </ul>
+     *
+     * <p>Invulnerability frames are cleared between the two attempts, because the first hit sets them
+     * and would otherwise guarantee the second reads as refused on a perfectly healthy combatant.
+     *
+     * <p>Mutates the combatant, deliberately. It is only ever called on a slot the barren branch is
+     * about to replace anyway, and only on the first barren duel of a run, so it cannot affect a
+     * measurement -- the duel that would have been measured here already failed.
+     */
+    public String probeDamage(SimPlayer source) {
+        final double start = getHealth();
+        String sourced;
+        try {
+            asBukkit().damage(1.0D, source.asBukkit());
+            sourced = String.valueOf(start - getHealth());
+        } catch (Throwable t) {
+            sourced = "threw " + t;
+        }
+
+        final double mid = getHealth();
+        invulnerableTime = 0;
+        hurtTime = 0;
+
+        String sourceless;
+        try {
+            asBukkit().damage(1.0D);
+            sourceless = String.valueOf(mid - getHealth());
+        } catch (Throwable t) {
+            sourceless = "threw " + t;
+        }
+
+        // Left as it was found. The poisoned subject is about to be despawned so it makes no
+        // difference there, but the control is a fresh resident going straight back into service, and
+        // a combatant that starts its next duel two hearts down would quietly bias that measurement.
+        setHealth(getMaxHealth());
+        invulnerableTime = 0;
+        hurtTime = 0;
+
+        return "healthLostToSourcedHit=" + sourced + " healthLostToSourcelessHit=" + sourceless;
     }
 
     @SuppressWarnings("unchecked")

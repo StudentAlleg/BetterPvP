@@ -119,6 +119,20 @@ public class DuelOrchestrator {
     /** The scenario the in-flight sweep is running, so every duel of a run is the same measurement. */
     private volatile SimScenario scenario = SimScenario.ONE_WAY;
 
+    /**
+     * The knobs the in-flight sweep was started with, frozen at {@link #run}.
+     *
+     * <p>Read from {@link SimulationGate} once rather than per tick. The gate's fields are injected
+     * {@code @Config} values, so {@code /balancesim reload} rewrites them in place -- and every
+     * consumer that asked the gate on the hot path silently switched mid-run. Run 140 is the case
+     * that showed it: a reload 11 minutes in moved concurrency from 300 to 400 and the pool spawned
+     * 100 new arenas, while {@code sim_run.config_hash} -- computed once, at the top of the run --
+     * still recorded 300. Two runs that hash identically have to have measured under identical
+     * settings, or the column means nothing, so the snapshot is taken in the same breath as the hash
+     * and everything downstream reads it instead of the gate.
+     */
+    private volatile SweepSettings settings = SweepSettings.NONE;
+
     /** Guards against a second sweep being started while one is in flight. */
     private volatile boolean running;
 
@@ -237,6 +251,9 @@ public class DuelOrchestrator {
         running = true;
         stopRequested = false;
         this.scenario = scenario;
+        // Before configHash, and before anything else reads a knob: from here to the summary the run
+        // is parameterised by this snapshot and not by the gate.
+        this.settings = SweepSettings.from(gate);
         // Before configHash reads it: a /champions reload between runs can change every balance value,
         // and a stale digest would group two runs that measured different games.
         configDigest.invalidate();
@@ -305,15 +322,15 @@ public class DuelOrchestrator {
             // target_hp was computed from.
             context.equipment().invalidate();
 
-            final List<SimBuildSpec> builds = catalog.enumerateBuilds(scope, gate.getMaxBuilds());
+            final List<SimBuildSpec> builds = catalog.enumerateBuilds(scope, settings.maxBuilds());
             final List<SimTargetSpec> targets = catalog.enumerateTargets(scope);
-            final int iterations = Math.max(1, gate.getIterations());
+            final int iterations = settings.iterations();
 
             final long duels = (long) builds.size() * targets.size() * iterations;
             log.info("Simulation run {} scope {}: {} builds x {} targets x {} iterations = {} duels."
                             + " At {} concurrent and a {}s timeout that is at most {} minutes of wall clock.",
                     runId, scope, builds.size(), targets.size(), iterations, duels,
-                    gate.getMaxConcurrentDuels(), gate.getDuelTimeoutSeconds(),
+                    settings.maxConcurrentDuels(), settings.duelTimeoutSeconds(),
                     worstCaseMinutes(duels)).submit();
 
             if (builds.isEmpty() || targets.isEmpty()) {
@@ -448,10 +465,10 @@ public class DuelOrchestrator {
      * refused anyway, so two runs differing only in it are measuring the same thing.
      */
     private String configHash(SimScope scope) {
-        return Integer.toHexString((scope + ":" + scenario + ":" + gate.getIterations()
-                + ":" + gate.getDuelTimeoutSeconds() + ":" + gate.getMaxConcurrentDuels()
-                + ":" + SimSkillFilter.parse(gate.getSkillFilter())
-                + ":" + gate.getChannelHoldTicks()
+        return Integer.toHexString((scope + ":" + scenario + ":" + settings.iterations()
+                + ":" + settings.duelTimeoutSeconds() + ":" + settings.maxConcurrentDuels()
+                + ":" + settings.skillFilter()
+                + ":" + settings.channelHoldTicks()
                 + ":" + configDigest.digest()
                 + ":" + ENGINE_VERSION).hashCode());
     }
@@ -469,13 +486,13 @@ public class DuelOrchestrator {
         return "{\"phase\":3"
                 + ",\"scope\":\"" + scope + '"'
                 + ",\"scenario\":\"" + scenario.jsonValue() + '"'
-                + ",\"iterations\":" + Math.max(1, gate.getIterations())
+                + ",\"iterations\":" + settings.iterations()
                 + ",\"actives\":true"
                 + ",\"rotation\":\"greedy\""
-                + ",\"channel_hold_ticks\":" + Math.max(1, gate.getChannelHoldTicks())
-                + ",\"skill_filter\":\"" + SimSkillFilter.parse(gate.getSkillFilter()) + '"'
+                + ",\"channel_hold_ticks\":" + settings.channelHoldTicks()
+                + ",\"skill_filter\":\"" + settings.skillFilter() + '"'
                 + ",\"balance_config\":\"" + configDigest.digest() + '"'
-                + ",\"timeout_s\":" + gate.getDuelTimeoutSeconds()
+                + ",\"timeout_s\":" + settings.duelTimeoutSeconds()
                 + '}';
     }
 
@@ -489,8 +506,56 @@ public class DuelOrchestrator {
 
     /** Upper bound on the sweep, assuming every duel runs to the timeout rather than to a kill. */
     private long worstCaseMinutes(long duels) {
-        final double batches = Math.ceil((double) duels / Math.max(1, gate.getMaxConcurrentDuels()));
-        return Math.round(batches * gate.getDuelTimeoutSeconds() / 60.0);
+        final double batches = Math.ceil((double) duels / Math.max(1, settings.maxConcurrentDuels()));
+        return Math.round(batches * settings.duelTimeoutSeconds() / 60.0);
+    }
+
+    /**
+     * Every knob a sweep is parameterised by, read from the gate once when the run opens.
+     *
+     * <p>A record rather than a set of fields so that "what this run was configured with" is one
+     * value that can be passed to the loop and its duels, and so a knob added to {@link SimulationGate}
+     * has to be added here deliberately rather than being picked up live by accident.
+     *
+     * <p>Only the orchestrator's own knobs. {@code SimCombatantPool} and {@link GreedyRotationPolicy}
+     * are singletons that hold the gate themselves and still read it per tick -- so residency, the
+     * quarantine, the channel hold budget and the retry interval remain live. That is closed at the
+     * other end instead, by {@code /balancesim reload} refusing while a sweep is running; this
+     * snapshot is what makes the refusal a belt rather than the only brace.
+     *
+     * @param iterations              Monte-Carlo iterations per matchup
+     * @param maxBuilds               ceiling the catalog is enumerated under
+     * @param maxConcurrentDuels      how many duels may be in flight at once
+     * @param duelTimeoutSeconds      how long a duel runs before it is abandoned
+     * @param duelSetupsPerTick       how many duels may be set up in a single tick
+     * @param progressIntervalSeconds how often a snapshot is reported
+     * @param channelHoldTicks        how long the rotation holds a channel -- hashed, so a run that
+     *                                changed it mid-flight would be incomparable to itself
+     * @param skillFilter             which skills the catalog was allowed to build from
+     */
+    private record SweepSettings(int iterations,
+                                 int maxBuilds,
+                                 int maxConcurrentDuels,
+                                 double duelTimeoutSeconds,
+                                 int duelSetupsPerTick,
+                                 double progressIntervalSeconds,
+                                 int channelHoldTicks,
+                                 SimSkillFilter skillFilter) {
+
+        /** Stands in before the first run, so the field is never null for a reader that beats it. */
+        private static final SweepSettings NONE =
+                new SweepSettings(1, 0, 0, 0, 1, 15, 1, SimSkillFilter.OFFENSIVE);
+
+        private static SweepSettings from(SimulationGate gate) {
+            return new SweepSettings(Math.max(1, gate.getIterations()),
+                    gate.getMaxBuilds(),
+                    gate.getMaxConcurrentDuels(),
+                    gate.getDuelTimeoutSeconds(),
+                    gate.getDuelSetupsPerTick(),
+                    gate.getProgressIntervalSeconds(),
+                    Math.max(1, gate.getChannelHoldTicks()),
+                    SimSkillFilter.parse(gate.getSkillFilter()));
+        }
     }
 
     /**
@@ -529,6 +594,12 @@ public class DuelOrchestrator {
         private int rowsFlushed;
         /** Whether the drain has been logged, so a stop reports once rather than every tick. */
         private boolean stopAnnounced;
+
+        /**
+         * Duels that ran to the timeout without the attacker landing a hit. See
+         * {@link #noteBarrenTimeout()}.
+         */
+        private long barrenTimeouts;
 
         /**
          * Builds whose effective levels have already been written back, so the update runs once per
@@ -577,6 +648,7 @@ public class DuelOrchestrator {
                 if (active.isEmpty() && (pending.isEmpty() || stopRequested)) {
                     task.cancel();
                     report();
+                    logBarrenTimeouts();
                     finish(runId, done, List.copyOf(results), List.copyOf(flushes),
                             summarise(stopRequested ? "CANCELLED" : "COMPLETED"));
                     return;
@@ -591,6 +663,7 @@ public class DuelOrchestrator {
                 log.error("Simulation run {} aborted after {} of {} duels", runId, completedDuels,
                         plannedDuels, e).submit();
                 report();
+                logBarrenTimeouts();
                 // Still finished through the same path, so the partial run's rows are flushed and
                 // summarised rather than discarded -- an aborted sweep's measurements are valid for
                 // the matchups that did complete, and the summary says how far it got.
@@ -614,6 +687,49 @@ public class DuelOrchestrator {
             log.info("Simulation run {} stopping on request: draining {} duels in flight and"
                             + " abandoning {} queued. Rows already measured will be written.",
                     runId, active.size(), pending.size()).submit();
+        }
+
+        /**
+         * Records a duel that timed out having measured nothing, warning the first time.
+         *
+         * <p>Warned once and then counted, for the reason the drain is announced once: the useful
+         * signal is that it is happening at all, and at several hundred duels a minute a line each
+         * would bury the run's own progress. The running total then rides on the progress line, so a
+         * sweep that starts producing nothing is visible while there is still time to stop it rather
+         * than only in the closing summary.
+         *
+         * <p>Not an abort. A build genuinely unable to land a hit inside the timeout is a legitimate
+         * -- if extreme -- measurement, and the engine does not get to decide that a row is too
+         * strange to write. The judgement belongs to whoever reads the count.
+         */
+        private void noteBarrenTimeout() {
+            if (barrenTimeouts++ == 0) {
+                log.warn("Simulation run {} [{}]: a duel ran its full {}s timeout without the attacker"
+                                + " landing a single hit. Its row will carry NULL damage and TTK. If this"
+                                + " count keeps climbing the sweep is not measuring anything -- check that"
+                                + " combatants are still fightable rather than waiting for the run to end.",
+                        runId, scope, settings.duelTimeoutSeconds()).submit();
+            }
+        }
+
+        /**
+         * Closes the run with what fraction of it measured nothing, when any of it did.
+         *
+         * <p>Next to the summary rather than inside it, because it is a verdict on whether the rows
+         * are worth querying rather than a count of work done -- and it is the one figure that
+         * separates "this sweep found some very tanky targets" from "this sweep was broken". Silent
+         * when the count is zero, so a healthy run gains no noise.
+         */
+        private void logBarrenTimeouts() {
+            if (barrenTimeouts == 0) {
+                return;
+            }
+            log.warn("Simulation run {} [{}]: {} of {} completed duels ({}%) timed out without the"
+                            + " attacker landing a hit. Those rows carry NULL damage and TTK and measure"
+                            + " nothing; treat the run as suspect rather than as a balance result.",
+                    runId, scope, barrenTimeouts, completedDuels,
+                    String.format(Locale.ROOT, "%.1f",
+                            completedDuels == 0 ? 0.0 : 100.0 * barrenTimeouts / completedDuels)).submit();
         }
 
         /** Freezes the loop's counters into the run's result. */
@@ -649,12 +765,12 @@ public class DuelOrchestrator {
             // zero, and the run that discovered it retained tens of millions of packets and showed
             // nothing at all until the heap ran out.
             log.info("Simulation run {} [{}]: {}/{} duels ({}%), {} in flight, {} combatants resident,"
-                            + " {} packets queued, {}/{} matchups measured."
+                            + " {} packets queued, {} barren timeouts, {}/{} matchups measured."
                             + " Elapsed {}, remaining {}, ETA {}.",
                     runId, scope, completedDuels, plannedDuels,
                     String.format(Locale.ROOT, "%.1f", progress.percent()), active.size(),
                     combatantPool.residentCount(), combatantPool.queuedPacketBacklog(),
-                    completedMatchups, plannedMatchups,
+                    barrenTimeouts, completedMatchups, plannedMatchups,
                     progress.elapsedFormatted(), progress.etaFormatted(),
                     progress.estimatedFinish()).submit();
 
@@ -663,7 +779,7 @@ public class DuelOrchestrator {
 
         /** How often a snapshot is emitted, floored at a second so a bad config cannot spam. */
         private long progressIntervalTicks() {
-            return Math.max(20L, (long) (gate.getProgressIntervalSeconds() * 1000L / MILLIS_PER_TICK));
+            return Math.max(20L, (long) (settings.progressIntervalSeconds() * 1000L / MILLIS_PER_TICK));
         }
 
         /**
@@ -671,9 +787,9 @@ public class DuelOrchestrator {
          * setup allowance is spent.
          */
         private void fill() {
-            int setupsRemaining = Math.max(1, gate.getDuelSetupsPerTick());
+            int setupsRemaining = Math.max(1, settings.duelSetupsPerTick());
             while (setupsRemaining-- > 0
-                    && active.size() < gate.getMaxConcurrentDuels()
+                    && active.size() < settings.maxConcurrentDuels()
                     && !pending.isEmpty()) {
                 // Asked for before the matchup is polled, because the pool can legitimately have
                 // nothing to give: past the residency cap every slot may still be inside its
@@ -763,11 +879,21 @@ public class DuelOrchestrator {
         /** The tick a death resolved this duel on, or -1 while it is still being fought. */
         private long resolvedAtTick = -1;
 
+        /**
+         * Whether this duel ran its whole timeout without the attacker landing a hit.
+         *
+         * <p>Set by {@link #record} and read by {@link #teardown}, which runs immediately after it.
+         * It is the pool's evidence that the slot's residents are no longer fightable -- see
+         * {@code SimCombatantPool.release} -- and the only such evidence there is, since a poisoned
+         * combatant reads as perfectly healthy right up until nothing can hurt it.
+         */
+        private boolean barren;
+
         private Duel(Matchup matchup, int sequence, long startTick, SimCombatantPool.Slot slot) {
             this.matchup = matchup;
             this.slot = slot;
             this.startTick = startTick;
-            this.timeoutTicks = (long) (gate.getDuelTimeoutSeconds() * 1000L / MILLIS_PER_TICK);
+            this.timeoutTicks = (long) (settings.duelTimeoutSeconds() * 1000L / MILLIS_PER_TICK);
 
             // Both combatants are the slot's residents rather than fresh entities, so their names
             // and UUIDs belong to the arena and not to this duel. The duel's identity is the
@@ -872,6 +998,17 @@ public class DuelOrchestrator {
 
             final boolean killed = defender.getUuid().equals(recording.getKilled());
 
+            // A duel that ran its whole timeout without the attacker landing a single hit is not a
+            // slow build; it is a duel that never happened. resolvedAtTick < 0 is exactly the timeout
+            // path -- a kill or a dead combatant would have set it -- so this is the barren case and
+            // nothing else. Reported because it is otherwise invisible: run 140 spent 16 minutes here
+            // for 95.6% of its duels while the progress line counted them as measured, and the only
+            // trace was a NULL dmg_per_hit in a table nobody reads until the sweep is over.
+            if (resolvedAtTick < 0 && hits.isEmpty()) {
+                barren = true;
+                loop.noteBarrenTimeout();
+            }
+
             // The fight is measured from the first landed hit, not from when the duel object was
             // built. Setting a duel up costs real main-thread time -- spawning two ServerPlayers,
             // equipping roles, builds, weapons and armour -- so anchoring on the recording's start
@@ -959,12 +1096,17 @@ public class DuelOrchestrator {
          * queue the same tick loop draws from, and handing it back early could put four combatants
          * on one platform.
          *
+         * <p>{@link #barren} goes back with it. A duel that measured nothing is the pool's evidence
+         * that this slot's residents have stopped being fightable, and it is worth acting on there
+         * rather than here because the pool is what can do something about it -- replace the pair --
+         * and because it is the only place that knows whether the slot has ever hosted a death.
+         *
          * @param currentTick when the quarantine window starts counting from
          */
         private void teardown(long currentTick) {
             attacker.despawn(context);
             defender.despawn(context);
-            combatantPool.release(slot, currentTick);
+            combatantPool.release(slot, currentTick, barren);
         }
     }
 }

@@ -20,6 +20,7 @@ import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.EnumMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -72,7 +73,8 @@ public class BalanceCatalog {
     }
 
     /**
-     * Enumerates every attacker build in scope.
+     * Enumerates every attacker build in scope, ordered so that any prefix of the result covers
+     * every role.
      *
      * @param scope     which axes are varied
      * @param maxBuilds refuse rather than truncate above this many builds
@@ -98,7 +100,47 @@ public class BalanceCatalog {
         log.info("Catalog scope {} enumerated {} builds under skill filter {} ({} enabled skills"
                         + " excluded as unexercisable by this engine)",
                 scope, builds.size(), SimSkillFilter.parse(gate.getSkillFilter()), excluded).submit();
-        return List.copyOf(builds);
+        return interleaveByRole(builds);
+    }
+
+    /**
+     * Reorders a role-major enumeration into a round robin over roles, so the first <em>n</em> builds
+     * are a slice of all six rather than all of the first.
+     *
+     * <p>Applied after enumeration rather than by enumerating differently, so the {@code maxBuilds}
+     * cap keeps being checked against a running total inside the recursion and nothing about which
+     * builds exist changes -- only the order they are handed to the orchestrator in.
+     *
+     * <p>The order is load-bearing because a {@code FULL} sweep is not expected to finish. It plans
+     * upwards of a hundred thousand duels at real-time cost, and the way it is actually used is to
+     * run it for as long as there is time and stop it. Run 140 is what that costs role-major: it was
+     * stopped at 8,990 of 105,408 duels, and every one of those rows was {@code ASSASSIN} -- not a
+     * thin sample of the game but a complete answer about an eighth of it, with nothing on the row or
+     * in {@code sim_run} to say so. Interleaving makes an early stop what it looks like: a uniformly
+     * thinner version of the sweep that was asked for.
+     *
+     * <p>Roles are kept in enumeration order, and each role's builds keep theirs, so the enumeration
+     * stays reproducible -- two runs of the same scope still produce the same sequence.
+     */
+    private static List<SimBuildSpec> interleaveByRole(List<SimBuildSpec> builds) {
+        final Map<String, List<SimBuildSpec>> byRole = new LinkedHashMap<>();
+        for (SimBuildSpec build : builds) {
+            byRole.computeIfAbsent(build.role(), role -> new ArrayList<>()).add(build);
+        }
+        if (byRole.size() < 2) {
+            return List.copyOf(builds);
+        }
+
+        final List<List<SimBuildSpec>> perRole = List.copyOf(byRole.values());
+        final List<SimBuildSpec> interleaved = new ArrayList<>(builds.size());
+        for (int index = 0; interleaved.size() < builds.size(); index++) {
+            for (List<SimBuildSpec> roleBuilds : perRole) {
+                if (index < roleBuilds.size()) {
+                    interleaved.add(roleBuilds.get(index));
+                }
+            }
+        }
+        return List.copyOf(interleaved);
     }
 
     /**

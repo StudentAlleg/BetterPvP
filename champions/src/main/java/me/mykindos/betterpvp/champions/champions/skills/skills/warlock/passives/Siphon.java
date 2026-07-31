@@ -55,6 +55,15 @@ public class Siphon extends Skill implements PassiveSkill, MovementSkill, BuffSk
     private final Map<UUID, Map<UUID, Integer>> siphonData = new ConcurrentHashMap<>();
     private final long SIPHON_UPDATE_DELAY = 250;  // Siphon updates every 250ms or every 5 ticks
 
+    /**
+     * How many times the travelling siphon may step before it gives up.
+     *
+     * <p>It advances 0.9 blocks per run against a radius in single digits, so a normal arrival takes
+     * about a dozen. This is the bound for the case that does not arrive: the caster retreating at the
+     * speed the projectile closes, which otherwise leaves a task running for the rest of the session.
+     */
+    private static final int MAX_SIPHON_TRAVEL_ITERATIONS = 100;
+
     private double baseRadius;
     private double radiusIncreasePerLevel;
     private double baseEnergySiphoned;
@@ -199,22 +208,42 @@ public class Siphon extends Skill implements PassiveSkill, MovementSkill, BuffSk
 
         new BukkitRunnable() {
             private final Location position = target.getLocation().add(0, 1, 0);
+            private int iterations;
 
             @Override
             public void run() {
-                Location playerLoc = player.getLocation().clone().add(0, 1, 0);
-                Vector v = UtilVelocity.getTrajectory(position, playerLoc);
-
-                if (player.isDead()) {
+                // The caster can stop being a valid target for this in three ways -- death, quit, or
+                // the entity going away -- and this runnable is detached, so invalidatePlayer cannot
+                // reach it. Without the online/valid half it keeps homing at a departed player and
+                // then asks for their client below, long after it was unloaded.
+                if (player.isDead() || !player.isOnline() || !player.isValid()) {
                     this.cancel();
                     return;
                 }
+
+                // The projectile only converges while the caster stays put; a caster moving away as
+                // fast as it approaches keeps it alive indefinitely. At 0.9 blocks per run and a
+                // radius in single digits, anything past this is not going to arrive.
+                if (++iterations > MAX_SIPHON_TRAVEL_ITERATIONS) {
+                    this.cancel();
+                    return;
+                }
+
+                Location playerLoc = player.getLocation().clone().add(0, 1, 0);
+                Vector v = UtilVelocity.getTrajectory(position, playerLoc);
 
                 if (UtilLocation.getDistance(position, playerLoc) < 1) {
                     if (Math.random() < getRandomSiphonHealthGainChance(level)) {
                         double healthToGain = getHealthGainedOnRandomSiphon(level);
                         double actualHeal = UtilEntity.health(player, healthToGain);
-                        championsManager.getClientManager().search().online(player).getStatContainer().incrementStat(ClientStat.HEAL_SIPHON, actualHeal);
+                        // The Optional lookup, not search().online(Player): that overload *kicks* a
+                        // player whose client is not loaded. For a real player mid-logout that turns a
+                        // missed stat into a disconnect, and for a simulation combatant it fires the
+                        // real disconnect path -- PlayerList.remove, PlayerQuitEvent and a playerdata
+                        // save for a fake player -- which is exactly what the sim exists not to do.
+                        championsManager.getClientManager().search().online(player.getUniqueId())
+                                .ifPresent(client -> client.getStatContainer()
+                                        .incrementStat(ClientStat.HEAL_SIPHON, actualHeal));
                         UtilMessage.message(player, getName(), "champions.skill.gained-health", Component.text(UtilFormat.formatNumber(healthToGain), NamedTextColor.YELLOW));
                     }
 
