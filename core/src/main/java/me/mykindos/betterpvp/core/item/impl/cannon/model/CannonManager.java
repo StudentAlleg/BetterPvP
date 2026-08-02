@@ -145,7 +145,7 @@ public class CannonManager extends Manager<String, Cannon> {
     }
 
     public Optional<Cannon> of(@NotNull Entity entity) {
-        return getObject(entity.getUniqueId()).or(() -> {
+        return getObject(entity.getUniqueId().toString()).or(() -> {
             if (!(entity instanceof IronGolem golem)) {
                 return Optional.empty();
             }

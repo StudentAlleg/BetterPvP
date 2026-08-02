@@ -420,7 +420,7 @@ public abstract class Skill implements IChampionsSkill {
     }
 
     public boolean hasSkill(Player player) {
-        Optional<GamerBuilds> gamerBuildsOptional = championsManager.getBuilds().getObject(player.getUniqueId().toString());
+        Optional<GamerBuilds> gamerBuildsOptional = championsManager.getBuilds().getObject(player.getUniqueId());
         return gamerBuildsOptional.filter(this::hasSkill).isPresent();
     }
 
@@ -435,7 +435,7 @@ public abstract class Skill implements IChampionsSkill {
     }
 
     protected Optional<BuildSkill> getSkill(Player player) {
-        Optional<GamerBuilds> gamerBuildOptional = championsManager.getBuilds().getObject(player.getUniqueId().toString());
+        Optional<GamerBuilds> gamerBuildOptional = championsManager.getBuilds().getObject(player.getUniqueId());
         if (gamerBuildOptional.isPresent()) {
             return getSkill(gamerBuildOptional.get());
         }

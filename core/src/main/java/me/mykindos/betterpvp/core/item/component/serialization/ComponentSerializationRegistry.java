@@ -16,6 +16,7 @@ import org.bukkit.NamespacedKey;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
@@ -28,6 +29,25 @@ public class ComponentSerializationRegistry {
     private final Map<Class<? extends ItemComponent>, ComponentSerializer<?>> serializers = new HashMap<>();
 
     private final Map<NamespacedKey, ComponentDeserializer<?>> deserializers = new HashMap<>();
+
+    /**
+     * Immutable snapshot of {@link #deserializers}, rebuilt on registration and handed out by
+     * {@link #getAllDeserializers()}.
+     *
+     * <p>That getter used to return {@code Map.copyOf(deserializers)}, which allocates a fresh
+     * immutable map and rehashes every entry on each call. It is called once per
+     * {@code ItemInstance} construction, so on the damage path it ran for every item on every
+     * combatant on every hit: an 817-second sim profile put 1.19% of the entire server thread in
+     * that one copy, all of it rebuilding a map that had not changed since startup.
+     */
+    private volatile Map<NamespacedKey, ComponentDeserializer<?>> deserializerView = Map.of();
+
+    /**
+     * Immutable snapshot of the registered deserializers alone, for callers that probe every one of
+     * them and never look at the keys. Iterating this avoids allocating a map entry-set iterator on
+     * a path that runs once per item per damage event.
+     */
+    private volatile List<ComponentDeserializer<?>> deserializerList = List.of();
 
     /**
      * Register a serializer for a component type.
@@ -58,6 +78,8 @@ public class ComponentSerializationRegistry {
      */
     public <T extends ItemComponent> void registerDeserializer(@NotNull ComponentDeserializer<T> deserializer) {
         deserializers.put(deserializer.getKey(), deserializer);
+        deserializerView = Map.copyOf(deserializers);
+        deserializerList = List.copyOf(deserializers.values());
     }
 
     /**
@@ -100,10 +122,19 @@ public class ComponentSerializationRegistry {
     /**
      * Get all registered deserializers.
      *
-     * @return Map of all deserializers
+     * @return An immutable map of all deserializers
      */
     public Map<NamespacedKey, ComponentDeserializer<?>> getAllDeserializers() {
-        return Map.copyOf(deserializers);
+        return deserializerView;
+    }
+
+    /**
+     * Get all registered deserializers, without their keys.
+     *
+     * @return An immutable list of all deserializers
+     */
+    public List<ComponentDeserializer<?>> getDeserializers() {
+        return deserializerList;
     }
 
     /**

@@ -253,7 +253,7 @@ public class SkillListener implements Listener {
         }
 
         Role role = roleManager.getRole(player);
-        Optional<GamerBuilds> gamerBuildsOptional = buildManager.getObject(player.getUniqueId().toString());
+        Optional<GamerBuilds> gamerBuildsOptional = buildManager.getObject(player.getUniqueId());
         if (gamerBuildsOptional.isPresent()) {
             GamerBuilds builds = gamerBuildsOptional.get();
 
@@ -285,7 +285,7 @@ public class SkillListener implements Listener {
         }
 
         Role role = roleManager.getRole(player);
-        Optional<GamerBuilds> gamerBuildsOptional = buildManager.getObject(player.getUniqueId().toString());
+        Optional<GamerBuilds> gamerBuildsOptional = buildManager.getObject(player.getUniqueId());
         if (gamerBuildsOptional.isPresent()) {
             GamerBuilds builds = gamerBuildsOptional.get();
 
@@ -370,7 +370,7 @@ public class SkillListener implements Listener {
         }
 
         Role role = roleManager.getRole(player);
-        Optional<GamerBuilds> gamerBuildsOptional = buildManager.getObject(player.getUniqueId().toString());
+        Optional<GamerBuilds> gamerBuildsOptional = buildManager.getObject(player.getUniqueId());
         if (gamerBuildsOptional.isPresent()) {
             GamerBuilds builds = gamerBuildsOptional.get();
 
@@ -542,7 +542,7 @@ public class SkillListener implements Listener {
         final Role newRole = event.getRole();
         final Role previousRole = event.getPrevious();
 
-        Optional<GamerBuilds> gamerBuildsOptional = buildManager.getObject(player.getUniqueId().toString());
+        Optional<GamerBuilds> gamerBuildsOptional = buildManager.getObject(player.getUniqueId());
         if (gamerBuildsOptional.isPresent()) {
             GamerBuilds builds = gamerBuildsOptional.get();
             final Gamer gamer = this.clientManager.search().online(player).getGamer();
@@ -572,7 +572,7 @@ public class SkillListener implements Listener {
     @EventHandler
     public void onCombatFeatureStateChange(PlayerCombatFeatureStateChangeEvent event) {
         final Player player = event.getPlayer();
-        final Optional<GamerBuilds> gamerBuildsOptional = buildManager.getObject(player.getUniqueId().toString());
+        final Optional<GamerBuilds> gamerBuildsOptional = buildManager.getObject(player.getUniqueId());
         if (gamerBuildsOptional.isEmpty()) {
             return;
         }

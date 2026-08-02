@@ -112,7 +112,7 @@ public class UUIDController implements Listener {
             final ItemInstance itemInstance = itemFactory.fromItemStack(itemStack).orElseThrow();
             final Optional<UUIDProperty> component = itemInstance.getComponent(UUIDProperty.class);
             if (component.isPresent()) {
-                return uuidManager.getObject(component.get().getUniqueId());
+                return uuidManager.getObject(component.get().getUniqueId().toString());
             }
         }
         return Optional.empty();

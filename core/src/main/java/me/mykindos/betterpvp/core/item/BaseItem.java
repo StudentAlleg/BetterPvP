@@ -166,9 +166,13 @@ public class BaseItem implements Item {
 
     @Override
     public <T extends ItemComponent> Optional<T> getComponent(@NotNull Class<T> componentClass) {
-        return components.get(componentClass).stream()
-                .findFirst()
-                .map(componentClass::cast);
+        // Iterated rather than streamed: this is on the item deserialization path (a stat container
+        // asks its BaseItem for the matching component per item per damage event), and the stream
+        // pipeline's spliterator and sink allocations dominated the single map lookup underneath it.
+        for (ItemComponent component : components.get(componentClass)) {
+            return Optional.of(componentClass.cast(component));
+        }
+        return Optional.empty();
     }
 
     @Override

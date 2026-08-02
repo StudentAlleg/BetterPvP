@@ -16,7 +16,6 @@ import org.jetbrains.annotations.NotNull;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 
 /**
  * Serializer and deserializer for StatContainerComponent.
@@ -76,12 +75,14 @@ public class StatContainerSerializer implements ComponentSerializer<StatContaine
         
         // Deserialize all registered stat types as modifiers
         for (PersistentDataContainer statContainer : collection) {
-            for (Map.Entry<NamespacedKey, StatDeserializer<?>> entry : statRegistry.getAllDeserializers().entrySet()) {
-                if (!entry.getValue().hasData(statContainer)) {
+            // Deserializers, not registry entries: several stat keys map to the same value-type
+            // serializer, so iterating the map probed the same instance up to four times per stat.
+            for (StatDeserializer<?> deserializer : statRegistry.getDeserializers()) {
+                if (!deserializer.hasData(statContainer)) {
                     continue;
                 }
 
-                ItemStat<?> stat = entry.getValue().deserialize(item, statContainer);
+                ItemStat<?> stat = deserializer.deserialize(item, statContainer);
                 modifierStats.add(stat);
                 break;
             }

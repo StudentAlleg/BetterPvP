@@ -136,7 +136,7 @@ public class SimClientFactory {
             // role change, and a missing entry there is the NoSuchElement/NPE it cannot survive.
             builds.getActiveBuilds().put(role.getName(), build);
         }
-        buildManager.addObject(uuid.toString(), builds);
+        buildManager.addObject(uuid, builds);
     }
 
     /**
@@ -167,7 +167,7 @@ public class SimClientFactory {
      * until the next duel on that slot overwrites it.
      */
     public void destroy(Client client) {
-        buildManager.removeObject(client.getUuid());
+        buildManager.removeObject(client.getUniqueId());
         clientManager.unload(client);
     }
 }

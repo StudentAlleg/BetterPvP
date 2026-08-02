@@ -11,6 +11,8 @@ import org.bukkit.NamespacedKey;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.HashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
@@ -24,6 +26,21 @@ public class StatSerializationRegistry {
     // Map value types (Double.class, Integer.class) to their serializers
     private final Map<Class<?>, StatSerializer<?>> serializersByValueType = new HashMap<>();
     private final Map<NamespacedKey, StatDeserializer<?>> deserializers = new HashMap<>();
+
+    /**
+     * Immutable snapshot of {@link #deserializers}, handed out by {@link #getAllDeserializers()}.
+     * See the equivalent field on {@code ComponentSerializationRegistry} for why the getter no
+     * longer copies: this one is reached once per stat container deserialization, which is once
+     * per item on every damage event.
+     */
+    private volatile Map<NamespacedKey, StatDeserializer<?>> deserializerView = Map.of();
+
+    /**
+     * Immutable snapshot of the registered deserializers alone, for the probe loop in
+     * {@code StatContainerSerializer}, which runs this list per stat on an item.
+     */
+    private volatile List<StatDeserializer<?>> deserializerList = List.of();
+
     private final StatTypeRegistry typeRegistry;
 
     // Singleton serializers
@@ -89,10 +106,19 @@ public class StatSerializationRegistry {
     /**
      * Get all registered deserializers.
      * 
-     * @return Map of all deserializers
+     * @return An immutable map of all deserializers
      */
     public Map<NamespacedKey, StatDeserializer<?>> getAllDeserializers() {
-        return Map.copyOf(deserializers);
+        return deserializerView;
+    }
+
+    /**
+     * Get all registered deserializers, without their keys.
+     *
+     * @return An immutable list of all deserializers
+     */
+    public List<StatDeserializer<?>> getDeserializers() {
+        return deserializerList;
     }
 
     /**
@@ -119,5 +145,9 @@ public class StatSerializationRegistry {
 
         // Integer-based stats
         deserializers.put(StatTypes.HEALTH.getKey(), integerSerializer);
+
+        deserializerView = Map.copyOf(deserializers);
+        // Distinct instances only -- several stat keys share the same value-type serializer.
+        deserializerList = List.copyOf(new LinkedHashSet<>(deserializers.values()));
     }
 } 

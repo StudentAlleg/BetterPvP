@@ -97,7 +97,7 @@ public abstract class CooldownInteraction extends AbstractInteraction {
         if (cooldown > 0 && actor.isPlayer()) {
             Player player = (Player) actor.getEntity();
             if (cooldownManager.hasCooldown(player, this.cooldownName)) {
-                final Cooldown cd = cooldownManager.getObject(player.getUniqueId()).orElseThrow().get(this.cooldownName);
+                final Cooldown cd = cooldownManager.getObject(player.getUniqueId().toString()).orElseThrow().get(this.cooldownName);
                 if (cd.isInform()) cooldownManager.informCooldown(player, this.cooldownName);
                 return new InteractionResult.Fail(InteractionResult.FailReason.COOLDOWN);
             }

@@ -47,7 +47,7 @@ public class BuildListener implements Listener {
     public void onPlayerQuit(ClientQuitEvent event) {
         //cleanup build after a player logouts, ensuring that this is still valid during the full ClientQuitEvent
         UtilServer.runTaskLater(JavaPlugin.getPlugin(Champions.class), () -> {
-            buildManager.removeObject(event.getClient().getUuid());
+            buildManager.removeObject(event.getClient().getUniqueId());
         }, 1L);
     }
 
@@ -58,7 +58,7 @@ public class BuildListener implements Listener {
             Block block = event.getClickedBlock();
             if (block == null) return;
             if (block.getType() == Material.ENCHANTING_TABLE) {
-                Optional<GamerBuilds> gamerBuildsOptional = buildManager.getObject(event.getPlayer().getUniqueId().toString());
+                Optional<GamerBuilds> gamerBuildsOptional = buildManager.getObject(event.getPlayer().getUniqueId());
                 gamerBuildsOptional.ifPresent(builds -> {
                     new ClassSelectionMenu(buildManager, skillManager, null, false).show(event.getPlayer());
                     event.setCancelled(true);
@@ -69,7 +69,7 @@ public class BuildListener implements Listener {
 
     @EventHandler
     public void onDeleteBuild(DeleteBuildEvent event) {
-        Optional<GamerBuilds> gamerBuildsOptional = buildManager.getObject(event.getPlayer().getUniqueId().toString());
+        Optional<GamerBuilds> gamerBuildsOptional = buildManager.getObject(event.getPlayer().getUniqueId());
         if (gamerBuildsOptional.isPresent()) {
             buildManager.getBuildRepository().update(event.getRoleBuild());
         }
@@ -77,7 +77,7 @@ public class BuildListener implements Listener {
 
     @EventHandler
     public void onApplyBuild(ApplyBuildEvent event) {
-        Optional<GamerBuilds> gamerBuildsOptional = buildManager.getObject(event.getPlayer().getUniqueId().toString());
+        Optional<GamerBuilds> gamerBuildsOptional = buildManager.getObject(event.getPlayer().getUniqueId());
         if (gamerBuildsOptional.isPresent()) {
             buildManager.getBuildRepository().update(event.getNewBuild());
             buildManager.getBuildRepository().update(event.getOldBuild());

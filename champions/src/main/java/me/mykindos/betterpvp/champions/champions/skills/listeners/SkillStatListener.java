@@ -19,6 +19,7 @@ import me.mykindos.betterpvp.core.client.stats.impl.champions.ChampionsSkillStat
 import me.mykindos.betterpvp.core.client.stats.listeners.TimedStatListener;
 import me.mykindos.betterpvp.core.combat.events.KillContributionEvent;
 import me.mykindos.betterpvp.core.components.champions.Role;
+import me.mykindos.betterpvp.core.framework.simulation.SimulatedEntity;
 import me.mykindos.betterpvp.core.listener.BPvPListener;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
@@ -100,6 +101,13 @@ public class SkillStatListener extends TimedStatListener {
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onPlayerDeath(PlayerDeathEvent event) {
+        // Simulated deaths are not player history. The build being measured is synthesised per duel
+        // by SimCombatant rather than chosen by anyone, so a DEATH against it says nothing about how
+        // the build is used -- and the ephemeral client behind it may already be gone.
+        if (SimulatedEntity.isSimulated(event.getPlayer())) {
+            return;
+        }
+
         final Client victim = clientManager.search().online(event.getPlayer());
         incrementStats(victim, ChampionsSkillStat.Action.DEATH, 1);
     }

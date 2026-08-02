@@ -84,7 +84,7 @@ public class BattleFatigueManager extends Manager<String, BattleFatigue> impleme
     }
 
     public FatigueTier getTier(UUID uuid) {
-        return getObject(uuid).map(BattleFatigue::getTier).orElse(FatigueTier.FRESH);
+        return getObject(uuid.toString()).map(BattleFatigue::getTier).orElse(FatigueTier.FRESH);
     }
 
     /**

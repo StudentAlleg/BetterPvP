@@ -18,10 +18,22 @@ import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
 
 import java.util.List;
+import java.util.UUID;
 
+/**
+ * Holds every online player's loaded builds.
+ *
+ * <p>Keyed by {@link UUID} rather than by its string form. {@code Skill.getSkill} looks a player's
+ * builds up on every damage event, once per registered skill, and with a string key each of those
+ * lookups had to call {@code UUID#toString} first -- building a fresh 36-character string and
+ * hashing it from scratch, since a new String carries no cached hash. That put
+ * {@code Skill.getSkill} at 1.54% of the entire server thread in an 817-second sim profile, most of
+ * it formatting keys rather than finding builds. A {@code UUID} hashes from two longs it already
+ * holds, and {@link org.bukkit.entity.Player#getUniqueId()} returns a field.
+ */
 @Singleton
 @Getter
-public class BuildManager extends Manager<String, GamerBuilds> {
+public class BuildManager extends Manager<UUID, GamerBuilds> {
 
     private final ClientManager clientManager;
     private final BuildRepository buildRepository;
@@ -40,7 +52,7 @@ public class BuildManager extends Manager<String, GamerBuilds> {
         GamerBuilds builds = new GamerBuilds(clientManager.search().online(player));
         getBuildRepository().loadBuilds(builds);
         getBuildRepository().loadDefaultBuilds(builds);
-        addObject(player.getUniqueId().toString(), builds);
+        addObject(player.getUniqueId(), builds);
         UtilServer.runTask(champions, () -> {
             UtilServer.callEvent(new ChampionsBuildLoadedEvent(player, builds));
         });
@@ -101,7 +113,7 @@ public class BuildManager extends Manager<String, GamerBuilds> {
      */
     public RoleBuild generateRandomBuild(Player player, Role role, int id) {
         RoleBuild newRoleBuild = getRandomBuild(player, role, id);
-        this.getObject(player.getUniqueId().toString()).orElseThrow().setBuild(newRoleBuild, role, id);
+        this.getObject(player.getUniqueId()).orElseThrow().setBuild(newRoleBuild, role, id);
         getBuildRepository().update(newRoleBuild);
         return newRoleBuild;
     }

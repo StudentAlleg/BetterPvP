@@ -14,10 +14,10 @@ import me.mykindos.betterpvp.core.components.champions.Role;
 import me.mykindos.betterpvp.core.cooldowns.CooldownManager;
 import me.mykindos.betterpvp.core.locale.Translations;
 import me.mykindos.betterpvp.core.utilities.UtilMessage;
-import net.kyori.adventure.text.format.NamedTextColor;
 import me.mykindos.betterpvp.core.utilities.UtilServer;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.event.HoverEvent;
+import net.kyori.adventure.text.format.NamedTextColor;
 import net.kyori.adventure.text.format.TextDecoration;
 import org.bukkit.entity.Player;
 
@@ -58,7 +58,7 @@ public class SendSkillsCommand extends Command {
             UtilMessage.message(player, "core.prefix.skills", "champions.command.sendskills.wait");
             return;
         }
-        Optional<GamerBuilds> gamerBuildsOptional = buildManager.getObject(player.getUniqueId().toString());
+        Optional<GamerBuilds> gamerBuildsOptional = buildManager.getObject(player.getUniqueId());
         if (gamerBuildsOptional.isPresent()) {
             GamerBuilds builds = gamerBuildsOptional.get();
 

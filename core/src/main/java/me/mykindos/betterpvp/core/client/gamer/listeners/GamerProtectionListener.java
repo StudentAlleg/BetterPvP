@@ -8,6 +8,7 @@ import me.mykindos.betterpvp.core.client.gamer.properties.GamerProperty;
 import me.mykindos.betterpvp.core.client.repository.ClientManager;
 import me.mykindos.betterpvp.core.effects.EffectManager;
 import me.mykindos.betterpvp.core.effects.EffectTypes;
+import me.mykindos.betterpvp.core.framework.simulation.SimulatedEntity;
 import me.mykindos.betterpvp.core.listener.BPvPListener;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
@@ -38,6 +39,14 @@ public class GamerProtectionListener implements Listener {
 
     @EventHandler
     public void onDeath(PlayerDeathEvent event) {
+        // PvP protection is a property of a real session. A simulated combatant has none, and its
+        // client is ephemeral -- dropped by SimCombatant.despawn the moment its duel is torn down --
+        // so a death that lands outside the duel window has nothing here to update and would only
+        // throw ClientNotLoadedException.
+        if (SimulatedEntity.isSimulated(event.getPlayer())) {
+            return;
+        }
+
         clientManager.search().online(event.getPlayer()).getGamer().updateRemainingProtection();
     }
 

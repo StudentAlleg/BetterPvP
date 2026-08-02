@@ -56,7 +56,7 @@ public class SkillsCommand extends Command {
                 UtilMessage.message(player, "core.prefix.skills", "champions.command.skills.invalid-player", Component.text(args[0], NamedTextColor.YELLOW));
                 return;
             }
-            Optional<GamerBuilds> gamerBuildsOptional = buildManager.getObject(target.getUniqueId().toString());
+            Optional<GamerBuilds> gamerBuildsOptional = buildManager.getObject(target.getUniqueId());
             if (gamerBuildsOptional.isEmpty()) {
                 UtilMessage.message(player, "core.prefix.skills", "champions.command.skills.no-builds", Component.text(target.getName(), NamedTextColor.YELLOW));
                 return;
@@ -72,7 +72,7 @@ public class SkillsCommand extends Command {
 
         }
 
-        Optional<GamerBuilds> gamerBuildsOptional = buildManager.getObject(player.getUniqueId().toString());
+        Optional<GamerBuilds> gamerBuildsOptional = buildManager.getObject(player.getUniqueId());
         if (gamerBuildsOptional.isPresent()) {
             GamerBuilds builds = gamerBuildsOptional.get();
 

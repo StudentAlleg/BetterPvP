@@ -14,7 +14,6 @@ import me.mykindos.betterpvp.core.interaction.actor.PlayerInteractionActor;
 import me.mykindos.betterpvp.core.interaction.event.InteractionPreExecuteEvent;
 import me.mykindos.betterpvp.core.item.BaseItem;
 import me.mykindos.betterpvp.core.item.ItemFactory;
-import me.mykindos.betterpvp.core.item.ItemInstance;
 import me.mykindos.betterpvp.core.item.ItemRegistry;
 import me.mykindos.betterpvp.core.listener.BPvPListener;
 import me.mykindos.betterpvp.core.utilities.model.display.actionbar.ActionBar;
@@ -158,11 +157,14 @@ public class ItemAccessListener implements Listener {
     }
 
     private void checkAndDeny(Player player, ItemStack itemStack, AccessScope scope, Consumer<Boolean> cancelAction) {
-        Optional<ItemInstance> instanceOpt = itemFactory.fromItemStack(itemStack);
-        if (instanceOpt.isEmpty()) return;
+        // Identity only. Access requirements are declared on the BaseItem, so nothing below reads a
+        // component off the stack -- and fromItemStack would have deserialized every one of them,
+        // usually to then bail out at the null key check below. That made this listener 4.7% of the
+        // server thread in a 603-second sim profile, all of it thrown away.
+        Optional<BaseItem> baseItemOpt = itemFactory.baseItemOf(itemStack);
+        if (baseItemOpt.isEmpty()) return;
 
-        ItemInstance instance = instanceOpt.get();
-        BaseItem baseItem = instance.getBaseItem();
+        BaseItem baseItem = baseItemOpt.get();
         NamespacedKey nsk = itemRegistry.getKey(baseItem);
         if (nsk == null) return;
         Key itemKey = Key.key(nsk.namespace(), nsk.getKey());

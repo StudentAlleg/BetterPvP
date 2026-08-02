@@ -42,7 +42,6 @@ public class DamageLogManager extends Manager<String, ConcurrentLinkedDeque<Dama
         return Optional.ofNullable(getFreshLogQueue(identifier));
     }
 
-    @Override
     public Optional<ConcurrentLinkedDeque<DamageLog>> getObject(UUID identifier) {
         return getObject(identifier.toString());
     }

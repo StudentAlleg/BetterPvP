@@ -6,12 +6,15 @@ import lombok.CustomLog;
 import me.mykindos.betterpvp.balancesim.BalanceSimulation;
 import me.mykindos.betterpvp.balancesim.SimulationGate;
 import org.bukkit.Bukkit;
+import org.bukkit.Difficulty;
+import org.bukkit.GameRules;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.World;
 import org.bukkit.WorldCreator;
 import org.bukkit.WorldType;
 import org.bukkit.block.Block;
+import org.bukkit.entity.SpawnCategory;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.HashSet;
@@ -142,9 +145,17 @@ public class SimWorldManager {
             return world;
         }
 
+        // A sim world left on disk by an earlier run is loaded by the server at startup, before this
+        // class ever sees it. Tuning has to be reapplied on adoption rather than only at creation:
+        // view distance, spawn limits and the difficulty are all world state that came back from the
+        // region folder at its default, so a server that had run a sweep before would silently
+        // profile as though none of this existed.
         final World existing = Bukkit.getWorld(gate.getWorldName());
         if (existing != null) {
             world = existing;
+            world.setAutoSave(false);
+            shrinkTrackingDistances(world);
+            disableNaturalSpawning(world);
             return world;
         }
 
@@ -161,7 +172,44 @@ public class SimWorldManager {
 
         world.setAutoSave(false);
         shrinkTrackingDistances(world);
+        disableNaturalSpawning(world);
         return world;
+    }
+
+    /**
+     * Stops the world attempting natural mob spawns, which it can never complete.
+     *
+     * <p>The arenas are barrier platforms in a void world, so every spawn candidate the server
+     * generates is rejected by {@code NaturalSpawner.isValidSpawnPostitionForType}. The rejection is
+     * not the expensive part -- reaching it is. {@code spawnCategoryForPosition} calls
+     * {@code EntityGetter.getNearestPlayer} first, and that walks {@code level.players()} linearly.
+     * Every fake player in every live arena is in that list, so the per-tick cost is chunks x spawn
+     * attempts x resident combatants: quadratic in sweep concurrency, for a result that is always
+     * "nothing spawned".
+     *
+     * <p>A 603-second profile put 43% of the entire server thread in this path, 36.8% of it in
+     * {@code getNearestPlayer} alone -- more than the damage pipeline the sweep exists to measure.
+     *
+     * <p>The gamerule and the spawn limits are both needed, and they cut the path at different
+     * depths. {@link GameRules#SPAWN_MOBS} stops the category loop inside
+     * {@code NaturalSpawner.spawnForChunk}, but the per-player chunk sweep that feeds it --
+     * {@code ChunkMap.collectSpawningChunks} and {@code isChunkNearPlayer}, another 1.7% between
+     * them -- runs before the rule is consulted. Zeroing the limits empties the spawn state those
+     * two build, so the sweep finds no category to collect for. {@link SpawnCategory#MISC} is
+     * excluded because {@link World#setSpawnLimit} rejects it.
+     *
+     * <p>Peaceful difficulty is belt and braces: it also suppresses the hostile-mob paths that do
+     * not consult the spawn state at all, and no sim damage comes from mobs.
+     */
+    private void disableNaturalSpawning(World simWorld) {
+        simWorld.setGameRule(GameRules.SPAWN_MOBS, false);
+        simWorld.setDifficulty(Difficulty.PEACEFUL);
+        for (SpawnCategory category : SpawnCategory.values()) {
+            if (category == SpawnCategory.MISC) {
+                continue;
+            }
+            simWorld.setSpawnLimit(category, 0);
+        }
     }
 
     /**

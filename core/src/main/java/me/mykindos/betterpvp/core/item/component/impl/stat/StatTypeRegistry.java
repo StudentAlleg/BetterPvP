@@ -22,6 +22,12 @@ public class StatTypeRegistry {
 
     private final Map<NamespacedKey, StatType<?>> types = new HashMap<>();
 
+    /**
+     * Immutable snapshot of {@link #types}, rebuilt on registration and handed out by
+     * {@link #getAllTypes()} so that getter does not rehash the whole registry per call.
+     */
+    private volatile Map<NamespacedKey, StatType<?>> typeView = Map.of();
+
     @Inject
     public StatTypeRegistry() {
         // Registry is populated by StatTypes static initializer
@@ -39,6 +45,7 @@ public class StatTypeRegistry {
             throw new IllegalArgumentException("Stat type already registered: " + type.getKey());
         }
         types.put(type.getKey(), type);
+        typeView = Map.copyOf(types);
     }
 
     /**
@@ -56,9 +63,9 @@ public class StatTypeRegistry {
     /**
      * Get all registered stat types.
      *
-     * @return An unmodifiable copy of all registered types
+     * @return An immutable map of all registered types
      */
     public Map<NamespacedKey, StatType<?>> getAllTypes() {
-        return Map.copyOf(types);
+        return typeView;
     }
 }

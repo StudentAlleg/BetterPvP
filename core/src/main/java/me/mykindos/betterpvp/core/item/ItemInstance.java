@@ -1,6 +1,7 @@
 package me.mykindos.betterpvp.core.item;
 
 import com.google.common.collect.ImmutableMap;
+import io.papermc.paper.persistence.PersistentDataContainerView;
 import lombok.Getter;
 import me.mykindos.betterpvp.core.item.component.ItemComponent;
 import me.mykindos.betterpvp.core.item.component.serialization.ComponentDeserializer;
@@ -184,12 +185,12 @@ public class ItemInstance implements Item {
     private void deserializeComponentsFromItemStack(Map<Class<?>, ItemComponent> targetComponents) {
         // Try to deserialize each registered component type
         withComponentsContainer(container -> {
-            for (Map.Entry<NamespacedKey, ComponentDeserializer<?>> entry : serializationRegistry.getAllDeserializers().entrySet()) {
-                if (!entry.getValue().hasData(container)) {
+            for (ComponentDeserializer<?> deserializer : serializationRegistry.getDeserializers()) {
+                if (!deserializer.hasData(container)) {
                     continue;
                 }
 
-                ItemComponent component = entry.getValue().deserialize(this, container);
+                ItemComponent component = deserializer.deserialize(this, container);
                 targetComponents.put(component.getClass(), component);
             }
         });
@@ -229,12 +230,21 @@ public class ItemInstance implements Item {
     /**
      * Executes an operation with the existing components container (read-only).
      * Does nothing if no components container exists.
+     *
+     * <p>Reads through {@link ItemStack#getPersistentDataContainer()}, Paper's read-only view over
+     * the stack's custom data, rather than {@code getItemMeta().getPersistentDataContainer()}. The
+     * meta route builds a {@code CraftMetaItem}, whose constructor deep-copies the whole NBT tree
+     * ({@code CustomData.copyTag} -> recursive {@code CompoundTag.copy}) before a single component
+     * is read. This method is on the deserialization path, so that copy ran for every item lookup
+     * on every damage event: an 881-second profile put 3.0% of the entire server thread in
+     * {@code getItemMeta} from this one call site. The view reads the live tag in place.
+     *
+     * <p>Read-only is what makes this safe. The write paths still go through
+     * {@link #updateComponentsContainer}, which needs a real {@link ItemMeta} to set back onto the
+     * stack; a view cannot be written through.
      */
     private void withComponentsContainer(Consumer<PersistentDataContainer> operation) {
-        ItemMeta meta = itemStack.getItemMeta();
-        if (meta == null) return;
-
-        PersistentDataContainer root = meta.getPersistentDataContainer();
+        PersistentDataContainerView root = itemStack.getPersistentDataContainer();
         if (!root.has(COMPONENTS_KEY, PersistentDataType.TAG_CONTAINER)) {
             return;
         }

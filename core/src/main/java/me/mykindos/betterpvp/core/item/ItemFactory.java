@@ -11,8 +11,6 @@ import me.mykindos.betterpvp.core.item.model.VanillaItem;
 import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
 import org.bukkit.inventory.ItemStack;
-import org.bukkit.inventory.meta.ItemMeta;
-import org.bukkit.persistence.PersistentDataContainer;
 import org.bukkit.persistence.PersistentDataType;
 import org.jetbrains.annotations.Contract;
 import org.jetbrains.annotations.NotNull;
@@ -169,39 +167,58 @@ public class ItemFactory {
     }
 
     /**
+     * Resolves which {@link BaseItem} an ItemStack is, without deserializing its components.
+     *
+     * <p>This is the cheap half of {@link #fromItemStack}: it reads one PDC string and does a
+     * registry lookup, where building the full {@link ItemInstance} additionally runs every
+     * registered component serializer over the stack. Callers that only need the item's identity --
+     * "which item is this", "is this that item" -- should use this instead, and several were not:
+     * a 603-second profile put 14.5% of the entire server thread in {@code fromItemStack}, of which
+     * {@code ItemAccessListener} alone was 4.7% and discarded every component it deserialized.
+     *
+     * <p>Falls back the same way {@link #fromItemStack} does, so an unrecognised or untagged stack
+     * yields its vanilla {@link BaseItem} rather than an empty optional. Only air is empty.
+     *
+     * <p>Reads through {@link ItemStack#getPersistentDataContainer()} rather than
+     * {@code getItemMeta().getPersistentDataContainer()}. The two return the same data, but
+     * {@code getItemMeta} constructs a {@code CraftMetaItem}, and that constructor deep-copies the
+     * stack's entire custom-data NBT tree before anything is read out of it. Paper's view reads the
+     * live tag in place. In an 881-second profile {@code getItemMeta} was 11.2% of the whole server
+     * thread, nearly all of it under this class -- the copy cost far more than the lookup it exists
+     * to serve.
+     *
+     * @param stack The ItemStack to read
+     * @return The BaseItem, or empty if the stack is air
+     */
+    @Contract(pure = true)
+    public Optional<BaseItem> baseItemOf(@NotNull ItemStack stack) {
+        if (stack.getType() == Material.AIR) {
+            return Optional.empty(); // No item to read
+        }
+
+        String id = stack.getPersistentDataContainer().get(CoreNamespaceKeys.CUSTOM_ITEM_KEY, PersistentDataType.STRING);
+        if (id == null) {
+            return Optional.of(getFallbackItem(stack));
+        }
+        NamespacedKey key = NamespacedKey.fromString(id);
+        if (key == null) {
+            return Optional.of(getFallbackItem(stack));
+        }
+        BaseItem baseItem = itemRegistry.getItem(key);
+        return Optional.of(baseItem != null ? baseItem : getFallbackItem(stack));
+    }
+
+    /**
      * Reads an ItemStack and creates an ItemInstance for it, if possible.
      * Components are automatically deserialized by the ItemInstance constructor.
-     * 
+     *
      * @param stack The ItemStack to read
      * @return The ItemInstance, or empty if not a recognized custom item
      */
     @Contract(pure = true)
     public Optional<ItemInstance> fromItemStack(@NotNull ItemStack stack) {
-        if (stack.getType() == Material.AIR) {
-            return Optional.empty(); // No item to read
-        }
-
-        ItemMeta meta = stack.getItemMeta();
-        if (meta == null) {
-            return Optional.of(getFallbackInstance(stack));
-        }
-        String id = meta.getPersistentDataContainer().get(CoreNamespaceKeys.CUSTOM_ITEM_KEY, PersistentDataType.STRING);
-        if (id == null) {
-            return Optional.of(getFallbackInstance(stack));
-        }
-        NamespacedKey key = NamespacedKey.fromString(id);
-        if (key == null) {
-            return Optional.of(getFallbackInstance(stack));
-        }
-        BaseItem baseItem = itemRegistry.getItem(key);
-        if (baseItem == null) {
-            return Optional.of(getFallbackInstance(stack));
-        }
-        
-        // Create ItemInstance - it will automatically deserialize components from the ItemStack
-        ItemInstance instance = new ItemInstance(baseItem, stack, serializationRegistry);
-
-        return Optional.of(instance);
+        // The ItemInstance constructor deserializes the stack's components.
+        return baseItemOf(stack).map(baseItem -> new ItemInstance(baseItem, stack, serializationRegistry));
     }
 
     /**
@@ -216,14 +233,10 @@ public class ItemFactory {
         if (stack.getType() == Material.AIR) {
             return false; // No item to check
         }
-        return fromItemStack(stack)
-                .map(instance -> instance.getBaseItem().equals(item))
+        // Identity only -- no need to deserialize the stack's components to compare base items.
+        return baseItemOf(stack)
+                .map(baseItem -> baseItem.equals(item))
                 .orElse(false);
-    }
-
-    private ItemInstance getFallbackInstance(@NotNull ItemStack stack) {
-        final BaseItem fallbackItem = getFallbackItem(stack);
-        return new ItemInstance(fallbackItem, stack, serializationRegistry);
     }
 
     /**
@@ -289,12 +302,8 @@ public class ItemFactory {
     public boolean isUpToDate(@NotNull ItemInstance instance) {
         Preconditions.checkNotNull(instance, "ItemInstance cannot be null");
         ItemStack stack = instance.createItemStack();
-        ItemMeta meta = stack.getItemMeta();
-        if (meta == null) {
-            return false;
-        }
-        PersistentDataContainer pdc = meta.getPersistentDataContainer();
-        Integer hashCode = pdc.get(CoreNamespaceKeys.BASEITEM_HASHCODE_KEY, PersistentDataType.INTEGER);
+        // PDC view rather than getItemMeta() -- see baseItemOf for why the meta copy is worth avoiding.
+        Integer hashCode = stack.getPersistentDataContainer().get(CoreNamespaceKeys.BASEITEM_HASHCODE_KEY, PersistentDataType.INTEGER);
         if (hashCode == null) {
             return false; // No hash code means it's not up to date
         }
@@ -312,11 +321,7 @@ public class ItemFactory {
         if (stack.getType() == Material.AIR) {
             return false; // No item to check
         }
-        ItemMeta meta = stack.getItemMeta();
-        if (meta == null) {
-            return false; // No metadata means it's not a custom item
-        }
-        PersistentDataContainer pdc = meta.getPersistentDataContainer();
-        return pdc.has(CoreNamespaceKeys.CUSTOM_ITEM_KEY, PersistentDataType.STRING);
+        // PDC view rather than getItemMeta() -- see baseItemOf for why the meta copy is worth avoiding.
+        return stack.getPersistentDataContainer().has(CoreNamespaceKeys.CUSTOM_ITEM_KEY, PersistentDataType.STRING);
     }
 }

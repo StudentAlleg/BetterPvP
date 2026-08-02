@@ -54,7 +54,7 @@ public class WipeSubCommand extends Command {
             Client target = targetOptional.get();
             professionProfileManager.getRepository().deleteBuildsForClient(target);
 
-            professionProfileManager.getObject(target.getUniqueId()).ifPresent(profile -> {
+            professionProfileManager.getObject(target.getUuid()).ifPresent(profile -> {
                 profile.getProfessionDataMap().forEach((profession, data) -> {
                     data.getBuild().getNodes().clear();
                 });

@@ -6,13 +6,14 @@ import me.mykindos.betterpvp.core.client.gamer.Gamer;
 import me.mykindos.betterpvp.core.client.gamer.properties.GamerProperty;
 import me.mykindos.betterpvp.core.client.repository.ClientManager;
 import me.mykindos.betterpvp.core.config.Config;
+import me.mykindos.betterpvp.core.framework.simulation.SimulatedEntity;
 import me.mykindos.betterpvp.core.listener.BPvPListener;
 import me.mykindos.betterpvp.core.locale.Translations;
 import me.mykindos.betterpvp.core.utilities.UtilFormat;
 import me.mykindos.betterpvp.core.utilities.UtilMessage;
+import me.mykindos.betterpvp.core.utilities.UtilServer;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
-import me.mykindos.betterpvp.core.utilities.UtilServer;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
@@ -57,6 +58,14 @@ public class CoinDeathListener implements Listener {
     @EventHandler
     public void onPlayerDeath(PlayerDeathEvent event) {
         if (!dropCoinsOnDeath) {
+            return;
+        }
+
+        // A simulated combatant has no balance worth debiting -- SimClient records nothing -- and
+        // scattering a coin item per death would litter the arena platform with entities the next
+        // duel on that slot could pick up. Its client is also ephemeral, so a death landing outside
+        // the duel window has nothing to look up.
+        if (SimulatedEntity.isSimulated(event.getPlayer())) {
             return;
         }
 

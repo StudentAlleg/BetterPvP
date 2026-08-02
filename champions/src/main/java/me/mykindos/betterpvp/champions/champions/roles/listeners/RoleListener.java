@@ -18,8 +18,8 @@ import me.mykindos.betterpvp.core.combat.death.events.CustomDeathMessageEvent;
 import me.mykindos.betterpvp.core.combat.events.DamageEvent;
 import me.mykindos.betterpvp.core.components.champions.Role;
 import me.mykindos.betterpvp.core.listener.BPvPListener;
-import me.mykindos.betterpvp.core.utilities.UtilItem;
 import me.mykindos.betterpvp.core.locale.Translations;
+import me.mykindos.betterpvp.core.utilities.UtilItem;
 import me.mykindos.betterpvp.core.utilities.UtilMessage;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.JoinConfiguration;
@@ -158,7 +158,7 @@ public class RoleListener implements Listener {
     }
 
     public Component equipMessage(Player player, Role role) {
-        Optional<GamerBuilds> gamerBuildsOptional = buildManager.getObject(player.getUniqueId().toString());
+        Optional<GamerBuilds> gamerBuildsOptional = buildManager.getObject(player.getUniqueId());
         if (gamerBuildsOptional.isPresent()) {
             GamerBuilds builds = gamerBuildsOptional.get();
 
