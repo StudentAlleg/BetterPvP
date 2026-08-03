@@ -90,6 +90,46 @@ public class SimTrace extends TableImpl<SimTraceRecord> {
      */
     public final TableField<SimTraceRecord, BigDecimal> AMOUNT = createField(DSL.name("amount"), SQLDataType.NUMERIC(10, 3), this, "");
 
+    /**
+     * The column <code>public.sim_trace.target_role</code>.
+     */
+    public final TableField<SimTraceRecord, String> TARGET_ROLE = createField(DSL.name("target_role"), SQLDataType.CLOB.nullable(false), this, "");
+
+    /**
+     * The column <code>public.sim_trace.target_armor</code>.
+     */
+    public final TableField<SimTraceRecord, String> TARGET_ARMOR = createField(DSL.name("target_armor"), SQLDataType.CLOB.nullable(false), this, "");
+
+    /**
+     * The column <code>public.sim_trace.iteration</code>.
+     */
+    public final TableField<SimTraceRecord, Integer> ITERATION = createField(DSL.name("iteration"), SQLDataType.INTEGER.nullable(false), this, "");
+
+    /**
+     * The column <code>public.sim_trace.arena_index</code>.
+     */
+    public final TableField<SimTraceRecord, Integer> ARENA_INDEX = createField(DSL.name("arena_index"), SQLDataType.INTEGER.nullable(false), this, "");
+
+    /**
+     * The column <code>public.sim_trace.tick</code>.
+     */
+    public final TableField<SimTraceRecord, Integer> TICK = createField(DSL.name("tick"), SQLDataType.INTEGER.nullable(false), this, "");
+
+    /**
+     * The column <code>public.sim_trace.seq</code>.
+     */
+    public final TableField<SimTraceRecord, Integer> SEQ = createField(DSL.name("seq"), SQLDataType.INTEGER.nullable(false), this, "");
+
+    /**
+     * The column <code>public.sim_trace.actor</code>.
+     */
+    public final TableField<SimTraceRecord, String> ACTOR = createField(DSL.name("actor"), SQLDataType.CLOB.nullable(false), this, "");
+
+    /**
+     * The column <code>public.sim_trace.raw_amount</code>.
+     */
+    public final TableField<SimTraceRecord, BigDecimal> RAW_AMOUNT = createField(DSL.name("raw_amount"), SQLDataType.NUMERIC(10, 3), this, "");
+
     private SimTrace(Name alias, Table<SimTraceRecord> aliased) {
         this(alias, aliased, (Field<?>[]) null, null);
     }
@@ -159,7 +199,7 @@ public class SimTrace extends TableImpl<SimTraceRecord> {
 
     @Override
     public List<Index> getIndexes() {
-        return Arrays.asList(Indexes.IDX_SIM_TRACE_RUN_BUILD);
+        return Arrays.asList(Indexes.IDX_SIM_TRACE_DUEL, Indexes.IDX_SIM_TRACE_RUN_BUILD);
     }
 
     @Override

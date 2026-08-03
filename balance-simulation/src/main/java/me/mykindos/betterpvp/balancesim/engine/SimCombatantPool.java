@@ -287,17 +287,23 @@ public class SimCombatantPool {
         if (resident.isFightable()) {
             return resident;
         }
+        // Failing isFightable is how a resident reports that it lost. Recorded on the entity because
+        // the question the duel diagnostics ask is whether a *revived* resident fights as well as a
+        // fresh one, and that is a property of this entity's history rather than of the pool's totals.
+        resident.everDied = true;
         final ResidentRecycleStrategy active = resident.isRemoved()
                 ? ResidentRecycleStrategy.RESPAWN_NEW
                 : strategy();
         switch (active) {
             case REVIVE -> {
                 resident.reviveIfDead();
+                resident.revives++;
                 revivedResidents++;
                 return resident;
             }
             case RECYCLE -> {
                 resident.recycle(at);
+                resident.revives++;
                 revivedResidents++;
                 return resident;
             }

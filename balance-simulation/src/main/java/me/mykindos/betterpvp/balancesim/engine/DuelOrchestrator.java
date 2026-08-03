@@ -17,8 +17,10 @@ import me.mykindos.betterpvp.balancesim.catalog.SimScope;
 import me.mykindos.betterpvp.balancesim.catalog.SimSkillAllocation;
 import me.mykindos.betterpvp.balancesim.catalog.SimSkillFilter;
 import me.mykindos.betterpvp.balancesim.catalog.SimTargetSpec;
+import me.mykindos.betterpvp.balancesim.repository.SimDuelDiagnosticRow;
 import me.mykindos.betterpvp.balancesim.repository.SimResultRepository;
 import me.mykindos.betterpvp.balancesim.repository.SimResultRow;
+import me.mykindos.betterpvp.balancesim.repository.SimTraceRow;
 import me.mykindos.betterpvp.balancesim.world.SimWorldManager;
 import me.mykindos.betterpvp.champions.Champions;
 import me.mykindos.betterpvp.champions.champions.roles.RoleManager;
@@ -26,8 +28,10 @@ import me.mykindos.betterpvp.champions.champions.skills.ChampionsSkillManager;
 import me.mykindos.betterpvp.core.Core;
 import me.mykindos.betterpvp.core.utilities.UtilServer;
 import org.bukkit.Bukkit;
+import org.bukkit.entity.Player;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.scheduler.BukkitTask;
+import org.jetbrains.annotations.Nullable;
 
 import java.nio.file.Path;
 import java.time.Duration;
@@ -41,6 +45,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
@@ -95,6 +100,21 @@ public class DuelOrchestrator {
 
     /** Results are flushed in chunks so a long sweep is durable as it goes, not only at the end. */
     private static final int RESULT_FLUSH_CHUNK = 500;
+
+    /**
+     * How many duel diagnostics buffer before they go up.
+     *
+     * <p>Smaller than the result chunk because each row carries a JSON document -- the two combatant
+     * snapshots, both residue strings and the whole hit timeline -- rather than a dozen numbers.
+     */
+    private static final int DIAGNOSTIC_FLUSH_CHUNK = 250;
+
+    /**
+     * How many trace rows accumulate before a flush. Larger than the diagnostic chunk because the
+     * rows are far smaller -- a handful of numbers each, with no JSON document -- and produced far
+     * faster, at roughly one per landed hit rather than one per duel.
+     */
+    private static final int TRACE_FLUSH_CHUNK = 2000;
 
     /**
      * Ticks a resolved duel is held open before its combatants are torn down.
@@ -425,6 +445,15 @@ public class DuelOrchestrator {
                     // blocking, main-thread-only operation out of the tick loop.
                     worldManager.getOrCreate();
                     telemetry = SimDamageTelemetry.start(plugin);
+                    // Announced at the top rather than discovered from the row count afterwards: the
+                    // table is off by default and writes a row per duel, so a run that is quietly
+                    // recording one is a surprise worth having in the log next to the sweep size.
+                    if (settings.duelDiagnostics()) {
+                        log.info("Duel diagnostics ON for run {}: up to {} sim_duel_diagnostic rows"
+                                        + " over {} planned duels. Not part of config_hash, so this run"
+                                        + " stays diffable against runs taken without it.",
+                                runId, settings.duelDiagnosticsMaxRows(), pending.size()).submit();
+                    }
                     // The matchup count is pending.size() / iterations, but taken from the queue
                     // rather than recomputed, so a build skipped above is not counted as planned.
                     new SweepLoop(runId, scope, pending, pending.size() / iterations, done, listener).start();
@@ -659,6 +688,19 @@ public class DuelOrchestrator {
      *                                because two {@code RELEVANT} runs against different lists cover
      *                                different spaces while agreeing on every other knob -- and the
      *                                whole point of the list is that it is edited between runs
+     * @param duelDiagnostics         whether every duel writes a {@code sim_duel_diagnostic} row.
+     *                                Snapshotted like the rest so it cannot change mid-sweep, but
+     *                                deliberately <em>not</em> hashed into {@code config_hash}:
+     *                                observing a duel must not make it a different duel, and a
+     *                                diagnostic run that could not be diffed against the run it
+     *                                exists to explain would be useless
+     * @param duelDiagnosticsMaxRows  ceiling on diagnostic rows for the run
+     * @param hitTrace                whether every landed hit writes a {@code sim_trace} row.
+     *                                Unhashed for the same reason as {@code duelDiagnostics}, and
+     *                                more pointedly: the divergence this table exists to locate is a
+     *                                timing one, so a trace that perturbed timing would manufacture
+     *                                its own subject
+     * @param hitTraceMaxRows         ceiling on trace rows for the run
      */
     private record SweepSettings(int iterations,
                                  int maxBuilds,
@@ -668,11 +710,16 @@ public class DuelOrchestrator {
                                  double progressIntervalSeconds,
                                  int channelHoldTicks,
                                  SimSkillFilter skillFilter,
-                                 Set<String> relevantSkills) {
+                                 Set<String> relevantSkills,
+                                 boolean duelDiagnostics,
+                                 int duelDiagnosticsMaxRows,
+                                 boolean hitTrace,
+                                 int hitTraceMaxRows) {
 
         /** Stands in before the first run, so the field is never null for a reader that beats it. */
         private static final SweepSettings NONE =
-                new SweepSettings(1, 0, 0, 0, 1, 15, 1, SimSkillFilter.OFFENSIVE, Set.of());
+                new SweepSettings(1, 0, 0, 0, 1, 15, 1, SimSkillFilter.OFFENSIVE, Set.of(),
+                        false, 0, false, 0);
 
         private static SweepSettings from(SimulationGate gate) {
             return new SweepSettings(Math.max(1, gate.getIterations()),
@@ -683,7 +730,11 @@ public class DuelOrchestrator {
                     gate.getProgressIntervalSeconds(),
                     Math.max(1, gate.getChannelHoldTicks()),
                     SimSkillFilter.parse(gate.getSkillFilter()),
-                    SimSkillFilter.parseRelevantSkills(gate.getRelevantSkills()));
+                    SimSkillFilter.parseRelevantSkills(gate.getRelevantSkills()),
+                    gate.isDuelDiagnostics(),
+                    Math.max(0, gate.getDuelDiagnosticsMaxRows()),
+                    gate.isHitTrace(),
+                    Math.max(0, gate.getHitTraceMaxRows()));
         }
 
         /**
@@ -721,6 +772,28 @@ public class DuelOrchestrator {
         private final List<Duel> active = new ArrayList<>();
         private final List<SimResultRow> results = new ArrayList<>();
         private final List<CompletableFuture<Void>> flushes = new ArrayList<>();
+
+        /**
+         * Per-duel diagnostics awaiting a flush, and how many have been written.
+         *
+         * <p>Buffered separately from {@code results} because they are produced per duel rather than
+         * per matchup -- an order of magnitude more rows, on a table that is off by default.
+         */
+        private final List<SimDuelDiagnosticRow> diagnostics = new ArrayList<>();
+        private int diagnosticsRecorded;
+
+        /**
+         * Per-hit traces awaiting a flush, and how many have been written.
+         *
+         * <p>Another order of magnitude above the diagnostics -- roughly one row per landed hit --
+         * which is why it carries its own cap rather than sharing the diagnostics' one.
+         */
+        private final List<SimTraceRow> traces = new ArrayList<>();
+        private int tracesRecorded;
+        /** Whether the trace cap has been announced, so it is said once rather than every duel. */
+        private boolean traceCapAnnounced;
+        /** Whether the row cap has been announced, so it is said once rather than every duel. */
+        private boolean diagnosticsCapAnnounced;
 
         private final long plannedDuels;
         private final int plannedMatchups;
@@ -1043,11 +1116,130 @@ public class DuelOrchestrator {
             flushes.add(repository.updateBuildSkills(buildId, SimResultRepository.skillsToJson(measured)));
         }
 
+        /**
+         * Files one duel's diagnostics, if this run is collecting them and has room left.
+         *
+         * <p>The whole point is that this row survives the reduction: {@code sim_result} is a mean
+         * over the matchup's iterations, and run 164's flipped matchups are a difference between
+         * individual duels that the mean cannot express. See {@link SimDuelDiagnosticRow}.
+         *
+         * <p>Failures here are swallowed rather than propagated. A diagnostic is an observation of a
+         * sweep, and an observation that can abort the thing it is observing is worse than no
+         * observation: the run would fail in a way that looks like a simulation bug.
+         */
+        private void recordDiagnostic(Duel duel, boolean killed, boolean attackerDied) {
+            if (!settings.duelDiagnostics() || duel.attackerSetup == null || duel.defenderSetup == null) {
+                return;
+            }
+            if (diagnosticsRecorded >= settings.duelDiagnosticsMaxRows()) {
+                if (!diagnosticsCapAnnounced) {
+                    diagnosticsCapAnnounced = true;
+                    log.warn("Duel diagnostics capped at {} rows for run {}; the remaining duels of this"
+                                    + " sweep are measured but not diagnosed. The rows that exist are a"
+                                    + " contiguous prefix of the sweep, so an ordering question is still"
+                                    + " answerable from them -- raise duelDiagnosticsMaxRows if it is not.",
+                            settings.duelDiagnosticsMaxRows(), runId).submit();
+                }
+                return;
+            }
+            try {
+                diagnostics.add(duel.toDiagnostic(killed, attackerDied));
+                diagnosticsRecorded++;
+            } catch (Exception e) {
+                log.warn("Failed to build duel diagnostics for build {}", duel.matchup.buildId(), e).submit();
+            }
+            // On their own threshold rather than riding the result flush. Results are produced per
+            // matchup and these per duel, so at ten iterations they accumulate ten times as fast --
+            // and each one carries a JSON document rather than a handful of numbers.
+            if (diagnostics.size() >= DIAGNOSTIC_FLUSH_CHUNK) {
+                flushes.add(repository.insertDuelDiagnostics(runId, List.copyOf(diagnostics)));
+                diagnostics.clear();
+            }
+        }
+
+        /**
+         * Files one duel's hits, if this run is tracing and has room left.
+         *
+         * <p>Assembled from the finished recording rather than emitted as hits land. That ordering is
+         * the point: the divergence being hunted is a timing one, so tracing must not sit in the
+         * damage path where it could add work to the very ticks it is timing. Reading the recording
+         * afterwards costs nothing the duel can observe.
+         *
+         * <p>Ticks are relative to the duel's first landed hit, the same anchor TTK uses, so a trace
+         * row and the {@code sim_result} row it explains share an axis. Setup cost varies with a
+         * duel's position in its batch; anchoring anywhere earlier would fold that into every diff.
+         */
+        private void recordTrace(Duel duel, List<SimRecorder.HitRecord> attackerHits) {
+            if (!settings.hitTrace()) {
+                return;
+            }
+            if (tracesRecorded >= settings.hitTraceMaxRows()) {
+                if (!traceCapAnnounced) {
+                    traceCapAnnounced = true;
+                    log.warn("Hit trace capped at {} rows for run {}; the remaining duels are measured"
+                                    + " but not traced. The rows that exist are a contiguous prefix, so"
+                                    + " whole duels are still diffable -- raise hitTraceMaxRows if the"
+                                    + " matchup you need fell outside it.",
+                            settings.hitTraceMaxRows(), runId).submit();
+                }
+                return;
+            }
+            try {
+                // Both sides, not just the attacker's. Under MUTUAL the defender's hits are half of
+                // what decides the fight, and a divergence that starts on the defender's swing would
+                // otherwise show up only as an unexplained change in the attacker's later rows.
+                final List<SimRecorder.HitRecord> all = duel.recording.allHits();
+                if (all.isEmpty()) {
+                    return;
+                }
+                final int anchor = attackerHits.isEmpty()
+                        ? all.get(0).elapsedTicks()
+                        : attackerHits.get(0).elapsedTicks();
+                final UUID attackerId = duel.attacker.getUuid();
+                int seq = 0;
+                int lastTick = Integer.MIN_VALUE;
+                for (SimRecorder.HitRecord hit : all) {
+                    final int tick = hit.elapsedTicks() - anchor;
+                    seq = tick == lastTick ? seq + 1 : 0;
+                    lastTick = tick;
+                    traces.add(new SimTraceRow(duel.matchup.buildId(),
+                            duel.matchup.target().role(),
+                            duel.matchup.target().armorSetId(),
+                            // Read before the sample is filed, so it is this duel's index and not the
+                            // next one's -- the same source and the same ordering constraint the
+                            // diagnostic row's iteration has.
+                            duel.matchup.measurement().samplesRecorded(),
+                            duel.slot.getArena().index(),
+                            tick,
+                            seq,
+                            attackerId.equals(hit.damager()) ? SimTraceRow.ATTACKER : SimTraceRow.DEFENDER,
+                            SimTraceRow.HIT,
+                            hit.rawDamage(),
+                            hit.finalDamage()));
+                    tracesRecorded++;
+                }
+            } catch (Exception e) {
+                log.warn("Failed to build hit trace for build {}", duel.matchup.buildId(), e).submit();
+            }
+            if (traces.size() >= TRACE_FLUSH_CHUNK) {
+                flushes.add(repository.insertTraces(runId, List.copyOf(traces)));
+                traces.clear();
+            }
+        }
+
         /** Hands the accumulated rows to the repository and starts a fresh batch. */
         private void flush() {
             flushes.add(repository.insertResults(runId, List.copyOf(results)));
             rowsFlushed += results.size();
             results.clear();
+            if (!diagnostics.isEmpty()) {
+                flushes.add(repository.insertDuelDiagnostics(runId, List.copyOf(diagnostics)));
+                diagnostics.clear();
+            }
+            if (!traces.isEmpty()) {
+                flushes.add(repository.insertTraces(runId, List.copyOf(traces)));
+                traces.clear();
+            }
         }
     }
 
@@ -1078,6 +1270,29 @@ public class DuelOrchestrator {
          * combatant reads as perfectly healthy right up until nothing can hurt it.
          */
         private boolean barren;
+
+        /**
+         * Both sides' start-of-duel state, captured only when duel diagnostics are on.
+         *
+         * <p>Taken at setup rather than reconstructed at teardown, because most of what it records --
+         * starting health, the role the resident arrived carrying, what the previous duel left on it
+         * -- has been overwritten by the time the duel resolves.
+         */
+        @Nullable
+        private SimCombatant.SetupSnapshot attackerSetup;
+        @Nullable
+        private SimCombatant.SetupSnapshot defenderSetup;
+
+        /**
+         * The furthest the two combatants got from each other, in blocks. {@code -1} until measured.
+         *
+         * <p>The one way a duel can be decided that leaves no trace in any other diagnostic: both
+         * sides swing every tick regardless of range, so a pair knocked apart produces swings that
+         * are refused upstream of every event the recorder watches. Knockback is applied by the
+         * damage pipeline and by several skills, so a build carrying one is not necessarily fighting
+         * at the same range as a bare one -- and range is not a property of either build.
+         */
+        private double maxSeparation = -1;
 
         private Duel(Matchup matchup, int sequence, long startTick, SimCombatantPool.Slot slot) {
             this.matchup = matchup;
@@ -1124,12 +1339,18 @@ public class DuelOrchestrator {
         }
 
         private void setUp() {
-            attacker.spawn(context, slot.getArena().spawnA());
-            defender.spawn(context, slot.getArena().spawnB());
+            attacker.spawn(context, slot.getArena().spawnA(), settings.duelDiagnostics());
+            defender.spawn(context, slot.getArena().spawnB(), settings.duelDiagnostics());
             // After the spawn, so a resident starts this duel's funnel at zero rather than carrying
             // its predecessor's counts into the one line that is supposed to describe this fight.
             attacker.getHandle().resetPipelineCounters();
             defender.getHandle().resetPipelineCounters();
+            // After the counters are zeroed and before the recording opens, so the snapshot describes
+            // the state the measured fight starts from and nothing it has produced yet.
+            if (settings.duelDiagnostics()) {
+                attackerSetup = attacker.setupSnapshot();
+                defenderSetup = defender.setupSnapshot();
+            }
             recording = recorder.startDuel(attacker.getUuid(), defender.getUuid());
         }
 
@@ -1190,7 +1411,26 @@ public class DuelOrchestrator {
             // recorder only ever sees hits that actually landed.
             attacker.swingAt(defender);
             noteSwing(attacker, defender);
+            noteSeparation();
             return false;
+        }
+
+        /**
+         * Keeps the furthest the pair has been apart, when this run is collecting diagnostics.
+         *
+         * <p>Sampled after the swings rather than before, so it reflects the knockback this tick's
+         * hits applied -- which is the whole reason the figure is worth having.
+         */
+        private void noteSeparation() {
+            if (!settings.duelDiagnostics()) {
+                return;
+            }
+            final Player a = attacker.getPlayer();
+            final Player b = defender.getPlayer();
+            if (a == null || b == null || !a.getWorld().equals(b.getWorld())) {
+                return;
+            }
+            maxSeparation = Math.max(maxSeparation, a.getLocation().distance(b.getLocation()));
         }
 
         /**
@@ -1245,11 +1485,18 @@ public class DuelOrchestrator {
                 dmgPerHit = total / hits.size();
                 // Same window as the TTK when there is one, so the figures on a row stay
                 // consistent with each other: dmg_per_hit * hits_to_kill / ttk_s == dps_sustained.
-                // A duel that timed out has no lethal hit to bound the window, so it falls back to
-                // the loop's own elapsed ticks.
+                //
+                // A duel that timed out has no lethal hit to bound the window, and the fallback must
+                // still start where the killed branch starts -- at the first landed hit. It used to
+                // fall back to endTick - startTick, which is the whole duel including the setup and
+                // the idle stretch before contact, so a timed-out row was diluted by exactly the
+                // offset the engagement anchor above exists to cancel. The two branches therefore
+                // measured different things and a kill/timeout mix on one matchup averaged them
+                // together. Nothing else is affected: engagementStartTick is non-null whenever there
+                // is a hit, and this block only runs when there is one.
                 final long windowTicks = ttkTicks != null && ttkTicks > 0
                         ? ttkTicks
-                        : Math.max(1, endTick - startTick);
+                        : Math.max(1, endTick - startTick - engagementStartTick);
                 dpsSustained = total / ticksToSeconds(windowTicks);
                 dpsBurst = burstDps(hits);
             }
@@ -1265,6 +1512,13 @@ public class DuelOrchestrator {
             // is the attacker's: a sim_result row describes the attacker's build. The defender's
             // counts are recorded too and are reachable from the recording, which is what the
             // defensive half of the relevance audit will read once defenders can carry skills.
+            // Before the sample is filed, so the iteration index is this duel's own rather than the
+            // next one's.
+            loop.recordDiagnostic(this, killed, attackerDied);
+            // Same window as the diagnostic, and for the same reason: both index the duel by how many
+            // samples the matchup has taken, so both must run before the sample below is filed.
+            loop.recordTrace(this, hits);
+
             matchup.measurement().add(
                     new SimMeasurement.Sample(dmgPerHit, dpsSustained, dpsBurst, ttkTicks,
                             hits.size(), killed, attackerDied, recording.isEnergyLimited(),
@@ -1275,6 +1529,57 @@ public class DuelOrchestrator {
             if (matchup.measurement().isComplete()) {
                 loop.complete(matchup);
             }
+        }
+
+        /**
+         * This duel as a diagnostic row: what both sides started from, and everything that happened.
+         *
+         * <p>The hits are taken whole rather than filtered to the attacker's direction, which is the
+         * one thing {@code sim_result} structurally cannot carry. Under {@code MUTUAL} the duel is a
+         * race -- the defender acts and swings first on every tick, and a 29 HP target dies in five
+         * hits -- so the defender's half of the timeline is not context for the measurement, it is
+         * the other half of the thing being measured.
+         *
+         * <p>Health is read live rather than from the recording: the loser's remaining health is what
+         * says whether a fight was lost by one hit or by five, and no event carries it.
+         */
+        private SimDuelDiagnosticRow toDiagnostic(boolean killed, boolean attackerDied) {
+            final SimDuelDiagnosticRow.Outcome outcome;
+            if (killed) {
+                outcome = SimDuelDiagnosticRow.Outcome.DEFENDER_KILLED;
+            } else if (attackerDied) {
+                outcome = SimDuelDiagnosticRow.Outcome.ATTACKER_KILLED;
+            } else if (barren) {
+                outcome = SimDuelDiagnosticRow.Outcome.BARREN;
+            } else {
+                outcome = SimDuelDiagnosticRow.Outcome.TIMEOUT;
+            }
+
+            return new SimDuelDiagnosticRow(matchup.buildId(),
+                    matchup.target(),
+                    matchup.measurement().samplesRecorded(),
+                    slot.getArena().index(),
+                    outcome,
+                    resolvedAtTick < 0 ? null : (int) (resolvedAtTick - startTick),
+                    side(attacker, attackerSetup),
+                    side(defender, defenderSetup),
+                    maxSeparation,
+                    recording.allHits());
+        }
+
+        /** One side of the diagnostic row, pairing its setup snapshot with what it ended up doing. */
+        private SimDuelDiagnosticRow.Side side(SimCombatant combatant,
+                                               SimCombatant.SetupSnapshot snapshot) {
+            final Player bukkit = combatant.getPlayer();
+            return new SimDuelDiagnosticRow.Side(combatant.getUuid(),
+                    snapshot,
+                    // Null once the combatant has been torn down, which teardown does after this runs
+                    // -- but a combatant that died mid-duel can also read as absent, and "dead" and
+                    // "already released" are not the same claim.
+                    bukkit == null ? null : bukkit.getHealth(),
+                    combatant.getHandle().describePipeline(),
+                    recording.energyOf(combatant.getUuid()),
+                    recording.activationsOf(combatant.getUuid()));
         }
 
         /**

@@ -70,7 +70,14 @@ public class SimEquipment {
      */
     private static final Material DEFAULT_WEAPON_MATERIAL = Material.IRON_SWORD;
 
-    private static final List<EquipmentSlot> ARMOR_SLOTS =
+    /**
+     * The slots an armour set occupies, in the order a set is built and stripped.
+     *
+     * <p>Public because tearing a set off is not the inverse of putting one on and cannot be left to
+     * the caller's own list: {@code SimCombatant.unequipArmor} has to visit exactly the slots this
+     * class fills, or a piece it missed stays worn and its health modifier with it.
+     */
+    public static final List<EquipmentSlot> ARMOR_SLOTS =
             List.of(EquipmentSlot.HEAD, EquipmentSlot.CHEST, EquipmentSlot.LEGS, EquipmentSlot.FEET);
 
     private final ItemRegistry itemRegistry;

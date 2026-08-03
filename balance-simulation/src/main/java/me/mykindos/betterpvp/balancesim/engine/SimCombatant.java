@@ -14,13 +14,17 @@ import me.mykindos.betterpvp.champions.champions.skills.types.ChannelSkill;
 import me.mykindos.betterpvp.core.client.Client;
 import me.mykindos.betterpvp.core.components.champions.Role;
 import me.mykindos.betterpvp.core.item.armor.ArmorEquipEvent;
+import me.mykindos.betterpvp.core.item.armor.ArmorUnequipEvent;
 import me.mykindos.betterpvp.core.utilities.UtilPlayer;
 import me.mykindos.betterpvp.core.utilities.UtilServer;
 import org.bukkit.Location;
+import org.bukkit.attribute.Attribute;
+import org.bukkit.attribute.AttributeInstance;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.PlayerInventory;
+import org.bukkit.potion.PotionEffect;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayList;
@@ -88,6 +92,29 @@ public class SimCombatant {
     private List<DrivenSkill> drivenSkills = List.of();
 
     /**
+     * The resident's state as it arrived for this duel, before anything was equipped.
+     *
+     * <p>Null until {@link #spawn}. A resident is supposed to arrive indistinguishable from a fresh
+     * entity -- {@code despawn} unequips every registered skill and purges the per-UUID state -- and
+     * this is the only record of whether it actually did.
+     */
+    @Nullable
+    private String residueBeforeSetup;
+
+    /** The role the resident was still carrying from its previous duel. Null until {@link #spawn}. */
+    @Nullable
+    private Role roleBeforeEquip;
+
+    /**
+     * Whether {@link #equipRole} had to pass through a priming role to force a real change.
+     *
+     * <p>Load-bearing for the diagnostic rather than for the duel: a primed equip fires two
+     * {@code RoleChangeEvent}s and an unprimed one fires one, and which happens depends on the
+     * previous duel on this resident rather than on this build.
+     */
+    private boolean rolePrimed;
+
+    /**
      * @param handle the pooled entity to fight this duel through. Its identity is the combatant's:
      *               a resident keeps one UUID for the life of the sweep, so log lines and recorder
      *               rows for successive duels on the same arena share it. The duel's own identity
@@ -123,18 +150,28 @@ public class SimCombatant {
      *
      * <p>Must be called on the main thread.
      *
-     * @param context the managers and plugin handle this combatant is built through
-     * @param at      where in the sim world to place it
+     * @param context     the managers and plugin handle this combatant is built through
+     * @param at          where in the sim world to place it
+     * @param diagnostics whether this run is collecting per-duel diagnostics. Gates the residue
+     *                    probe only: it walks the entity's level registration and connection state,
+     *                    which is a handful of microseconds nobody should pay on a sweep that is not
+     *                    going to read it
      */
-    public void spawn(SimContext context, Location at) {
+    public void spawn(SimContext context, Location at, boolean diagnostics) {
         if (player != null) {
             throw new IllegalStateException("Combatant " + name + " is already spawned");
         }
+
+        // Read before anything is applied, so it describes what the previous duel on this resident
+        // left behind rather than what this one is about to set up. A resident is supposed to arrive
+        // here indistinguishable from a fresh entity; this is the only place that claim is testable.
+        this.residueBeforeSetup = diagnostics ? handle.describeCombatState() : null;
 
         // The entity already exists and is already flagged -- SimCombatantPool marks a resident as
         // it is added to the level, which is strictly earlier than this used to happen. All that is
         // left is to undo the last duel's marks on it.
         handle.prepareForDuel(at);
+        handle.duelsFought++;
         // Makes Bukkit.getPlayer resolve the combatant for the length of the duel, which is what every
         // skill that holds its targets as UUIDs needs in order to keep working on one -- and what makes
         // the energy gate bind. Before the client and the role, because the RoleChangeEvent listeners
@@ -163,6 +200,88 @@ public class SimCombatant {
 
         this.measuredSkills = readBackEffectiveLevels(context);
         this.drivenSkills = resolveDrivenSkills(context);
+    }
+
+    /**
+     * Everything about this combatant that was decided before the first swing.
+     *
+     * <p>Taken after {@link #spawn} has finished, so it is what the duel actually starts from rather
+     * than what the build asked for. The point of collecting it is subtraction: a build carrying one
+     * passive that presses nothing should be identical here to a bare build on the same weapon
+     * against the same target, and run 164 says the two do not fight the same fight. If they differ
+     * on any line of this, the fight was decided at setup and no amount of combat instrumentation
+     * would have shown it.
+     *
+     * <p>Read through the Bukkit API rather than the handle where both offer it, because the Bukkit
+     * value is the one every listener in the damage pipeline sees.
+     */
+    public SetupSnapshot setupSnapshot() {
+        if (player == null) {
+            throw new IllegalStateException("Combatant " + name + " is not spawned");
+        }
+        final List<String> effects = new ArrayList<>();
+        for (PotionEffect effect : player.getActivePotionEffects()) {
+            effects.add(effect.getType().getKey().getKey() + ":" + effect.getAmplifier()
+                    + "@" + effect.getDuration());
+        }
+        return new SetupSnapshot(
+                roleBeforeEquip == null ? "none" : roleBeforeEquip.name(),
+                rolePrimed,
+                player.getHealth(),
+                UtilPlayer.getMaxHealth(player),
+                attribute(Attribute.ARMOR),
+                attribute(Attribute.ARMOR_TOUGHNESS),
+                attribute(Attribute.ATTACK_DAMAGE),
+                attribute(Attribute.ATTACK_SPEED),
+                attribute(Attribute.KNOCKBACK_RESISTANCE),
+                attribute(Attribute.MOVEMENT_SPEED),
+                String.valueOf(player.getInventory().getItemInMainHand().getType()),
+                player.getInventory().getHeldItemSlot(),
+                measuredSkills,
+                effects,
+                handle.duelsFought,
+                handle.revives,
+                handle.everDied,
+                residueBeforeSetup == null ? "(not captured)" : residueBeforeSetup);
+    }
+
+    /** An attribute's current value, or NaN when the entity does not carry it at all. */
+    private double attribute(Attribute type) {
+        final AttributeInstance instance = player.getAttribute(type);
+        return instance == null ? Double.NaN : instance.getValue();
+    }
+
+    /**
+     * One combatant's start-of-duel state.
+     *
+     * @param roleBeforeEquip   the role left over from the previous duel on this resident
+     * @param rolePrimed        whether equipping needed a priming pass, which doubles the
+     *                          {@code RoleChangeEvent}s every skill's tracking hangs off
+     * @param measuredSkills    the build's allocation with effective levels read back off the entity
+     * @param effects           active potion effects, as {@code key:amplifier@duration}
+     * @param duelsFought       how many duels this entity has now been set up for
+     * @param revives           how many times the pool has had to restore it
+     * @param everDied          whether it has ever lost a duel
+     * @param residueBeforeSetup the entity's combat state as it arrived, before anything was applied
+     */
+    public record SetupSnapshot(String roleBeforeEquip,
+                                boolean rolePrimed,
+                                double health,
+                                double maxHealth,
+                                double armor,
+                                double armorToughness,
+                                double attackDamage,
+                                double attackSpeed,
+                                double knockbackResistance,
+                                double movementSpeed,
+                                String heldItem,
+                                int heldSlot,
+                                List<SimSkillAllocation> measuredSkills,
+                                List<String> effects,
+                                int duelsFought,
+                                int revives,
+                                boolean everDied,
+                                String residueBeforeSetup) {
     }
 
     /**
@@ -210,7 +329,12 @@ public class SimCombatant {
      */
     private void equipRole(SimContext context, Role role) {
         final RoleManager roles = context.roleManager();
-        if (roles.getRole(player) == role) {
+        // Recorded because the branch is taken or not depending on what the *previous* duel on this
+        // resident equipped, which makes the number of RoleChangeEvents a build sees a function of
+        // sweep ordering rather than of the build. Every skill's trackPlayer hangs off that event.
+        this.roleBeforeEquip = roles.getRole(player);
+        this.rolePrimed = roleBeforeEquip == role;
+        if (rolePrimed) {
             roles.equipRole(player, role == Role.DEFAULT ? Role.ASSASSIN : Role.DEFAULT);
         }
         roles.equipRole(player, role);
@@ -328,6 +452,7 @@ public class SimCombatant {
             // Before the role goes: an invalidate may read the player's level or energy max, both of
             // which resolve through the role and build that cleanUp and destroy are about to drop.
             invalidateSkills(context);
+            unequipArmor();
             context.roleManager().cleanUp(player);
         }
         // Before the client goes: ClientManager.unload refuses while Bukkit.getPlayer(uuid) resolves,
@@ -344,6 +469,48 @@ public class SimCombatant {
         context.statePurge().purge(uuid, player);
         player = null;
         drivenSkills = List.of();
+    }
+
+    /**
+     * Strips the armour set and fires the real {@code ArmorUnequipEvent} for each piece.
+     *
+     * <p>The mirror of {@link #equipArmor}, and required for the same reason it exists. The
+     * {@code MAX_HEALTH} modifier that {@code HealthListener.updateHealth} installs for an armour
+     * set's HEALTH stats is keyed on {@code betterpvp:health} and recomputed only when an armour
+     * event fires. Clearing the inventory slots silently would leave that modifier installed, and
+     * the modifier is what max health is actually made of -- {@code EntityHealthService.getMaxHealth}
+     * reads the worn set, but the attribute keeps whatever was last written to it.
+     *
+     * <p>Without this, a resident handed out for a build with no armour never fires an armour event
+     * at all ({@code equipArmor} returns early on an empty set), so it fights at its own role's base
+     * health plus the previous occupant's armour bonus. Run 165 measured exactly that: an
+     * {@code ASSASSIN/none} target, whose true max health is 29, was recorded at 29, 36, 43 and 47 --
+     * its base plus the +7/+14/+18 of whichever set the entity wore in the duel before, matching
+     * one-to-one across all 45,254 duels. It decided the sweep: that target is killable in five hits
+     * at 29 health and not at all at 47, so the skill-less baselines, which are enumerated first and
+     * therefore inherited least, won matchups that every skill build then lost -- and the difference
+     * was booked as the skill's contribution.
+     */
+    private void unequipArmor() {
+        // Unset the death first, or the events below are fired at a corpse and do nothing:
+        // HealthListener.updateHealth opens by reading getHealth()/getValue() and returns early when
+        // that is 0, deliberately, so a dead entity is not resized. A combatant that died wearing a
+        // set therefore kept the set's modifier through despawn, and the pool's revive then healed it
+        // to the inflated maximum. Run 166 measured the residue this leaves: a target that had never
+        // died was clean in all 686 duels, while one that had died carried a stale bonus into 27.4%
+        // of its no-armour duels. Reviving here is not redundant with the pool's own revive -- that
+        // one runs after this, on a resident whose armour is already gone and which can no longer
+        // raise the event that would correct the attribute.
+        handle.reviveIfDead();
+        final PlayerInventory inventory = player.getInventory();
+        for (EquipmentSlot slot : SimEquipment.ARMOR_SLOTS) {
+            final ItemStack worn = inventory.getItem(slot);
+            if (worn == null || worn.getType().isAir()) {
+                continue;
+            }
+            inventory.setItem(slot, null);
+            UtilServer.callEvent(new ArmorUnequipEvent(player, worn, slot));
+        }
     }
 
     /**

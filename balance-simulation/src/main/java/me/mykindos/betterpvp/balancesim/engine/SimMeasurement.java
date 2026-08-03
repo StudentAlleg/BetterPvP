@@ -127,6 +127,17 @@ public final class SimMeasurement {
     }
 
     /**
+     * How many iterations of this matchup have been measured so far.
+     *
+     * <p>Exists so a per-duel diagnostic can say which iteration it describes. The matchup's
+     * iterations are otherwise indistinguishable once reduced -- which is the whole reason the
+     * diagnostic table is per duel.
+     */
+    public int samplesRecorded() {
+        return samples.size();
+    }
+
+    /**
      * Reduces the collected iterations.
      *
      * <p>TTK and hits-to-kill average over the iterations that produced a kill only. Averaging a

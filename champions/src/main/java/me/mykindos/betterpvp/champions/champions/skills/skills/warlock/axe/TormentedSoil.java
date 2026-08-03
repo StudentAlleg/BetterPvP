@@ -14,6 +14,7 @@ import me.mykindos.betterpvp.champions.champions.skills.types.InteractSkill;
 import me.mykindos.betterpvp.champions.champions.skills.types.OffensiveSkill;
 import me.mykindos.betterpvp.champions.champions.skills.types.TeamSkill;
 import me.mykindos.betterpvp.champions.combat.damage.SkillDamageModifier;
+import me.mykindos.betterpvp.core.client.gamer.Gamer;
 import me.mykindos.betterpvp.core.combat.events.DamageEvent;
 import me.mykindos.betterpvp.core.components.champions.Role;
 import me.mykindos.betterpvp.core.components.champions.SkillType;
@@ -23,13 +24,12 @@ import me.mykindos.betterpvp.core.listener.BPvPListener;
 import me.mykindos.betterpvp.core.locale.Translations;
 import me.mykindos.betterpvp.core.utilities.UtilBlock;
 import me.mykindos.betterpvp.core.utilities.UtilEntity;
-import me.mykindos.betterpvp.core.utilities.UtilFormat;
-import net.kyori.adventure.text.Component;
-import net.kyori.adventure.text.format.NamedTextColor;
 import me.mykindos.betterpvp.core.utilities.UtilMessage;
 import me.mykindos.betterpvp.core.utilities.UtilPlayer;
 import me.mykindos.betterpvp.core.utilities.UtilTime;
 import me.mykindos.betterpvp.core.utilities.events.EntityProperty;
+import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.format.NamedTextColor;
 import org.bukkit.Color;
 import org.bukkit.Location;
 import org.bukkit.Particle;
@@ -99,6 +99,29 @@ public class TormentedSoil extends Skill implements InteractSkill, CooldownSkill
     @Override
     public Role getClassType() {
         return Role.WARLOCK;
+    }
+
+    /**
+     * Drops the zones this player cast when they stop carrying the skill.
+     *
+     * <p>{@link #onUpdate} expires a torment on wall-clock time, or when its caster is null -- and
+     * the caster is a strong reference that never becomes null. So a zone outlives its caster
+     * leaving, and {@link #onDamage} keeps applying the multiplier to anyone damaged inside it,
+     * because that handler asks only where the damagee is standing and never whether the damager
+     * carries this skill. That is correct while the caster is present -- it is an area denial zone,
+     * not a personal buff -- but not once they are gone.
+     *
+     * <p>The sim measured the cost of the gap directly. Arenas are reused, so the next duel on a
+     * platform spawns inside the previous occupant's zone: in run 204, 374 duels of builds that
+     * could not amplify damage at all -- Break Fall, Blood Compass, Energy Pool -- dealt exactly
+     * 1.33x on every hit, and every one of them had a Tormented Soil duel within the previous three
+     * on the same arena, against a 0.6% base rate. Whether the zone was still alive when the next
+     * duel started depended on how fast the host had run the last one, which is where the sweep's
+     * nondeterminism came from.
+     */
+    @Override
+    public void invalidatePlayer(Player player, Gamer gamer) {
+        tormentList.removeIf(torment -> player.equals(torment.getCaster()));
     }
 
 

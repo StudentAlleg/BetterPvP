@@ -6,7 +6,9 @@ import lombok.CustomLog;
 import me.mykindos.betterpvp.balancesim.catalog.SimBuildSpec;
 import me.mykindos.betterpvp.balancesim.catalog.SimSkillAllocation;
 import me.mykindos.betterpvp.balancesim.catalog.SimWeaponProfile;
+import me.mykindos.betterpvp.balancesim.database.jooq.tables.records.SimDuelDiagnosticRecord;
 import me.mykindos.betterpvp.balancesim.database.jooq.tables.records.SimResultRecord;
+import me.mykindos.betterpvp.balancesim.database.jooq.tables.records.SimTraceRecord;
 import me.mykindos.betterpvp.balancesim.engine.SimulationTrigger;
 import me.mykindos.betterpvp.core.database.Database;
 import org.jetbrains.annotations.Nullable;
@@ -229,9 +231,126 @@ public class SimResultRepository {
         });
     }
 
+    /**
+     * Batch-inserts per-duel diagnostics.
+     *
+     * <p>Separated from {@link #insertResults} rather than folded into it because the two have
+     * different lifetimes and different failure consequences: a sweep is worthless without its
+     * results and merely uninformative without its diagnostics, so a diagnostic flush that fails is
+     * logged and swallowed exactly as the result flush is, but must never be able to take a result
+     * flush down with it.
+     */
+    public CompletableFuture<Void> insertDuelDiagnostics(long runId, List<SimDuelDiagnosticRow> rows) {
+        if (rows.isEmpty()) {
+            return CompletableFuture.completedFuture(null);
+        }
+
+        return database.getAsyncDslContext().executeAsyncVoid(ctx -> ctx.transaction(configuration -> {
+            final DSLContext trx = DSL.using(configuration);
+            final List<SimDuelDiagnosticRecord> records = new ArrayList<>(rows.size());
+
+            for (SimDuelDiagnosticRow row : rows) {
+                final SimDuelDiagnosticRow.Side attacker = row.attacker();
+                final SimDuelDiagnosticRow.Side defender = row.defender();
+                final SimDuelDiagnosticRecord record = new SimDuelDiagnosticRecord();
+                record.setRunId(runId);
+                record.setBuildId(row.buildId());
+                record.setTargetRole(row.target().role());
+                record.setTargetArmor(row.target().armorSetId());
+                record.setIteration(row.iteration());
+                record.setArenaIndex(row.arenaIndex());
+
+                record.setAttackerDuelsFought(attacker.snapshot().duelsFought());
+                record.setDefenderDuelsFought(defender.snapshot().duelsFought());
+                record.setAttackerRevives(attacker.snapshot().revives());
+                record.setDefenderRevives(defender.snapshot().revives());
+                record.setAttackerEverDied(attacker.snapshot().everDied());
+                record.setDefenderEverDied(defender.snapshot().everDied());
+
+                record.setOutcome(row.outcome().name());
+                record.setResolvedTick(row.resolvedTick());
+                record.setAttackerFirstHitTick(row.firstHitTick(attacker));
+                record.setDefenderFirstHitTick(row.firstHitTick(defender));
+                record.setAttackerHits(row.hitsBy(attacker));
+                record.setDefenderHits(row.hitsBy(defender));
+                record.setAttackerDamage(BigDecimal.valueOf(row.damageBy(attacker)));
+                record.setDefenderDamage(BigDecimal.valueOf(row.damageBy(defender)));
+
+                record.setAttackerStartHealth(finite(attacker.snapshot().health()));
+                record.setAttackerMaxHealth(finite(attacker.snapshot().maxHealth()));
+                record.setDefenderStartHealth(finite(defender.snapshot().health()));
+                record.setDefenderMaxHealth(finite(defender.snapshot().maxHealth()));
+                record.setAttackerEndHealth(decimal(attacker.endHealth()));
+                record.setDefenderEndHealth(decimal(defender.endHealth()));
+
+                record.setDetail(jsonb(row.detailJson()));
+                records.add(record);
+            }
+
+            trx.batchInsert(records).execute();
+        })).exceptionally(ex -> {
+            log.error("Failed to insert {} duel diagnostics for run {}", rows.size(), runId, ex).submit();
+            return null;
+        });
+    }
+
+    /**
+     * Batch-inserts per-hit traces.
+     *
+     * <p>Swallows its failures for the same reason {@link #insertDuelDiagnostics} does, and more
+     * urgently: this table writes roughly one row per landed hit rather than one per duel, so it is
+     * the flush most likely to be the one that struggles, and a sweep must not be lost to the table
+     * that was only ever watching it.
+     */
+    public CompletableFuture<Void> insertTraces(long runId, List<SimTraceRow> rows) {
+        if (rows.isEmpty()) {
+            return CompletableFuture.completedFuture(null);
+        }
+
+        return database.getAsyncDslContext().executeAsyncVoid(ctx -> ctx.transaction(configuration -> {
+            final DSLContext trx = DSL.using(configuration);
+            final List<SimTraceRecord> records = new ArrayList<>(rows.size());
+
+            for (SimTraceRow row : rows) {
+                final SimTraceRecord record = new SimTraceRecord();
+                record.setRunId(runId);
+                record.setBuildId(row.buildId());
+                record.setTargetRole(row.targetRole());
+                record.setTargetArmor(row.targetArmor());
+                record.setIteration(row.iteration());
+                record.setArenaIndex(row.arenaIndex());
+                record.setTick(row.tick());
+                record.setSeq(row.seq());
+                record.setTMs(row.tMs());
+                record.setActor(row.actor());
+                record.setEvent(row.event());
+                record.setRawAmount(decimal(row.rawAmount()));
+                record.setAmount(decimal(row.amount()));
+                records.add(record);
+            }
+
+            trx.batchInsert(records).execute();
+        })).exceptionally(ex -> {
+            log.error("Failed to insert {} sim traces for run {}", rows.size(), runId, ex).submit();
+            return null;
+        });
+    }
+
     // -------------------------------------------------------------------------
     // Private helpers
     // -------------------------------------------------------------------------
+
+    /**
+     * A measured attribute as a column value, or null when the entity did not carry it.
+     *
+     * <p>An absent attribute reads as {@code NaN}, which {@code BigDecimal.valueOf} throws on. That
+     * would abort the whole flush over a field that is merely unknown, so it becomes a SQL null --
+     * which is what "this entity has no such attribute" means anyway.
+     */
+    @Nullable
+    private static BigDecimal finite(double value) {
+        return Double.isFinite(value) ? BigDecimal.valueOf(value) : null;
+    }
 
     private static JSONB jsonb(String json) {
         return jsonb(json, "{}");

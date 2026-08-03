@@ -109,6 +109,126 @@ public class SimTraceRecord extends UpdatableRecordImpl<SimTraceRecord> {
         return (BigDecimal) get(5);
     }
 
+    /**
+     * Setter for <code>public.sim_trace.target_role</code>.
+     */
+    public SimTraceRecord setTargetRole(String value) {
+        set(6, value);
+        return this;
+    }
+
+    /**
+     * Getter for <code>public.sim_trace.target_role</code>.
+     */
+    public String getTargetRole() {
+        return (String) get(6);
+    }
+
+    /**
+     * Setter for <code>public.sim_trace.target_armor</code>.
+     */
+    public SimTraceRecord setTargetArmor(String value) {
+        set(7, value);
+        return this;
+    }
+
+    /**
+     * Getter for <code>public.sim_trace.target_armor</code>.
+     */
+    public String getTargetArmor() {
+        return (String) get(7);
+    }
+
+    /**
+     * Setter for <code>public.sim_trace.iteration</code>.
+     */
+    public SimTraceRecord setIteration(Integer value) {
+        set(8, value);
+        return this;
+    }
+
+    /**
+     * Getter for <code>public.sim_trace.iteration</code>.
+     */
+    public Integer getIteration() {
+        return (Integer) get(8);
+    }
+
+    /**
+     * Setter for <code>public.sim_trace.arena_index</code>.
+     */
+    public SimTraceRecord setArenaIndex(Integer value) {
+        set(9, value);
+        return this;
+    }
+
+    /**
+     * Getter for <code>public.sim_trace.arena_index</code>.
+     */
+    public Integer getArenaIndex() {
+        return (Integer) get(9);
+    }
+
+    /**
+     * Setter for <code>public.sim_trace.tick</code>.
+     */
+    public SimTraceRecord setTick(Integer value) {
+        set(10, value);
+        return this;
+    }
+
+    /**
+     * Getter for <code>public.sim_trace.tick</code>.
+     */
+    public Integer getTick() {
+        return (Integer) get(10);
+    }
+
+    /**
+     * Setter for <code>public.sim_trace.seq</code>.
+     */
+    public SimTraceRecord setSeq(Integer value) {
+        set(11, value);
+        return this;
+    }
+
+    /**
+     * Getter for <code>public.sim_trace.seq</code>.
+     */
+    public Integer getSeq() {
+        return (Integer) get(11);
+    }
+
+    /**
+     * Setter for <code>public.sim_trace.actor</code>.
+     */
+    public SimTraceRecord setActor(String value) {
+        set(12, value);
+        return this;
+    }
+
+    /**
+     * Getter for <code>public.sim_trace.actor</code>.
+     */
+    public String getActor() {
+        return (String) get(12);
+    }
+
+    /**
+     * Setter for <code>public.sim_trace.raw_amount</code>.
+     */
+    public SimTraceRecord setRawAmount(BigDecimal value) {
+        set(13, value);
+        return this;
+    }
+
+    /**
+     * Getter for <code>public.sim_trace.raw_amount</code>.
+     */
+    public BigDecimal getRawAmount() {
+        return (BigDecimal) get(13);
+    }
+
     // -------------------------------------------------------------------------
     // Primary key information
     // -------------------------------------------------------------------------
@@ -132,7 +252,7 @@ public class SimTraceRecord extends UpdatableRecordImpl<SimTraceRecord> {
     /**
      * Create a detached, initialised SimTraceRecord
      */
-    public SimTraceRecord(Long id, Long runId, Long buildId, Long tMs, String event, BigDecimal amount) {
+    public SimTraceRecord(Long id, Long runId, Long buildId, Long tMs, String event, BigDecimal amount, String targetRole, String targetArmor, Integer iteration, Integer arenaIndex, Integer tick, Integer seq, String actor, BigDecimal rawAmount) {
         super(SimTrace.SIM_TRACE);
 
         setId(id);
@@ -141,6 +261,14 @@ public class SimTraceRecord extends UpdatableRecordImpl<SimTraceRecord> {
         setTMs(tMs);
         setEvent(event);
         setAmount(amount);
+        setTargetRole(targetRole);
+        setTargetArmor(targetArmor);
+        setIteration(iteration);
+        setArenaIndex(arenaIndex);
+        setTick(tick);
+        setSeq(seq);
+        setActor(actor);
+        setRawAmount(rawAmount);
         resetChangedOnNotNull();
     }
 }

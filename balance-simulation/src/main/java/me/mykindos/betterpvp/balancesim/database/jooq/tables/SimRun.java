@@ -8,6 +8,7 @@ import me.mykindos.betterpvp.balancesim.database.jooq.Indexes;
 import me.mykindos.betterpvp.balancesim.database.jooq.Keys;
 import me.mykindos.betterpvp.balancesim.database.jooq.Public;
 import me.mykindos.betterpvp.balancesim.database.jooq.tables.SimBuild.SimBuildPath;
+import me.mykindos.betterpvp.balancesim.database.jooq.tables.SimDuelDiagnostic.SimDuelDiagnosticPath;
 import me.mykindos.betterpvp.balancesim.database.jooq.tables.SimResult.SimResultPath;
 import me.mykindos.betterpvp.balancesim.database.jooq.tables.SimTrace.SimTracePath;
 import me.mykindos.betterpvp.balancesim.database.jooq.tables.records.SimRunRecord;
@@ -200,6 +201,19 @@ public class SimRun extends TableImpl<SimRunRecord> {
             _simBuild = new SimBuildPath(this, null, Keys.SIM_BUILD__SIM_BUILD_RUN_ID_FKEY.getInverseKey());
 
         return _simBuild;
+    }
+
+    private transient SimDuelDiagnosticPath _simDuelDiagnostic;
+
+    /**
+     * Get the implicit to-many join path to the
+     * <code>public.sim_duel_diagnostic</code> table
+     */
+    public SimDuelDiagnosticPath simDuelDiagnostic() {
+        if (_simDuelDiagnostic == null)
+            _simDuelDiagnostic = new SimDuelDiagnosticPath(this, null, Keys.SIM_DUEL_DIAGNOSTIC__SIM_DUEL_DIAGNOSTIC_RUN_ID_FKEY.getInverseKey());
+
+        return _simDuelDiagnostic;
     }
 
     private transient SimResultPath _simResult;

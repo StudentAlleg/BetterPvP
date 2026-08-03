@@ -224,16 +224,29 @@ public final class SkillRelevanceAudit {
      * sweep do not support that claim -- the honest reading is that the engine barely drove it, which
      * is a harness problem. {@link SkillVerdict#evidence()} prints the count, so the reviewer can see
      * which of the two they are looking at.
+     *
+     * <p>That firing gate outranks significance, and the order is deliberate rather than incidental.
+     * A skill that did not fire cannot be the cause of a movement in the numbers, so a relevant
+     * verdict on one is a measurement artifact wearing an effect's clothes -- and it is a verdict
+     * that gets acted on, because {@code RELEVANT} is what the reviewed list sweeps next.
      */
     private static SkillRelevanceBucket bucket(ActivationArchetype archetype,
                                                int successes,
                                                boolean significant,
                                                AuditThresholds thresholds) {
-        if (significant) {
-            return SkillRelevanceBucket.RELEVANT;
-        }
+        // The firing gate runs before the significance test, not after it. A driven skill that did
+        // not fire cannot have caused whatever moved, so calling it relevant reports a measurement
+        // artifact as an effect. Run 164 did exactly that: Takedown reached RELEVANT on 0 successes
+        // in 11,831 attempts and Wreath on 0 in 1,800, because significance was checked first and
+        // whatever the numbers did was attributed to a skill that never went off. Runs 168 and 169
+        // then established there is always something for it to catch -- repeat iterations of one
+        // matchup disagree on damage in 2.3% to 5.2% of matchups -- so this ordering is load-bearing
+        // for as long as the sweep is not reproducible, and worth keeping afterwards regardless.
         if (archetype != ActivationArchetype.PASSIVE && successes < thresholds.minSuccesses()) {
             return SkillRelevanceBucket.UNDRIVABLE;
+        }
+        if (significant) {
+            return SkillRelevanceBucket.RELEVANT;
         }
         return SkillRelevanceBucket.INERT;
     }

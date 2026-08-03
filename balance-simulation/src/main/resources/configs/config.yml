@@ -107,6 +107,29 @@ champions:
     # How often a running sweep reports duels done / matchups measured / ETA, to the
     # console and to whoever ran /simulate. Floored at 1 second.
     progressIntervalSeconds: 15.0
+    # Write a sim_duel_diagnostic row for every duel.
+    #
+    # Off by default: this is one row per duel where sim_result is one per matchup, so a
+    # sweep of 100,000 duels writes 100,000 rows carrying a JSON blob each.
+    #
+    # Turn it on when a result needs explaining rather than reporting. Every figure on
+    # sim_result is a mean over the matchup's iterations, and run 164 produced matchups
+    # where the skill-less baseline killed in 10 of 10 duels and the same build carrying
+    # one inert passive -- no button, no damage -- died in 10 of 10, with per-hit damage
+    # deterministic to zero variance across the whole sweep. A mean cannot express that;
+    # this table can. It records what both sides started the duel from (attributes, health,
+    # effects, effective skill levels, the state the pooled entity arrived carrying), how
+    # worn the pooled entities were, the damage funnel per side, and every landed hit in
+    # both directions with its tick.
+    #
+    # Deliberately not part of config_hash: observing a duel must not make it a different
+    # duel, so a diagnostic run stays diffable against the run it is explaining.
+    duelDiagnostics: false
+    # Ceiling on diagnostic rows per run. A stop rather than a sample -- the rows that exist
+    # are a contiguous prefix of the sweep, which matters because the leading hypothesis is
+    # about how a duel's position in the sweep affects its outcome, and a sampled table
+    # cannot answer a question about ordering.
+    duelDiagnosticsMaxRows: 50000
 
 command:
   simulate:

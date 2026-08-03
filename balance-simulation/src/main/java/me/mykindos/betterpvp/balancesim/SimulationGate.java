@@ -190,6 +190,69 @@ public class SimulationGate {
     private int combatantQuarantineTicks;
 
     /**
+     * Whether every duel writes a {@code sim_duel_diagnostic} row.
+     *
+     * <p>Off by default because it is one row per duel rather than per matchup, and a sweep runs
+     * duels in the hundreds of thousands. On, it is the only place a single duel stays visible: every
+     * figure on {@code sim_result} is a mean over the matchup's iterations, so a difference that
+     * decides one fight is averaged away before it is stored.
+     *
+     * <p>Deliberately not part of {@code config_hash}. Observing a duel must not change what the duel
+     * measures, and a diagnostic run that could not be diffed against the run it is explaining would
+     * be useless for the one job it has.
+     */
+    @Inject
+    @Config(path = "champions.simulation.duelDiagnostics", defaultValue = "false")
+    private boolean duelDiagnostics;
+
+    /**
+     * Ceiling on how many diagnostic rows one run may write.
+     *
+     * <p>A stop rather than a sample: once the cap is reached the run stops recording and says so,
+     * so the rows that exist are a contiguous prefix of the sweep rather than an arbitrary subset of
+     * it. The residency hypothesis this table was built for is about how a duel's position in the
+     * sweep affects its outcome, and a sampled table cannot answer a question about ordering.
+     */
+    @Inject
+    @Config(path = "champions.simulation.duelDiagnosticsMaxRows", defaultValue = "50000")
+    private int duelDiagnosticsMaxRows;
+
+    /**
+     * Whether every landed hit writes a {@code sim_trace} row.
+     *
+     * <p>Off by default and heavier than the duel diagnostics by roughly the number of hits in a
+     * fight. Turn it on to locate a divergence, not to measure one: runs 168 and 169 proved the sweep
+     * is not reproducible -- same build, same target, four repeats, different damage in 2.3% of
+     * {@code MUTUAL} matchups and 5.2% of {@code ONE_WAY} ones -- and no per-duel row can say where
+     * inside a fight two iterations parted, because the totals are what disagree.
+     *
+     * <p>Not part of {@code config_hash}, on the same reasoning as {@code duelDiagnostics}: observing
+     * a duel must not change what it measures. That matters more here than there. The thing being
+     * hunted is a timing difference, so a trace that perturbed timing would manufacture the very
+     * effect it was switched on to find -- which is why the trace is assembled from the recording
+     * after the duel has ended rather than emitted from the damage path as hits land.
+     */
+    @Inject
+    @Config(path = "champions.simulation.hitTrace", defaultValue = "false")
+    private boolean hitTrace;
+
+    /**
+     * Ceiling on how many trace rows one run may write.
+     *
+     * <p>A stop rather than a sample, exactly as {@code duelDiagnosticsMaxRows} is, and for a sharper
+     * reason: a sampled trace is worthless. The comparison is between repeats of one matchup, so
+     * dropping rows at random would leave iterations that cannot be diffed against each other at all,
+     * and a truncated prefix at least yields whole duels.
+     *
+     * <p>Sized for a targeted run rather than a full sweep. At roughly eight hits per duel a complete
+     * {@code SKILLS} sweep would be some 360,000 rows; the default here stops well short of that, on
+     * the expectation that a divergence hunt is pointed at a narrowed catalog. Raise it deliberately.
+     */
+    @Inject
+    @Config(path = "champions.simulation.hitTraceMaxRows", defaultValue = "200000")
+    private int hitTraceMaxRows;
+
+    /**
      * Ceiling on how many combatants may be resident in the sim world at once.
      *
      * <p>With the quarantine at its default of zero a slot is back in service the tick its duel ends,

@@ -5,6 +5,7 @@ package me.mykindos.betterpvp.balancesim.database.jooq;
 
 
 import me.mykindos.betterpvp.balancesim.database.jooq.tables.SimBuild;
+import me.mykindos.betterpvp.balancesim.database.jooq.tables.SimDuelDiagnostic;
 import me.mykindos.betterpvp.balancesim.database.jooq.tables.SimResult;
 import me.mykindos.betterpvp.balancesim.database.jooq.tables.SimRun;
 import me.mykindos.betterpvp.balancesim.database.jooq.tables.SimTrace;
@@ -33,6 +34,11 @@ public class Public extends SchemaImpl {
      * The table <code>public.sim_build</code>.
      */
     public final SimBuild SIM_BUILD = SimBuild.SIM_BUILD;
+
+    /**
+     * The table <code>public.sim_duel_diagnostic</code>.
+     */
+    public final SimDuelDiagnostic SIM_DUEL_DIAGNOSTIC = SimDuelDiagnostic.SIM_DUEL_DIAGNOSTIC;
 
     /**
      * The table <code>public.sim_result</code>.
@@ -66,6 +72,7 @@ public class Public extends SchemaImpl {
     public final List<Table<?>> getTables() {
         return Arrays.asList(
             SimBuild.SIM_BUILD,
+            SimDuelDiagnostic.SIM_DUEL_DIAGNOSTIC,
             SimResult.SIM_RESULT,
             SimRun.SIM_RUN,
             SimTrace.SIM_TRACE

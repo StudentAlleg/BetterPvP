@@ -424,6 +424,22 @@ public class SimPlayer extends ServerPlayer {
     // those 600 reached each stage -- a run-wide histogram would average its own answer away.
     // ------------------------------------------------------------------------------------------
 
+    // ------------------------------------------------------------------------------------------
+    // Residency history. Unlike the pipeline counters below, these are NOT reset per duel: they
+    // describe the entity's whole career, which is exactly the question. A resident fights many
+    // duels and is revived after each death, and the catalog emits skill-less baselines before any
+    // skill build -- so a baseline systematically fights younger residents than the builds whose
+    // deltas are measured against it. That is a confound between the sweep's ordering and its
+    // results, and nothing on a sim_result row can distinguish it from a real skill effect.
+    // ------------------------------------------------------------------------------------------
+
+    /** Duels this entity has been set up for, including the one in progress. */
+    public int duelsFought;
+    /** Times the pool has had to bring this entity back after it stopped being fightable. */
+    public int revives;
+    /** Whether this entity has ever lost a duel. A resident that has died is not a fresh one. */
+    public boolean everDied;
+
     /** Swings this combatant issued at somebody, counted at the call rather than at the landing. */
     public int pipeSwingsMade;
     /** Swings issued at this combatant. Under ONE_WAY the defender's copy is the interesting one. */

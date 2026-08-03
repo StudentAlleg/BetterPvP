@@ -406,6 +406,17 @@ public class SimRecorder implements Listener {
             return energy.snapshot(combatant);
         }
 
+        /**
+         * An immutable snapshot of every hit of the duel, both directions, in arrival order.
+         *
+         * <p>Synchronised for the reason {@link #hitsFrom} is: the damage pipeline appends on the main
+         * thread while a reduction may be reading off it. Exposed separately from the {@code @Getter}
+         * on the field because a caller holding the live list would be reading it unsynchronised.
+         */
+        public synchronized List<HitRecord> allHits() {
+            return List.copyOf(hits);
+        }
+
         /** An immutable snapshot of the hits dealt by {@code damager} to {@code damagee}. */
         public synchronized List<HitRecord> hitsFrom(UUID damager, UUID damagee) {
             final List<HitRecord> filtered = new ArrayList<>();
