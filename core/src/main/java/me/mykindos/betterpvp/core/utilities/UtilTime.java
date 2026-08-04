@@ -2,6 +2,7 @@ package me.mykindos.betterpvp.core.utilities;
 
 import lombok.CustomLog;
 import lombok.Getter;
+import org.bukkit.Bukkit;
 
 import java.text.DecimalFormat;
 import java.text.NumberFormat;
@@ -70,6 +71,28 @@ public class UtilTime {
             return 0L;
         }
         return Math.max(1L, Math.round((double) millis / MILLIS_PER_TICK));
+    }
+
+    /**
+     * The tick counterpart of {@link #elapsed(long, long)}: whether {@code requiredTicks} server
+     * ticks have passed since {@code fromTick}.
+     *
+     * <p>Exists so converting a wall-clock duration to ticks is a mechanical swap at both ends. A
+     * call site that keeps {@code elapsed} for the comparison while storing a tick in {@code from}
+     * silently compares ticks against milliseconds, which is the kind of mistake that reads fine
+     * and is off by a factor of fifty.
+     *
+     * <p>Note the boundary differs from {@code elapsed}, deliberately. {@code elapsed} tests
+     * strictly greater, which only ever mattered because a millisecond clock could report the same
+     * instant twice. Ticks are a counter, so the honest test for "N ticks have passed" is
+     * {@code >= N} -- the same test {@code DelayData} makes.
+     *
+     * @param fromTick      the tick the window started on, from {@link org.bukkit.Bukkit#getCurrentTick()}
+     * @param requiredTicks the number of ticks that must pass; zero or negative is always elapsed
+     * @return true once the window has closed
+     */
+    public static boolean ticksElapsed(int fromTick, long requiredTicks) {
+        return Bukkit.getCurrentTick() - (long) fromTick >= requiredTicks;
     }
 
     public static double trim(double untrimmed, int d) {

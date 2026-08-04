@@ -214,6 +214,7 @@ public final class SimMeasurement {
             entry.put("cooldown_refusals", counts.cooldownRefusals());
             entry.put("energy_refusals", counts.energyRefusals());
             entry.put("declined", counts.declined());
+            entry.put("effects_landed", counts.effectsLanded());
             bySkill.put(skill, entry);
         });
         return bySkill;

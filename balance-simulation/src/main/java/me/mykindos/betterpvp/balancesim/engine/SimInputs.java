@@ -3,10 +3,12 @@ package me.mykindos.betterpvp.balancesim.engine;
 import com.google.inject.Singleton;
 import lombok.CustomLog;
 import org.bukkit.block.BlockFace;
+import org.bukkit.entity.Entity;
 import org.bukkit.entity.Item;
 import org.bukkit.entity.Player;
 import org.bukkit.event.block.Action;
 import org.bukkit.event.player.PlayerDropItemEvent;
+import org.bukkit.event.player.PlayerInteractEntityEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.inventory.ItemStack;
@@ -46,6 +48,26 @@ public class SimInputs {
         final ItemStack held = player.getInventory().getItemInMainHand();
         player.getServer().getPluginManager().callEvent(new PlayerInteractEvent(player,
                 Action.RIGHT_CLICK_AIR, held, null, BlockFace.SELF, EquipmentSlot.HAND));
+    }
+
+    /**
+     * Presses right click while looking at {@code target}.
+     *
+     * <p>The input an {@code InteractEntitySkill} answers to. {@link #rightClick} cannot stand in for
+     * it: those skills read their target off {@code PlayerInteractEntityEvent}, so an air click
+     * reaches them with no entity and takes their failure branch. Firing both is what a real client
+     * does -- the vanilla protocol sends the entity interaction, and the skills' own handlers set a
+     * flag so their {@code PlayerInteractEvent} handler knows not to treat it as a miss.
+     *
+     * <p>Order matters and mirrors the real chain: the entity event first, because the skills use it
+     * to set exactly that flag, and the air click second so the flag is consumed and reset. Sending
+     * only the entity event would leave the flag set and make the <em>next</em> genuine air click read
+     * as an entity click.
+     */
+    public void rightClickEntity(Player player, Entity target) {
+        player.getServer().getPluginManager().callEvent(
+                new PlayerInteractEntityEvent(player, target, EquipmentSlot.HAND));
+        rightClick(player);
     }
 
     /**

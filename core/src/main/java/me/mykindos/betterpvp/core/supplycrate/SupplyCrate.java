@@ -87,7 +87,8 @@ public class SupplyCrate extends Projectile {
 
     @Override
     public boolean isExpired() {
-        return (impacted && UtilTime.elapsed(impactTime, aliveTime)) || UtilTime.elapsed(creationTime, aliveTime * 10);
+        return (impacted && UtilTime.ticksElapsed(impactTick, aliveTicks))
+                || UtilTime.ticksElapsed(creationTick, aliveTicks * 10);
     }
 
     public boolean hasLoot() {

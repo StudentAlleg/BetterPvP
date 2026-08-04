@@ -21,6 +21,7 @@ import me.mykindos.betterpvp.core.locale.Translations;
 import me.mykindos.betterpvp.core.utilities.UtilEntity;
 import me.mykindos.betterpvp.core.utilities.UtilTime;
 import net.kyori.adventure.text.Component;
+import org.bukkit.Bukkit;
 import org.bukkit.Particle;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
@@ -34,7 +35,16 @@ import java.util.WeakHashMap;
 @BPvPListener
 public class Fortitude extends Skill implements PassiveSkill, Listener, DefensiveSkill, HealthSkill {
     private final WeakHashMap<Player, Double> health = new WeakHashMap<>();
-    private final WeakHashMap<Player, Long> last = new WeakHashMap<>();
+    /**
+     * The server tick each player's pool last drained on.
+     *
+     * <p>Ticks rather than a millisecond epoch, for the reason {@code DelayData} and {@link
+     * me.mykindos.betterpvp.core.effects.Effect} document: the heal only happens on a tick, so an
+     * interval in milliseconds is really "however many ticks fit in that many milliseconds" -- a
+     * count that falls as the server falls behind. The same wound healed for less on a loaded server
+     * than a healthy one.
+     */
+    private final WeakHashMap<Player, Integer> lastHealTick = new WeakHashMap<>();
     private double healRate;
     private double baseHeal;
     private double healIncreasePerLevel;
@@ -91,7 +101,7 @@ public class Fortitude extends Skill implements PassiveSkill, Listener, Defensiv
         if (level <= 0) return;
 
         health.put(player, Math.min(getMaxHeal(level), event.getDamage()));
-        last.put(player, System.currentTimeMillis());
+        lastHealTick.put(player, Bukkit.getCurrentTick());
     }
 
     @UpdateEvent(delay = 250)
@@ -104,9 +114,9 @@ public class Fortitude extends Skill implements PassiveSkill, Listener, Defensiv
                 continue;
             }
 
-            if (UtilTime.elapsed(last.get(player), (long) (healInterval * 1000))) {
+            if (UtilTime.ticksElapsed(lastHealTick.get(player), UtilTime.toTicks(healInterval))) {
                 health.put(player, health.get(player) - healRate);
-                last.put(player, System.currentTimeMillis());
+                lastHealTick.put(player, Bukkit.getCurrentTick());
 
                 boolean hasAntiHeal = championsManager.getEffects().hasEffect(player, EffectTypes.ANTI_HEAL);
                 if (health.get(player) <= 0 || hasAntiHeal) {
@@ -123,7 +133,7 @@ public class Fortitude extends Skill implements PassiveSkill, Listener, Defensiv
 
         for (Player cur : remove) {
             health.remove(cur);
-            last.remove(cur);
+            lastHealTick.remove(cur);
         }
     }
     /**
@@ -136,7 +146,7 @@ public class Fortitude extends Skill implements PassiveSkill, Listener, Defensiv
     @Override
     public void invalidatePlayer(Player player, Gamer gamer) {
         health.remove(player);
-        last.remove(player);
+        lastHealTick.remove(player);
     }
 
     public void loadSkillConfig() {

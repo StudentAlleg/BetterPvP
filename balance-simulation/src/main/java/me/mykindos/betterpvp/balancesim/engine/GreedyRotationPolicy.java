@@ -134,6 +134,17 @@ public class GreedyRotationPolicy implements RotationPolicy {
                     inputs.rightClick(player);
                     driven.attemptedAt(tick, retryIntervalTicks());
                 }
+                case INTERACT_ENTITY -> {
+                    // Needs a live opponent to click. A duel always has one, but the combatant can be
+                    // mid-recycle, and clicking a dead or absent target is not an attempt worth
+                    // counting -- it would inflate attempts against successes that never had a chance.
+                    final Player targetPlayer = opponent == null ? null : opponent.getPlayer();
+                    if (targetPlayer != null && targetPlayer.isValid()) {
+                        notePress(player, driven);
+                        inputs.rightClickEntity(player, targetPlayer);
+                        driven.attemptedAt(tick, retryIntervalTicks());
+                    }
+                }
                 case CHANNEL, CHARGE -> {
                     notePress(player, driven);
                     inputs.rightClick(player);

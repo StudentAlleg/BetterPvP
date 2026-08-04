@@ -10,13 +10,14 @@ import me.mykindos.betterpvp.core.effects.EffectTypes;
 import me.mykindos.betterpvp.core.utilities.UtilBlock;
 import me.mykindos.betterpvp.core.utilities.UtilDamage;
 import me.mykindos.betterpvp.core.utilities.UtilMessage;
-import net.kyori.adventure.text.Component;
-import net.kyori.adventure.text.format.NamedTextColor;
 import me.mykindos.betterpvp.core.utilities.UtilServer;
 import me.mykindos.betterpvp.core.utilities.UtilTime;
 import me.mykindos.betterpvp.core.utilities.UtilVelocity;
 import me.mykindos.betterpvp.core.utilities.math.VelocityData;
 import me.mykindos.betterpvp.core.utilities.model.projectile.Projectile;
+import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.format.NamedTextColor;
+import org.bukkit.Bukkit;
 import org.bukkit.Effect;
 import org.bukkit.Location;
 import org.bukkit.Particle;
@@ -77,7 +78,7 @@ public class SkullsplitterProjectile extends Projectile {
     @Override
     public boolean isExpired() {
         // allow for the same amount of time to pass after impacting so a player can follow the path
-        return isImpacted() ? UtilTime.elapsed(impactTime, aliveTime) : super.isExpired();
+        return isImpacted() ? UtilTime.ticksElapsed(impactTick, aliveTicks) : super.isExpired();
     }
 
     public void remove() {
@@ -101,8 +102,8 @@ public class SkullsplitterProjectile extends Projectile {
                     .receivers(60)
                     .spawn();
 
-            final float elapsedTotal = System.currentTimeMillis() - creationTime;
-            float pitch = (float) ((elapsedTotal / 1000) / 10f * (-360.0 * 5));
+            final float elapsedSeconds = (float) (Bukkit.getCurrentTick() - creationTick) / UtilTime.TICKS_PER_SECOND;
+            float pitch = (float) (elapsedSeconds / 10f * (-360.0 * 5));
             Vector3f axis = new Vector3f(0, 0, 1);
             AxisAngle4f pitchRotation = new AxisAngle4f((float) Math.toRadians(pitch), axis);
             Transformation transformation = display.getTransformation();
@@ -111,7 +112,7 @@ public class SkullsplitterProjectile extends Projectile {
             display.setTransformation(transformation);
         } else if (caster.isValid()) {
             // grace period of 300 millis to allow the player to left up the ground
-            if (UtilTime.elapsed(impactTime, 300L) && UtilBlock.isGrounded(caster)) {
+            if (UtilTime.ticksElapsed(impactTick, UtilTime.millisToTicks(300L)) && UtilBlock.isGrounded(caster)) {
                 setMarkForRemoval(true);
                 Particle.SMOKE.builder()
                         .count(40)

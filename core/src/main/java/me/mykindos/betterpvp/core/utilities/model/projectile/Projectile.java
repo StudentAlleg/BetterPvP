@@ -8,6 +8,7 @@ import me.mykindos.betterpvp.core.utilities.UtilServer;
 import me.mykindos.betterpvp.core.utilities.UtilTime;
 import me.mykindos.betterpvp.core.utilities.UtilVelocity;
 import me.mykindos.betterpvp.core.utilities.math.VectorLine;
+import org.bukkit.Bukkit;
 import org.bukkit.FluidCollisionMode;
 import org.bukkit.Location;
 import org.bukkit.entity.ArmorStand;
@@ -31,28 +32,32 @@ public abstract class Projectile {
     protected boolean markForRemoval;
     protected final Player caster;
     protected final double hitboxSize;
-    protected final long creationTime = System.currentTimeMillis();
+    protected final int creationTick = Bukkit.getCurrentTick();
     protected Location location;
     protected boolean impacted;
-    protected long impactTime;
+    protected int impactTick;
     protected Vector velocity = new Vector();
     protected Vector gravity = new Vector(); // Default to a ray projectile
     protected double dragCoefficient = 0;
-    protected final long aliveTime;
+    protected final long aliveTicks;
     protected Location lastLocation;
-    protected long lastTick = System.currentTimeMillis();
-    protected long elapsedMillis;
+    protected int lastTick = Bukkit.getCurrentTick();
+    protected long elapsedTicks;
 
+    /**
+     * @param aliveTime how long the projectile lives, in milliseconds; quantised to ticks on the
+     *                  way in so the callers' seconds-times-1000 idiom keeps working unchanged
+     */
     protected Projectile(@Nullable Player caster, double hitboxSize, final Location location, long aliveTime) {
         this.caster = caster;
         this.hitboxSize = hitboxSize;
         this.location = location.clone();
         this.lastLocation = location;
-        this.aliveTime = aliveTime;
+        this.aliveTicks = UtilTime.millisToTicks(aliveTime);
     }
 
     public boolean isExpired() {
-        return UtilTime.elapsed(creationTime, aliveTime);
+        return UtilTime.ticksElapsed(creationTick, aliveTicks);
     }
 
     protected Location[] interpolateLine() {
@@ -65,9 +70,22 @@ public abstract class Projectile {
                 : VectorLine.withStepSize(lastLocation, location, step).toLocations();
     }
 
+    /**
+     * Advances the projectile by the time since the last call, measured in server ticks.
+     *
+     * <p>Ticks rather than wall clock because {@link #move()} integrates position from this
+     * delta. Measured in milliseconds, how far a projectile travelled depended on how long the
+     * server actually took between two calls, so the same shot fired twice under identical
+     * conditions landed in different places and impacted on different ticks. Every caller drives
+     * this from a default {@code @UpdateEvent}, which is one tick, so the delta was meant to be a
+     * constant 50 ms all along -- the wall clock was measuring jitter, not signal.
+     *
+     * <p>The delta is still measured rather than assumed to be 1, because a caller is free to
+     * tick on a longer period and the integration has to stay proportional to elapsed time.
+     */
     public void tick() {
-        final long time = System.currentTimeMillis();
-        this.elapsedMillis = time - lastTick;
+        final int time = Bukkit.getCurrentTick();
+        this.elapsedTicks = time - (long) lastTick;
         if (!impacted) {
             onTick();
 
@@ -105,7 +123,11 @@ public abstract class Projectile {
 
     protected void move() {
         this.lastLocation = this.location.clone();
-        UtilVelocity.applyGravity(this.location, this.velocity, this.gravity, this.dragCoefficient, elapsedMillis);
+        // Converted back to milliseconds at the boundary rather than changing UtilVelocity's
+        // signature: the integration is genuinely in seconds, and a tick-valued argument to a
+        // parameter named elapsedMillis is the sort of mismatch that compiles and is off by fifty.
+        UtilVelocity.applyGravity(this.location, this.velocity, this.gravity, this.dragCoefficient,
+                elapsedTicks * UtilTime.MILLIS_PER_TICK);
     }
 
     protected CollisionResult onCollide(RayTraceResult result) {
@@ -158,7 +180,7 @@ public abstract class Projectile {
         this.location = location;
         this.lastLocation = location;
         impacted = true;
-        impactTime = System.currentTimeMillis();
+        impactTick = Bukkit.getCurrentTick();
         onImpact(location, result);
     }
 

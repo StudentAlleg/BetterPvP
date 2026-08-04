@@ -25,6 +25,45 @@ class UtilTimeTest {
     }
 
     @Test
+    @DisplayName("toTicks quantises seconds, rounding to nearest and flooring at one")
+    void toTicks() {
+        Assertions.assertEquals(20L, UtilTime.toTicks(1.0));
+        Assertions.assertEquals(12L, UtilTime.toTicks(0.6));
+        Assertions.assertEquals(8L, UtilTime.toTicks(0.4));
+
+        // Rounded to nearest, not up: durations must not systematically lengthen when converted.
+        Assertions.assertEquals(1L, UtilTime.toTicks(0.06));
+        Assertions.assertEquals(2L, UtilTime.toTicks(0.08));
+
+        // Any positive duration still gates for a tick rather than vanishing.
+        Assertions.assertEquals(1L, UtilTime.toTicks(0.001));
+
+        Assertions.assertEquals(0L, UtilTime.toTicks(0));
+        Assertions.assertEquals(0L, UtilTime.toTicks(-5));
+    }
+
+    @Test
+    @DisplayName("millisToTicks quantises milliseconds on the same rules")
+    void millisToTicks() {
+        Assertions.assertEquals(8L, UtilTime.millisToTicks(400L));
+        Assertions.assertEquals(1L, UtilTime.millisToTicks(50L));
+        Assertions.assertEquals(6L, UtilTime.millisToTicks(300L));
+        Assertions.assertEquals(20L, UtilTime.millisToTicks(1000L));
+
+        Assertions.assertEquals(1L, UtilTime.millisToTicks(1L));
+        Assertions.assertEquals(0L, UtilTime.millisToTicks(0L));
+        Assertions.assertEquals(0L, UtilTime.millisToTicks(-100L));
+    }
+
+    @Test
+    @DisplayName("toTicks and millisToTicks agree across the same duration")
+    void tickConversionsAgree() {
+        Assertions.assertEquals(UtilTime.toTicks(0.4), UtilTime.millisToTicks(400L));
+        Assertions.assertEquals(UtilTime.toTicks(3.0), UtilTime.millisToTicks(3000L));
+        Assertions.assertEquals(UtilTime.toTicks(0.6), UtilTime.millisToTicks(600L));
+    }
+
+    @Test
     @DisplayName("Trim Test")
     void trim() {
         Locale defaultLocale = Locale.getDefault();

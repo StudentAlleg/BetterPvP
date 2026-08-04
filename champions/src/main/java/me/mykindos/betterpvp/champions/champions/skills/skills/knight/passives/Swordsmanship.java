@@ -7,6 +7,7 @@ import me.mykindos.betterpvp.champions.Champions;
 import me.mykindos.betterpvp.champions.champions.ChampionsManager;
 import me.mykindos.betterpvp.champions.champions.skills.Skill;
 import me.mykindos.betterpvp.champions.champions.skills.data.SkillWeapons;
+import me.mykindos.betterpvp.champions.champions.skills.types.ChargedPassiveSkill;
 import me.mykindos.betterpvp.champions.champions.skills.types.DamageSkill;
 import me.mykindos.betterpvp.champions.champions.skills.types.OffensiveSkill;
 import me.mykindos.betterpvp.champions.champions.skills.types.PassiveSkill;
@@ -33,7 +34,8 @@ import java.util.WeakHashMap;
 
 @Singleton
 @BPvPListener
-public class Swordsmanship extends Skill implements PassiveSkill, OffensiveSkill, DamageSkill {
+public class Swordsmanship extends Skill implements PassiveSkill, OffensiveSkill, DamageSkill,
+        ChargedPassiveSkill {
 
     private double timeBetweenCharges;
     private double timeBetweenChargesDecreasePerLevel;
@@ -115,6 +117,16 @@ public class Swordsmanship extends Skill implements PassiveSkill, OffensiveSkill
             int charge = charges.get(player);
             event.addModifier(new SkillDamageModifier.Flat(this, getDamage(charge, level)));
             charges.remove(player);
+        }
+    }
+
+    @Override
+    public void fillCharges(Player player) {
+        final int level = getLevel(player);
+        if (level > 0) {
+            // getMaxCharges is the level itself here, unlike Deflection's configured base and
+            // per-level step. Read through the accessor so the two stay in step if that changes.
+            charges.put(player, getMaxCharges(level));
         }
     }
 

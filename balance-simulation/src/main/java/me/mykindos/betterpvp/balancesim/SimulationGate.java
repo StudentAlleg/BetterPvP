@@ -244,12 +244,19 @@ public class SimulationGate {
      * dropping rows at random would leave iterations that cannot be diffed against each other at all,
      * and a truncated prefix at least yields whole duels.
      *
-     * <p>Sized for a targeted run rather than a full sweep. At roughly eight hits per duel a complete
-     * {@code SKILLS} sweep would be some 360,000 rows; the default here stops well short of that, on
-     * the expectation that a divergence hunt is pointed at a narrowed catalog. Raise it deliberately.
+     * <p>Sized from measurement rather than estimate. A complete {@code SKILLS} sweep costs 161,287
+     * rows on {@code ONE_WAY} (run 204); {@code MUTUAL} records the defender's hits too and its duels
+     * run longer, and run 170 hit the old 200,000 ceiling partway through. Truncation is not a
+     * neutral loss here -- it silently drops the tail of the catalog, so the divergence rate a capped
+     * run reports is a floor rather than a measurement, and it is a floor with no marker in the data
+     * saying which builds went unmeasured.
+     *
+     * <p>The default is therefore an order of magnitude above the largest sweep rather than close to
+     * it. The rows are narrow and the writes are batched off-thread, so the cost of the headroom is
+     * disk; the cost of running out of it is a re-run and a wrong number in between.
      */
     @Inject
-    @Config(path = "champions.simulation.hitTraceMaxRows", defaultValue = "200000")
+    @Config(path = "champions.simulation.hitTraceMaxRows", defaultValue = "2000000")
     private int hitTraceMaxRows;
 
     /**

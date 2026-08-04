@@ -19,14 +19,16 @@ import me.mykindos.betterpvp.core.components.champions.SkillType;
 import me.mykindos.betterpvp.core.effects.EffectTypes;
 import me.mykindos.betterpvp.core.framework.updater.UpdateEvent;
 import me.mykindos.betterpvp.core.listener.BPvPListener;
+import me.mykindos.betterpvp.core.locale.Translations;
 import me.mykindos.betterpvp.core.utilities.UtilBlock;
 import me.mykindos.betterpvp.core.utilities.UtilDamage;
 import me.mykindos.betterpvp.core.utilities.UtilEntity;
-import me.mykindos.betterpvp.core.utilities.UtilFormat;
 import me.mykindos.betterpvp.core.utilities.UtilMath;
 import me.mykindos.betterpvp.core.utilities.UtilVelocity;
 import me.mykindos.betterpvp.core.utilities.math.VelocityData;
 import me.mykindos.betterpvp.core.utilities.model.SoundEffect;
+import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.format.NamedTextColor;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.Particle;
@@ -45,9 +47,6 @@ import org.joml.Vector3f;
 
 import java.util.ArrayList;
 import java.util.WeakHashMap;
-import net.kyori.adventure.text.Component;
-import net.kyori.adventure.text.format.NamedTextColor;
-import me.mykindos.betterpvp.core.locale.Translations;
 
 @Singleton
 @BPvPListener
@@ -151,6 +150,13 @@ public class Rupture extends Skill implements Listener, InteractSkill, CooldownS
                 }
 
                 loc.add(vector);
+
+                // Hit detection tracks the unscattered path. The per-display jitter below is
+                // cosmetic, and testing against it made whether Rupture connected a dice roll.
+                // This is the zero-jitter centre of the old test: the Y offsets average to
+                // (0.3 + 0.8) / 2 - 0.75 = -0.2, and the display spawns a block above that.
+                final Location hitLoc = loc.clone().add(0.0D, 0.8D, 0.0D);
+
                 for (int i = 0; i < 3; i++) {
                     Location tempLoc = new Location(player.getWorld(), loc.getX() + UtilMath.randDouble(-1.5D, 1.5D), loc.getY() + UtilMath.randDouble(0.3D, 0.8D) - 0.75,
                             loc.getZ() + UtilMath.randDouble(-1.5D, 1.5D));
@@ -184,7 +190,7 @@ public class Rupture extends Skill implements Listener, InteractSkill, CooldownS
 
                     displays.put(display, System.currentTimeMillis() + 4000);
 
-                    for (LivingEntity ent : UtilEntity.getNearbyEnemies(player, display.getLocation(), 1)) {
+                    for (LivingEntity ent : UtilEntity.getNearbyEnemies(player, hitLoc, 1)) {
 
                         if (!cooldownJump.get(player).contains(ent)) {
                             VelocityData velocityData = new VelocityData(vector.clone(), 0.6, false, 0.0, 0.8, 2.0, false);

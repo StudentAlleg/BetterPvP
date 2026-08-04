@@ -22,7 +22,6 @@ import me.mykindos.betterpvp.core.locale.Translations;
 import me.mykindos.betterpvp.core.utilities.UtilBlock;
 import me.mykindos.betterpvp.core.utilities.UtilDamage;
 import me.mykindos.betterpvp.core.utilities.UtilEntity;
-import me.mykindos.betterpvp.core.utilities.UtilFormat;
 import me.mykindos.betterpvp.core.utilities.UtilMath;
 import me.mykindos.betterpvp.core.utilities.UtilMessage;
 import me.mykindos.betterpvp.core.utilities.UtilVelocity;
@@ -107,7 +106,12 @@ public class Grasp extends Skill implements InteractSkill, CooldownSkill, Listen
     }
 
 
-    private void createArmourStand(Player player, Location loc, int level) {
+    /**
+     * Spawns a decorative skull. Purely cosmetic -- callers scatter {@code loc} randomly, so
+     * nothing that affects the outcome of the fight may be decided from it. Damage is dealt
+     * separately by {@link #damageNearby(Player, Location, int)} against the unscattered path.
+     */
+    private void createArmourStand(Location loc) {
         CustomArmourStand as = new CustomArmourStand(((CraftWorld) loc.getWorld()).getHandle());
         ArmorStand test = (ArmorStand) as.spawn(loc);
         test.setVisible(false);
@@ -119,7 +123,9 @@ public class Grasp extends Skill implements InteractSkill, CooldownSkill, Listen
         test.setHeadPose(new EulerAngle(UtilMath.randomInt(360), UtilMath.randomInt(360), UtilMath.randomInt(360)));
 
         stands.put(test, System.currentTimeMillis() + 200);
+    }
 
+    private void damageNearby(Player player, Location loc, int level) {
         for (LivingEntity target : UtilEntity.getNearbyEnemies(player, loc, 1)) {
             if (target.getLocation().distance(player.getLocation()) < 3) continue;
             Location targetLocation = player.getLocation();
@@ -209,9 +215,16 @@ public class Grasp extends Skill implements InteractSkill, CooldownSkill, Listen
                         Location tempLoc = new Location(player.getWorld(), loc.getX() + UtilMath.randDouble(-2D, 2.0D), loc.getY() + UtilMath.randDouble(0.0D, 0.5D) - 0.50,
                                 loc.getZ() + UtilMath.randDouble(-2.0D, 2.0D));
 
-                        createArmourStand(player, tempLoc.clone(), level);
-                        createArmourStand(player, tempLoc.clone().add(0, 1, 0), level);
-                        createArmourStand(player, tempLoc.clone().add(0, 2, 0), level);
+                        createArmourStand(tempLoc.clone());
+                        createArmourStand(tempLoc.clone().add(0, 1, 0));
+                        createArmourStand(tempLoc.clone().add(0, 2, 0));
+
+                        // Damage tracks the unscattered path, at the heights the skulls average out
+                        // to (the Y jitter above is uniform over [0, 0.5) less 0.50, so -0.25).
+                        final Location hitLoc = loc.clone().add(0.0D, -0.25D, 0.0D);
+                        damageNearby(player, hitLoc, level);
+                        damageNearby(player, hitLoc.clone().add(0, 1, 0), level);
+                        damageNearby(player, hitLoc.clone().add(0, 2, 0), level);
 
                         if (i % 2 == 0) {
                             player.getWorld().playSound(tempLoc, Sound.ENTITY_VEX_DEATH, 0.3f, 0.3f);

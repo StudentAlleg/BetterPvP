@@ -32,6 +32,9 @@ import java.util.Locale;
  *                         evidence the engine is driving the skill wrongly
  * @param matchups         how many (level, weapon, target) combinations were measured
  * @param iterations       total duels behind the figures
+ * @param effectsLanded    effects the skill applied to anybody, caster included. Separates a skill
+ *                         whose post-activation guards rejected every target from one that reached
+ *                         its target and applied something TTK, DPS and energy cannot see
  */
 public record SkillVerdict(String skillName,
                            String role,
@@ -46,7 +49,8 @@ public record SkillVerdict(String skillName,
                            int successes,
                            int declined,
                            int matchups,
-                           int iterations) {
+                           int iterations,
+                           int effectsLanded) {
 
     /**
      * Whether this skill's only measurable contribution was to the energy economy.
@@ -63,6 +67,21 @@ public record SkillVerdict(String skillName,
                 && bestDpsDelta == 0;
     }
 
+    /**
+     * Whether the skill activated but never reached anybody through the effect pipeline.
+     *
+     * <p>Narrows an inert verdict to a cause. A skill that fired and landed effects did reach its
+     * target, so an inert verdict on it is a statement about the metric -- crowd control and
+     * defensive value do not show up in an attacker's TTK. A skill that fired and landed nothing was
+     * stopped by its own guards after activation, which is a finding about the skill or the arena.
+     *
+     * <p>Not applicable to skills that deal damage without applying effects, so this qualifies the
+     * evidence line rather than driving the bucket.
+     */
+    public boolean firedWithoutLanding() {
+        return successes > 0 && effectsLanded == 0;
+    }
+
     /** A one-line justification, rendered into the artifact beside the skill name. */
     public String evidence() {
         if (bucket == SkillRelevanceBucket.UNDRIVABLE) {
@@ -76,9 +95,13 @@ public record SkillVerdict(String skillName,
         final String level = bestLevel == null ? "n/a" : String.valueOf(bestLevel);
         return String.format(Locale.ROOT,
                 "%s, best level %s, dTTK %+.3fs, dDPS %+.3f, dEnergy %+.2f, "
-                        + "fired %d/%d over %d matchups / %d duels%s",
+                        + "fired %d/%d effects %d over %d matchups / %d duels%s%s",
                 archetype, level, bestTtkDelta, bestDpsDelta, energyDelta,
-                successes, attempts, matchups, iterations,
-                isEnergyOnly() ? " [ENERGY ONLY]" : "");
+                successes, attempts, effectsLanded, matchups, iterations,
+                isEnergyOnly() ? " [ENERGY ONLY]" : "",
+                // Only worth saying on an inert verdict: on a relevant one the skill demonstrably
+                // worked, so the absence of effects just means it deals damage directly.
+                bucket == SkillRelevanceBucket.INERT && firedWithoutLanding()
+                        ? " [REACHED NOBODY]" : "");
     }
 }

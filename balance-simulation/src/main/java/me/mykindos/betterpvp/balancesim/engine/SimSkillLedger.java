@@ -45,6 +45,23 @@ public final class SimSkillLedger {
         }
     }
 
+    /**
+     * Notes that {@code skillName}, cast by {@code applier}, landed an effect on somebody.
+     *
+     * <p>The missing half of "fired but inert". {@link #outcome} records that the chain let a use
+     * through, which is only a statement about the caster -- it says nothing about whether anything
+     * reached the other combatant. A skill can succeed 240/240 and still be gated out by its own
+     * range, facing, charge or line-of-sight checks after activation, and the two cases are
+     * indistinguishable in the audit today: both read {@code fired 240/240, dDPS +0.000}.
+     *
+     * <p>They call for opposite responses. Landed nothing is a finding about the skill or the arena;
+     * landed something the metric could not see is a finding about the metric, and a crowd-control or
+     * defensive skill belongs in the second group permanently.
+     */
+    public void effectLanded(UUID applier, String skillName) {
+        counters(applier, skillName).effectsLanded.incrementAndGet();
+    }
+
     /** An immutable snapshot of one combatant's per-skill counts, keyed by skill name. */
     public Map<String, SkillActivation> snapshot(UUID combatant) {
         final Map<String, Counters> skills = byCombatant.get(combatant);
@@ -75,16 +92,28 @@ public final class SimSkillLedger {
      * @param cooldownRefusals uses refused because the cooldown was still running
      * @param energyRefusals   uses refused for want of energy
      * @param declined         uses cancelled for any other reason
+     * @param effectsLanded    effects this skill applied to anybody, the caster included
      */
     public record SkillActivation(int attempts,
                                   int successes,
                                   int cooldownRefusals,
                                   int energyRefusals,
-                                  int declined) {
+                                  int declined,
+                                  int effectsLanded) {
 
         /** Whether the chain ever let this skill through. The inert/undrivable split turns on this. */
         public boolean everFired() {
             return successes > 0;
+        }
+
+        /**
+         * Whether the skill fired but never reached anybody through the effect pipeline.
+         *
+         * <p>Only meaningful for skills that apply effects at all; a purely damaging skill lands no
+         * effects by design, so this is evidence to weigh with the archetype rather than a verdict.
+         */
+        public boolean firedWithoutLanding() {
+            return successes > 0 && effectsLanded == 0;
         }
 
         public SkillActivation plus(SkillActivation other) {
@@ -92,7 +121,8 @@ public final class SimSkillLedger {
                     successes + other.successes,
                     cooldownRefusals + other.cooldownRefusals,
                     energyRefusals + other.energyRefusals,
-                    declined + other.declined);
+                    declined + other.declined,
+                    effectsLanded + other.effectsLanded);
         }
     }
 
@@ -103,13 +133,15 @@ public final class SimSkillLedger {
         private final AtomicInteger cooldownRefusals = new AtomicInteger();
         private final AtomicInteger energyRefusals = new AtomicInteger();
         private final AtomicInteger declined = new AtomicInteger();
+        private final AtomicInteger effectsLanded = new AtomicInteger();
 
         private SkillActivation snapshot() {
             return new SkillActivation(attempts.get(),
                     successes.get(),
                     cooldownRefusals.get(),
                     energyRefusals.get(),
-                    declined.get());
+                    declined.get(),
+                    effectsLanded.get());
         }
     }
 }

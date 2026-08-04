@@ -320,6 +320,7 @@ public class SimResultRepository {
                 record.setIteration(row.iteration());
                 record.setArenaIndex(row.arenaIndex());
                 record.setTick(row.tick());
+                record.setAnchorTick(row.anchorTick());
                 record.setSeq(row.seq());
                 record.setTMs(row.tMs());
                 record.setActor(row.actor());

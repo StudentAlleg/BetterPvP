@@ -52,7 +52,7 @@ public abstract class ReturningLinkProjectile extends Projectile {
 
     protected final Display lead;
     private final LinkedHashMap<Display, Double> links = new LinkedHashMap<>();
-    private final long pullTime;
+    private final long pullTicks;
     private final double pullSpeed;
     private final double meetDistance;
 
@@ -85,7 +85,7 @@ public abstract class ReturningLinkProjectile extends Projectile {
     protected ReturningLinkProjectile(Player caster, double hitboxSize, Location location, long aliveTime,
                                       long pullTime, double pullSpeed, PullMode pullMode, double meetDistance) {
         super(caster, hitboxSize, location, aliveTime);
-        this.pullTime = pullTime;
+        this.pullTicks = UtilTime.millisToTicks(pullTime);
         this.pullSpeed = pullSpeed;
         this.pullMode = pullMode;
         this.meetDistance = meetDistance;
@@ -98,7 +98,9 @@ public abstract class ReturningLinkProjectile extends Projectile {
 
     @Override
     public boolean isExpired() {
-        return UtilTime.elapsed(creationTime, impacted ? pullTime + aliveTime : aliveTime);
+        // Still measured from creation rather than impact, preserving the existing behaviour that
+        // an early impact leaves a longer pull phase than a late one.
+        return UtilTime.ticksElapsed(creationTick, impacted ? pullTicks + aliveTicks : aliveTicks);
     }
 
     protected abstract Display item();

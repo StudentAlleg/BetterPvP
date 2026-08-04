@@ -11,6 +11,7 @@ import me.mykindos.betterpvp.champions.champions.skills.ChampionsSkillManager;
 import me.mykindos.betterpvp.champions.champions.skills.Skill;
 import me.mykindos.betterpvp.champions.champions.skills.types.ActiveToggleSkill;
 import me.mykindos.betterpvp.champions.champions.skills.types.ChannelSkill;
+import me.mykindos.betterpvp.champions.champions.skills.types.ChargedPassiveSkill;
 import me.mykindos.betterpvp.core.client.Client;
 import me.mykindos.betterpvp.core.components.champions.Role;
 import me.mykindos.betterpvp.core.item.armor.ArmorEquipEvent;
@@ -200,6 +201,35 @@ public class SimCombatant {
 
         this.measuredSkills = readBackEffectiveLevels(context);
         this.drivenSkills = resolveDrivenSkills(context);
+        primeChargedPassives();
+    }
+
+    /**
+     * Banks every {@link ChargedPassiveSkill} in the build before the first swing.
+     *
+     * <p>These passives accrue charges only while {@code Gamer.hasBeenOutOfCombatFor} holds, and a
+     * duel here is one unbroken engagement from the first tick. So their charges seeded at zero and
+     * stayed there: {@code Deflection} spent a zero-charge modifier on every hit it saw, and
+     * {@code Swordsmanship} the same, which is why both measured as doing exactly nothing while
+     * being perfectly functional skills.
+     *
+     * <p>Priming them is a statement about the starting conditions, not a change to the mechanic. A
+     * real knight walks into a fight already banked, having not been hit for the preceding seconds;
+     * what the sweep should measure is what the charges are worth when spent, and it cannot measure
+     * that from a state the mechanic never intends its holder to be in. The accrual rule itself is
+     * untouched -- once the duel starts, combat suppresses further charging exactly as it does live.
+     *
+     * <p>Runs after {@link #resolveDrivenSkills} so the build's levels are readable; each skill reads
+     * its own level and does nothing for a player who does not hold it. Called from {@link #spawn},
+     * which runs once per duel rather than once per pooled resident, so a recycled combatant is
+     * re-banked for each fight instead of carrying a spent state into the next one.
+     */
+    private void primeChargedPassives() {
+        for (DrivenSkill driven : drivenSkills) {
+            if (driven.getSkill() instanceof ChargedPassiveSkill charged) {
+                charged.fillCharges(player);
+            }
+        }
     }
 
     /**

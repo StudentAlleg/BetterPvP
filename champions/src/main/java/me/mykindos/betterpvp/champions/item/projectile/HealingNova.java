@@ -63,7 +63,7 @@ public class HealingNova extends Projectile {
             return;
         }
 
-        if (UtilTime.elapsed(impactTime, (long) ((expandSeconds + aliveSeconds) * 1000L))) {
+        if (UtilTime.ticksElapsed(impactTick, UtilTime.toTicks(expandSeconds + aliveSeconds))) {
             markForRemoval = true;
             new SoundEffect(Sound.BLOCK_BEACON_DEACTIVATE, 0f, 1f).play(location);
         } else {

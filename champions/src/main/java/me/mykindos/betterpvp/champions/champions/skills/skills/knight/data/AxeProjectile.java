@@ -8,9 +8,11 @@ import me.mykindos.betterpvp.core.combat.events.DamageEvent;
 import me.mykindos.betterpvp.core.combat.events.EntityCanHurtEntityEvent;
 import me.mykindos.betterpvp.core.utilities.UtilDamage;
 import me.mykindos.betterpvp.core.utilities.UtilMessage;
+import me.mykindos.betterpvp.core.utilities.UtilTime;
+import me.mykindos.betterpvp.core.utilities.model.projectile.Projectile;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
-import me.mykindos.betterpvp.core.utilities.model.projectile.Projectile;
+import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.Particle;
 import org.bukkit.Sound;
@@ -97,8 +99,8 @@ public class AxeProjectile extends Projectile {
         display.teleport(location.clone().setDirection(display.getLocation().getDirection()));
 
         Transformation transformation = display.getTransformation();
-        final float elapsedTotal = System.currentTimeMillis() - creationTime;
-        float pitch = (float) ((elapsedTotal / 1000) / 10f * (-360.0 * 5));
+        final float elapsedSeconds = (float) (Bukkit.getCurrentTick() - creationTick) / UtilTime.TICKS_PER_SECOND;
+        float pitch = (float) (elapsedSeconds / 10f * (-360.0 * 5));
         Vector3f axis = new Vector3f(0, 0, 1);
         AxisAngle4f pitchRotation = new AxisAngle4f((float) Math.toRadians(pitch), axis);
         transformation.getLeftRotation().set(pitchRotation);

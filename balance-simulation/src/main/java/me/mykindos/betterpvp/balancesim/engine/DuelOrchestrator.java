@@ -1195,6 +1195,10 @@ public class DuelOrchestrator {
                 final int anchor = attackerHits.isEmpty()
                         ? all.get(0).elapsedTicks()
                         : attackerHits.get(0).elapsedTicks();
+                // Absolute, not relative: the phase of the server's periodic machinery is what the
+                // relative axis normalises away, and it is the leading suspect for the divergence
+                // that outlived the Tormented Soil fix.
+                final int anchorTick = duel.recording.getStartTick() + anchor;
                 final UUID attackerId = duel.attacker.getUuid();
                 int seq = 0;
                 int lastTick = Integer.MIN_VALUE;
@@ -1211,6 +1215,7 @@ public class DuelOrchestrator {
                             duel.matchup.measurement().samplesRecorded(),
                             duel.slot.getArena().index(),
                             tick,
+                            anchorTick,
                             seq,
                             attackerId.equals(hit.damager()) ? SimTraceRow.ATTACKER : SimTraceRow.DEFENDER,
                             SimTraceRow.HIT,

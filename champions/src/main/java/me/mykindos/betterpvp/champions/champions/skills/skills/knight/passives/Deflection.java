@@ -5,6 +5,7 @@ import com.google.inject.Singleton;
 import me.mykindos.betterpvp.champions.Champions;
 import me.mykindos.betterpvp.champions.champions.ChampionsManager;
 import me.mykindos.betterpvp.champions.champions.skills.Skill;
+import me.mykindos.betterpvp.champions.champions.skills.types.ChargedPassiveSkill;
 import me.mykindos.betterpvp.champions.champions.skills.types.DefensiveSkill;
 import me.mykindos.betterpvp.champions.champions.skills.types.PassiveSkill;
 import me.mykindos.betterpvp.champions.combat.damage.SkillDamageModifier;
@@ -30,7 +31,7 @@ import java.util.UUID;
 
 @Singleton
 @BPvPListener
-public class Deflection extends Skill implements PassiveSkill, DefensiveSkill {
+public class Deflection extends Skill implements PassiveSkill, DefensiveSkill, ChargedPassiveSkill {
 
 
     private double timeBetweenCharges;
@@ -111,6 +112,14 @@ public class Deflection extends Skill implements PassiveSkill, DefensiveSkill {
             int charge = charges.remove(player.getUniqueId());
             event.addModifier(new SkillDamageModifier.Flat(this, -charge));;
 
+        }
+    }
+
+    @Override
+    public void fillCharges(Player player) {
+        final int level = getLevel(player);
+        if (level > 0) {
+            charges.put(player.getUniqueId(), getMaxCharges(level));
         }
     }
 

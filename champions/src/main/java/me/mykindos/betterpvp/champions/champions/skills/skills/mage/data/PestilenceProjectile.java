@@ -7,6 +7,7 @@ import me.mykindos.betterpvp.core.utilities.UtilEntity;
 import me.mykindos.betterpvp.core.utilities.UtilTime;
 import me.mykindos.betterpvp.core.utilities.model.SoundEffect;
 import me.mykindos.betterpvp.core.utilities.model.projectile.Projectile;
+import org.bukkit.Bukkit;
 import org.bukkit.Color;
 import org.bukkit.Location;
 import org.bukkit.Particle;
@@ -33,11 +34,11 @@ public class PestilenceProjectile extends Projectile {
     private final double radius;
     private final double poisonDuration;
     private final int poisonLevel;
-    private long lastTargetTime;
+    private int lastTargetTick;
 
     public PestilenceProjectile(@Nullable Player caster, double hitboxSize, Location location, long aliveTime, EffectManager effectManager, double radius, double poisonDuration, int poisonLevel) {
         super(caster, hitboxSize, location, aliveTime);
-        this.lastTargetTime = getCreationTime();
+        this.lastTargetTick = getCreationTick();
         this.effectManager = effectManager;
         this.radius = radius;
         this.poisonDuration = poisonDuration;
@@ -46,7 +47,9 @@ public class PestilenceProjectile extends Projectile {
 
     @Override
     public boolean isExpired() {
-        return UtilTime.elapsed(lastTargetTime, aliveTime);
+        // Slides forward on every acquired target, so the projectile lives as long as it keeps
+        // finding something -- deliberately not measured from creation.
+        return UtilTime.ticksElapsed(lastTargetTick, aliveTicks);
     }
 
     @Override
@@ -133,7 +136,7 @@ public class PestilenceProjectile extends Projectile {
             final Location targetLoc = target.getLocation().add(0, target.getHeight() / 2, 0);
             final Vector direction = targetLoc.toVector().subtract(location.toVector());
             redirect(direction); // this normalizes it, don't do it twice for performance
-            lastTargetTime = System.currentTimeMillis();
+            lastTargetTick = Bukkit.getCurrentTick();
         } else {
             this.markForRemoval = true;
         }

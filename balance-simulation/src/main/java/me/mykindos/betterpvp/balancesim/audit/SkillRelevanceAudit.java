@@ -144,6 +144,7 @@ public final class SkillRelevanceAudit {
         int attempts = 0;
         int successes = 0;
         int declined = 0;
+        int effectsLanded = 0;
         int iterations = 0;
         int compared = 0;
         double bestTtkDelta = 0;
@@ -159,6 +160,7 @@ public final class SkillRelevanceAudit {
                 attempts += activation.attempts();
                 successes += activation.successes();
                 declined += activation.declined();
+                effectsLanded += activation.effectsLanded();
             }
             iterations += observation.aggregate().iterations();
 
@@ -206,7 +208,8 @@ public final class SkillRelevanceAudit {
                 successes,
                 declined,
                 compared,
-                iterations);
+                iterations,
+                effectsLanded);
     }
 
     /**

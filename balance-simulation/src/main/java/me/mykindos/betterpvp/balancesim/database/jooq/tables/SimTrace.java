@@ -130,6 +130,11 @@ public class SimTrace extends TableImpl<SimTraceRecord> {
      */
     public final TableField<SimTraceRecord, BigDecimal> RAW_AMOUNT = createField(DSL.name("raw_amount"), SQLDataType.NUMERIC(10, 3), this, "");
 
+    /**
+     * The column <code>public.sim_trace.anchor_tick</code>.
+     */
+    public final TableField<SimTraceRecord, Integer> ANCHOR_TICK = createField(DSL.name("anchor_tick"), SQLDataType.INTEGER.nullable(false), this, "");
+
     private SimTrace(Name alias, Table<SimTraceRecord> aliased) {
         this(alias, aliased, (Field<?>[]) null, null);
     }

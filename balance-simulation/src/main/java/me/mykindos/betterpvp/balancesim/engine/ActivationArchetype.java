@@ -5,6 +5,7 @@ import me.mykindos.betterpvp.champions.champions.skills.Skill;
 import me.mykindos.betterpvp.champions.champions.skills.types.BowChargeSkill;
 import me.mykindos.betterpvp.champions.champions.skills.types.ChannelSkill;
 import me.mykindos.betterpvp.champions.champions.skills.types.ChargeSkill;
+import me.mykindos.betterpvp.champions.champions.skills.types.InteractEntitySkill;
 import me.mykindos.betterpvp.champions.champions.skills.types.InteractSkill;
 import me.mykindos.betterpvp.champions.champions.skills.types.PrepareArrowSkill;
 import me.mykindos.betterpvp.champions.champions.skills.types.PrepareSkill;
@@ -34,6 +35,21 @@ public enum ActivationArchetype {
 
     /** {@code InteractSkill}: a single right-click. */
     INTERACT(true),
+
+    /**
+     * {@code InteractEntitySkill}: a single right-click <em>on the opponent</em>.
+     *
+     * <p>A different event from {@link #INTERACT}, not a variation on it. These skills handle
+     * {@code PlayerInteractEntityEvent} themselves and read the target off the click, so the air
+     * right-click {@link #INTERACT} synthesises reaches them with a null entity and lands on their
+     * failure branch -- a message, a sound, and no effect.
+     *
+     * <p>Before this existed they implemented no activation interface at all and so classified as
+     * {@link #PASSIVE}, which is documented as needing no input. The audit then reported them as
+     * passives that fired 0 times and were therefore inert. Nothing had pressed the only button they
+     * answer to.
+     */
+    INTERACT_ENTITY(true),
 
     /**
      * {@code PrepareSkill}: right-click arms the skill, the next landed melee hit resolves it.
@@ -117,6 +133,12 @@ public enum ActivationArchetype {
         }
         if (skill instanceof InteractSkill) {
             return INTERACT;
+        }
+        // After INTERACT rather than before: nothing implements both today, and if something ever
+        // does it will be a skill whose air right-click is resolved by SkillListener, with the entity
+        // click as a second path. The listener-resolved one is the input to synthesise.
+        if (skill instanceof InteractEntitySkill) {
+            return INTERACT_ENTITY;
         }
         return PASSIVE;
     }

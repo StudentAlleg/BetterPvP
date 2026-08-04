@@ -7,6 +7,7 @@ import me.mykindos.betterpvp.core.utilities.UtilTime;
 import me.mykindos.betterpvp.core.utilities.model.SoundEffect;
 import me.mykindos.betterpvp.core.utilities.model.projectile.Projectile;
 import me.mykindos.betterpvp.progression.profession.mining.item.interaction.ExplosiveExcavationInteraction;
+import org.bukkit.Bukkit;
 import org.bukkit.Color;
 import org.bukkit.Location;
 import org.bukkit.Material;
@@ -40,8 +41,8 @@ public class RiftPickaxeProjectile extends Projectile {
     );
 
     private boolean recalled = false;
-    private long recallTime = 0;
-    private long lastExplosionTime;
+    private int recallTick = 0;
+    private int lastExplosionTick;
     private int bounces = 0;
 
     private final int explosionRadius;
@@ -71,7 +72,7 @@ public class RiftPickaxeProjectile extends Projectile {
         this.oreChance = oreChance;
         this.maxBounces = maxBounces;
         this.oreSupplier = oreSupplier;
-        this.lastExplosionTime = creationTime;
+        this.lastExplosionTick = creationTick;
 
         this.itemDisplay = location.getWorld().spawn(location, ItemDisplay.class, spawned -> {
             spawned.setItemStack(displayItem);
@@ -84,13 +85,15 @@ public class RiftPickaxeProjectile extends Projectile {
 
     @Override
     public boolean isExpired() {
-        return recalled ? UtilTime.elapsed(recallTime, 10_000L) : super.isExpired();
+        return recalled
+                ? UtilTime.ticksElapsed(recallTick, UtilTime.millisToTicks(10_000L))
+                : super.isExpired();
     }
 
     public void recall() {
         if (recalled) return;
         recalled = true;
-        recallTime = System.currentTimeMillis();
+        recallTick = Bukkit.getCurrentTick();
         new SoundEffect(Sound.BLOCK_BEACON_ACTIVATE, 2.0f, 0.8f).play(getLocation());
     }
 
@@ -119,10 +122,11 @@ public class RiftPickaxeProjectile extends Projectile {
         }
 
         // Fire explosion at interval
-        long now = System.currentTimeMillis();
-        if (now - lastExplosionTime >= explosionIntervalMillis && UtilBlock.isUnderground(location)) {
+        int now = Bukkit.getCurrentTick();
+        if (now - (long) lastExplosionTick >= UtilTime.millisToTicks(explosionIntervalMillis)
+                && UtilBlock.isUnderground(location)) {
             explosiveExcavation.detonate(caster, location, explosionRadius, oreChance, oreSupplier);
-            lastExplosionTime = now;
+            lastExplosionTick = now;
         }
 
         if (!recalled) {

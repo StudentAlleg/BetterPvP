@@ -229,6 +229,21 @@ public class SimTraceRecord extends UpdatableRecordImpl<SimTraceRecord> {
         return (BigDecimal) get(13);
     }
 
+    /**
+     * Setter for <code>public.sim_trace.anchor_tick</code>.
+     */
+    public SimTraceRecord setAnchorTick(Integer value) {
+        set(14, value);
+        return this;
+    }
+
+    /**
+     * Getter for <code>public.sim_trace.anchor_tick</code>.
+     */
+    public Integer getAnchorTick() {
+        return (Integer) get(14);
+    }
+
     // -------------------------------------------------------------------------
     // Primary key information
     // -------------------------------------------------------------------------
@@ -252,7 +267,7 @@ public class SimTraceRecord extends UpdatableRecordImpl<SimTraceRecord> {
     /**
      * Create a detached, initialised SimTraceRecord
      */
-    public SimTraceRecord(Long id, Long runId, Long buildId, Long tMs, String event, BigDecimal amount, String targetRole, String targetArmor, Integer iteration, Integer arenaIndex, Integer tick, Integer seq, String actor, BigDecimal rawAmount) {
+    public SimTraceRecord(Long id, Long runId, Long buildId, Long tMs, String event, BigDecimal amount, String targetRole, String targetArmor, Integer iteration, Integer arenaIndex, Integer tick, Integer seq, String actor, BigDecimal rawAmount, Integer anchorTick) {
         super(SimTrace.SIM_TRACE);
 
         setId(id);
@@ -269,6 +284,7 @@ public class SimTraceRecord extends UpdatableRecordImpl<SimTraceRecord> {
         setSeq(seq);
         setActor(actor);
         setRawAmount(rawAmount);
+        setAnchorTick(anchorTick);
         resetChangedOnNotNull();
     }
 }

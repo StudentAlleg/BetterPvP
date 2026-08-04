@@ -11,6 +11,8 @@ import me.mykindos.betterpvp.core.Core;
 import me.mykindos.betterpvp.core.combat.events.DamageEvent;
 import me.mykindos.betterpvp.core.components.champions.events.PlayerUseSkillEvent;
 import me.mykindos.betterpvp.core.cooldowns.CooldownManager;
+import me.mykindos.betterpvp.core.effects.Effect;
+import me.mykindos.betterpvp.core.effects.events.EffectReceiveEvent;
 import me.mykindos.betterpvp.core.energy.EnergyService;
 import me.mykindos.betterpvp.core.energy.events.DegenerateEnergyEvent;
 import me.mykindos.betterpvp.core.energy.events.EnergyEvent;
@@ -26,6 +28,7 @@ import org.bukkit.event.Listener;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.jetbrains.annotations.Nullable;
 
+import java.lang.ref.WeakReference;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -100,6 +103,56 @@ public class SimRecorder implements Listener {
         final Recording recording = active.get(combatant);
         if (recording != null) {
             recording.skills.attempted(combatant, skillName);
+        }
+    }
+
+    /**
+     * Attributes an effect that just landed back to the skill that applied it.
+     *
+     * <p>The missing half of "fired but inert". {@link #noteActivationOutcome} records that the chain
+     * let a use through, which is a statement about the caster alone -- it says nothing about whether
+     * anything reached the other combatant. A skill can succeed on every attempt and still have its
+     * own post-activation guards (range, facing, charge count, line of sight, target filters) reject
+     * every target, and the audit cannot currently tell that apart from a skill that landed perfectly
+     * and applied something TTK, DPS and energy are structurally unable to see. Both read
+     * {@code fired 240/240, dDPS +0.000}, and they call for opposite responses: the first is a finding
+     * about the skill or the arena, the second a finding about the metric.
+     *
+     * <p>Needs no cooperation from {@code champions}. {@link Effect} already carries both halves --
+     * {@code applier} is the caster and {@code name} is the skill's own name, the same
+     * {@code Skill#getName()} string activations are keyed by -- so the join happens here rather than
+     * through simulation code in a skill.
+     *
+     * <p>Effects a skill puts on its own caster count. Several of the skills under investigation are
+     * self-buffs, and the question is whether the skill reached <em>anybody</em>; narrowing to enemies
+     * would re-hide the case where a buff works and an offensive metric cannot see it.
+     */
+    private void noteEffectLanded(UUID applier, String skillName) {
+        final Recording recording = active.get(applier);
+        if (recording != null) {
+            recording.skills.effectLanded(applier, skillName);
+        }
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onEffectReceive(EffectReceiveEvent event) {
+        final Effect effect = event.getEffect();
+        if (effect == null) {
+            return;
+        }
+
+        // Held weakly, so absence is legitimate: an effect can outlive its caster, and some are
+        // applied by the server itself. Unattributable rather than uninteresting -- but there is no
+        // skill to credit.
+        final WeakReference<LivingEntity> applierRef = effect.getApplier();
+        final LivingEntity applier = applierRef == null ? null : applierRef.get();
+        if (applier == null) {
+            return;
+        }
+
+        final String skillName = effect.getName();
+        if (skillName != null && !skillName.isBlank()) {
+            noteEffectLanded(applier.getUniqueId(), skillName);
         }
     }
 

@@ -54,7 +54,9 @@ public class NectarOfDecayProjectile extends Projectile {
 
     @Override
     public boolean isExpired() {
-        return impacted ? UtilTime.elapsed(impactTime, cloudDuration) : super.isExpired();
+        return impacted
+                ? UtilTime.ticksElapsed(impactTick, UtilTime.millisToTicks(cloudDuration))
+                : super.isExpired();
     }
 
     @Override

@@ -59,7 +59,7 @@ public class BlackHole extends Projectile {
             return;
         }
 
-        if (UtilTime.elapsed(impactTime, (long) ((expandSeconds + aliveSeconds) * 1000L))) {
+        if (UtilTime.ticksElapsed(impactTick, UtilTime.toTicks(expandSeconds + aliveSeconds))) {
             // Expire if it's been alive for too long
             markForRemoval = true;
             new SoundEffect(Sound.BLOCK_CONDUIT_DEACTIVATE, 0f, 1f).play(location);

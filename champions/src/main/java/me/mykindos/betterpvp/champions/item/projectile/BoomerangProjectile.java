@@ -13,6 +13,7 @@ import me.mykindos.betterpvp.core.utilities.UtilVelocity;
 import me.mykindos.betterpvp.core.utilities.math.VelocityData;
 import me.mykindos.betterpvp.core.utilities.model.SoundEffect;
 import me.mykindos.betterpvp.core.utilities.model.projectile.Projectile;
+import org.bukkit.Bukkit;
 import org.bukkit.Color;
 import org.bukkit.Location;
 import org.bukkit.Particle;
@@ -38,7 +39,7 @@ public class BoomerangProjectile extends Projectile {
     private final double impactVelocity;
     private final ItemDisplay itemDisplay;
     private final Interaction ability;
-    private long recallTime = 0;
+    private int recallTick = 0;
 
     public BoomerangProjectile(
             String name,
@@ -70,7 +71,7 @@ public class BoomerangProjectile extends Projectile {
 
     @Override
     public boolean isExpired() {
-        return recalled ? UtilTime.elapsed(recallTime, aliveTime) : super.isExpired();
+        return recalled ? UtilTime.ticksElapsed(recallTick, aliveTicks) : super.isExpired();
     }
 
     public void recall() {
@@ -78,7 +79,7 @@ public class BoomerangProjectile extends Projectile {
             return; // Already recalled
         }
         recalled = true;
-        recallTime = System.currentTimeMillis();
+        recallTick = Bukkit.getCurrentTick();
     }
 
     @Override

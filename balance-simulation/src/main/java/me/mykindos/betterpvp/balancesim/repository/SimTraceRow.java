@@ -21,12 +21,22 @@ package me.mykindos.betterpvp.balancesim.repository;
  * mitigation pipeline diverged; if raw already differs, the swing itself did. Those are different
  * bugs and the trace should not need a second run to tell them apart.
  *
+ * <p>{@code anchorTick} carries the absolute tick the relative axis was built from, because the
+ * normalisation that makes iterations comparable is also what hides the phase. Periodic skill
+ * machinery is scheduled globally rather than per duel -- {@code UpdateEventExecutor} keys its
+ * schedule on the delay value server-wide, and {@code runTaskTimer} counts from when it was
+ * scheduled -- so a period-{@code N} skill's step can land up to {@code N - 1} ticks later in a duel
+ * that began on a different global tick. Runs 205 and 207 show the signature: every one of Rupture's
+ * 258 tick spreads is even, and Rupture advances on {@code runTaskTimer(champions, 0, 2)}. Grouping
+ * on {@code anchorTick % N} turns that from an inference into a measurement.
+ *
  * @param buildId     the attacking build this duel measured
  * @param targetRole  the target spec's role
  * @param targetArmor the target spec's armour set id
  * @param iteration   which repeat of the matchup this hit belongs to
  * @param arenaIndex  the platform the duel was fought on
  * @param tick        server ticks since the duel's first landed hit
+ * @param anchorTick  the absolute server tick {@code tick} counts from
  * @param seq         ordering within {@code tick}
  * @param actor       {@code attacker} or {@code defender}
  * @param event       what happened; {@code hit} today, so the table can carry more later
@@ -39,6 +49,7 @@ public record SimTraceRow(long buildId,
                           int iteration,
                           int arenaIndex,
                           int tick,
+                          int anchorTick,
                           int seq,
                           String actor,
                           String event,
