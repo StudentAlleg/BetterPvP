@@ -1,7 +1,5 @@
 package me.mykindos.betterpvp.champions.item.thornfang;
 
-import me.mykindos.betterpvp.core.locale.Translations;
-
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 import lombok.Getter;
@@ -19,6 +17,7 @@ import me.mykindos.betterpvp.core.interaction.combat.InteractionDamageModifier;
 import me.mykindos.betterpvp.core.interaction.context.InteractionContext;
 import me.mykindos.betterpvp.core.item.ItemFactory;
 import me.mykindos.betterpvp.core.item.ItemInstance;
+import me.mykindos.betterpvp.core.locale.Translations;
 import me.mykindos.betterpvp.core.utilities.UtilServer;
 import me.mykindos.betterpvp.core.utilities.UtilTime;
 import net.kyori.adventure.text.Component;
@@ -89,7 +88,7 @@ public class HuntersBrand extends AbstractInteraction implements Listener, Displ
         if (!(event.getDamagee() instanceof LivingEntity target)) return;
 
         // Verify player is holding Thornfang
-        itemFactory.fromItemStack(damager.getEquipment().getItemInMainHand()).ifPresent(item -> {
+        event.damagerMainHand(itemFactory::fromItemStack).ifPresent(item -> {
             if (item.getBaseItem() != thornfang) return;
 
             // Check if target is poisoned

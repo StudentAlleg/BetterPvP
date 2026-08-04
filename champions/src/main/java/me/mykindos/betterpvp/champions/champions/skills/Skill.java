@@ -445,8 +445,25 @@ public abstract class Skill implements IChampionsSkill {
     protected Optional<BuildSkill> getSkill(GamerBuilds gamerBuilds) {
         final Player player = Objects.requireNonNull(gamerBuilds.getClient().getGamer().getPlayer());
         Role role = championsManager.getRoles().getRole(player);
+
+        // Guarded despite getRole being @NotNull. A global skill returns null from getClassType, so
+        // the check below is entered unconditionally for one -- and a null role then dereferenced.
+        // getRole cannot legitimately answer null, but it did: an unsynchronised read of its
+        // WeakHashMap from an async listener. That dispatch is fixed at the source in
+        // EnergyService.updateMax; this stays because "the role lookup is sound" is an assumption the
+        // whole skill hierarchy rests on, and it should degrade to "skill not equipped" rather than
+        // take down whatever pipeline is calling.
+        if (role == null) {
+            return Optional.empty();
+        }
+
         if (role == getClassType() || getClassType() == null) {
             RoleBuild roleBuild = gamerBuilds.getActiveBuilds().get(role.getName());
+            // Absent for a player whose builds have not loaded yet, and for any global skill asked
+            // about a role the player has no build for -- neither of which is exceptional.
+            if (roleBuild == null) {
+                return Optional.empty();
+            }
             BuildSkill buildSkill = roleBuild.getBuildSkill(getType());
             if (buildSkill != null && buildSkill.getSkill() != null) {
                 if (buildSkill.getSkill().equals(this)) {

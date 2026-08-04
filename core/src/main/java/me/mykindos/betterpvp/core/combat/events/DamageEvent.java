@@ -3,10 +3,13 @@
  import com.google.common.base.Preconditions;
  import com.google.common.collect.ArrayListMultimap;
  import com.google.common.collect.Multimap;
+ import lombok.AccessLevel;
  import lombok.CustomLog;
  import lombok.Data;
  import lombok.EqualsAndHashCode;
  import lombok.Getter;
+ import lombok.Setter;
+ import lombok.ToString;
  import me.mykindos.betterpvp.core.combat.cause.DamageCause;
  import me.mykindos.betterpvp.core.combat.cause.VanillaDamageCause;
  import me.mykindos.betterpvp.core.combat.data.SoundProvider;
@@ -16,6 +19,7 @@
  import me.mykindos.betterpvp.core.combat.modifiers.ModifierResult;
  import me.mykindos.betterpvp.core.combat.modifiers.ModifierType;
  import me.mykindos.betterpvp.core.framework.events.CustomCancellableEvent;
+ import me.mykindos.betterpvp.core.item.ItemInstance;
  import org.bukkit.damage.DamageSource;
  import org.bukkit.damage.DamageType;
  import org.bukkit.entity.Entity;
@@ -23,6 +27,8 @@
  import org.bukkit.entity.LivingEntity;
  import org.bukkit.entity.Projectile;
  import org.bukkit.event.entity.EntityDamageEvent;
+ import org.bukkit.inventory.EntityEquipment;
+ import org.bukkit.inventory.ItemStack;
  import org.jetbrains.annotations.NotNull;
  import org.jetbrains.annotations.Nullable;
 
@@ -31,7 +37,9 @@
  import java.util.HashSet;
  import java.util.List;
  import java.util.Objects;
+ import java.util.Optional;
  import java.util.Set;
+ import java.util.function.Function;
 
 /**
  * Unified damage event that handles all types of damage with proper entity separation and modifier exclusion
@@ -89,6 +97,23 @@ public class DamageEvent extends CustomCancellableEvent {
     
     // Vanilla event handling
     private boolean doVanillaEvent = false;
+
+    /**
+     * The damager whose main hand {@link #weaponMemo} was resolved from, so a handler reassigning
+     * {@link #damager} mid-event does not inherit the previous one's weapon.
+     */
+    @Getter(AccessLevel.NONE)
+    @Setter(AccessLevel.NONE)
+    @EqualsAndHashCode.Exclude
+    @ToString.Exclude
+    private LivingEntity weaponMemoOwner;
+
+    /** Memoised result of {@link #damagerMainHand}; null until first resolved. */
+    @Getter(AccessLevel.NONE)
+    @Setter(AccessLevel.NONE)
+    @EqualsAndHashCode.Exclude
+    @ToString.Exclude
+    private Optional<ItemInstance> weaponMemo;
     
     /**
      * Main constructor for damage events
@@ -151,6 +176,54 @@ public class DamageEvent extends CustomCancellableEvent {
                          @NotNull DamageCause cause, double damage, @NotNull String reason) {
         this(damagee, damager, directEntity, damageSource, cause, damage);
         this.reasons.add(reason);
+    }
+
+    /**
+     * The {@link ItemInstance} in the damager's main hand, resolved at most once per event.
+     *
+     * <p>Roughly fifteen handlers on this event want the attacker's weapon -- every rune and gem
+     * handler, both melee stat handlers, the interaction listeners, and a handful of item abilities
+     * -- and each used to resolve it independently. Resolving means running every registered
+     * component deserializer over the stack's persistent data and discarding all but the one
+     * component the caller wanted, so the same stack was fully deserialized fifteen times per hit.
+     * A 988-second sim profile put 12.3% of the entire server thread in
+     * {@link me.mykindos.betterpvp.core.item.ItemFactory#fromItemStack}, spread across 34 call
+     * sites, the majority of them this one lookup repeated.
+     *
+     * <p>Memoising on the event rather than in a cache keyed by ItemStack is what makes this safe
+     * without an invalidation story: the memo lives exactly as long as the dispatch does, and the
+     * damager's main hand does not change during it. Nothing in the listener chain writes the
+     * attacker's hand, and durability -- the one thing that does mutate the weapon -- is applied by
+     * {@code DamageEventFinalizer} after every handler has run. The memo is keyed on the damager
+     * so that reassigning {@link #setDamager} mid-event re-resolves rather than returning the
+     * previous attacker's weapon.
+     *
+     * <p>Callers pass their own resolver because {@code DamageEvent} is constructed in dozens of
+     * places, most of which have no {@code ItemFactory} to hand; the shared memo means it does not
+     * matter which caller resolves first. Prefer
+     * {@code ComponentLookupService.getDamagerComponent} where a lookup service is already injected.
+     *
+     * @param resolver turns the main-hand stack into an instance, normally {@code ItemFactory::fromItemStack}
+     * @return the damager's main-hand instance, or empty if there is no damager, no equipment, or
+     *         the stack is not a resolvable item
+     */
+    public @NotNull Optional<ItemInstance> damagerMainHand(@NotNull Function<ItemStack, Optional<ItemInstance>> resolver) {
+        final LivingEntity current = this.damager;
+        if (current == null) {
+            return Optional.empty();
+        }
+        if (weaponMemo != null && weaponMemoOwner == current) {
+            return weaponMemo;
+        }
+
+        final EntityEquipment equipment = current.getEquipment();
+        final Optional<ItemInstance> resolved = equipment == null
+                ? Optional.empty()
+                : resolver.apply(equipment.getItemInMainHand());
+
+        this.weaponMemoOwner = current;
+        this.weaponMemo = resolved;
+        return resolved;
     }
 
     private static DamageSource getSource(Entity damager, Entity damagingEntity) {

@@ -247,7 +247,9 @@ public class InteractionListener implements Listener, PacketListener {
             return;
         }
 
-        Optional<InteractionItemContext> contextOpt = InteractionItemContext.fromMainHand(damager, itemFactory);
+        // Through the event's memo -- every other damage handler wants this same instance.
+        Optional<InteractionItemContext> contextOpt = event.damagerMainHand(itemFactory::fromItemStack)
+                .flatMap(InteractionItemContext::of);
         if (contextOpt.isEmpty()) {
             return;
         }

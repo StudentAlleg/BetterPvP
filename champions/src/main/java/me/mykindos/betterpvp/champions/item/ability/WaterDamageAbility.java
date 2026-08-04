@@ -73,7 +73,7 @@ public class WaterDamageAbility extends AbstractInteraction implements Displayed
         // overwhelming majority of events before the world is ever touched. A 641-second profile
         // of a melee-heavy workload attributed 5.1% of the entire server thread to the isLiquid
         // call alone under this listener.
-        itemFactory.fromItemStack(damager.getEquipment().getItemInMainHand()).ifPresent(item -> {
+        event.damagerMainHand(itemFactory::fromItemStack).ifPresent(item -> {
             if (item.getBaseItem() != heldItem) return; // Ensure the held item matches
 
             // Add bonus damage if in water

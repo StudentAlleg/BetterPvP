@@ -1,7 +1,5 @@
 package me.mykindos.betterpvp.champions.item.ability;
 
-import me.mykindos.betterpvp.core.locale.Translations;
-
 import lombok.EqualsAndHashCode;
 import lombok.Getter;
 import lombok.Setter;
@@ -16,6 +14,7 @@ import me.mykindos.betterpvp.core.interaction.context.InteractionContext;
 import me.mykindos.betterpvp.core.item.BaseItem;
 import me.mykindos.betterpvp.core.item.ItemFactory;
 import me.mykindos.betterpvp.core.item.ItemInstance;
+import me.mykindos.betterpvp.core.locale.Translations;
 import me.mykindos.betterpvp.core.utilities.UtilPlayer;
 import net.kyori.adventure.text.Component;
 import org.bukkit.Bukkit;
@@ -73,7 +72,7 @@ public class LifestealAbility extends AbstractInteraction implements Listener, D
         if (!event.getCause().getCategories().contains(DamageCauseCategory.MELEE)) return;
         if (!(event.getDamager() instanceof Player damager)) return;
 
-        itemFactory.fromItemStack(damager.getEquipment().getItemInMainHand()).ifPresent(item -> {
+        event.damagerMainHand(itemFactory::fromItemStack).ifPresent(item -> {
             if (item.getBaseItem() != baseItem) return; // Ensure the held item matches
 
             UtilPlayer.health(damager, healFunction.apply(damager));

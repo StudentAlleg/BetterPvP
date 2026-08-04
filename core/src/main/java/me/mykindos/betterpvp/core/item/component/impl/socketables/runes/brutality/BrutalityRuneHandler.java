@@ -15,8 +15,6 @@ import org.bukkit.entity.LivingEntity;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
-import org.bukkit.inventory.EntityEquipment;
-import org.bukkit.inventory.ItemStack;
 
 import java.util.Optional;
 
@@ -47,26 +45,16 @@ public class BrutalityRuneHandler implements Listener {
 
         // get the item used to deal damage
         // for ranged, we get the projectile "bow"
-        // for melee, its equipment
-        final ItemStack item;
+        // for melee, its equipment -- shared with the other damage handlers via the event's memo
+        final Optional<SocketableContainerComponent> container;
         if (melee) {
-            final EntityEquipment equipment = damager.getEquipment();
-            if (equipment == null) {
-                return;
-            }
-
-            item = equipment.getItemInMainHand();
-        } else if (ranged && event.getProjectile() instanceof Arrow arrow) {
-            item = arrow.getWeapon();
+            container = componentLookupService.getDamagerComponent(event, SocketableContainerComponent.class);
+        } else if (ranged && event.getProjectile() instanceof Arrow arrow && arrow.getWeapon() != null) {
+            container = componentLookupService.getComponent(arrow.getWeapon(), SocketableContainerComponent.class);
         } else {
             return;
         }
 
-        if (item == null) {
-            return; // Not shot by a bow
-        }
-
-        final Optional<SocketableContainerComponent> container = componentLookupService.getComponent(item, SocketableContainerComponent.class);
         if (container.isEmpty()) {
             return; // No runes present
         }

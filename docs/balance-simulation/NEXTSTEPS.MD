@@ -5,7 +5,7 @@
 5. Display it in a useful way.
 6. Then have it only trigger on changes (to compare with baseline) and new items. (reduction in sim time)
 
-
+Create a control skill
 
 
 NOTES: Backstab should be done in the transformation phase (it only triggers on a back, so the sim by default does not pick it up)

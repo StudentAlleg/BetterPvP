@@ -3,6 +3,7 @@ package me.mykindos.betterpvp.core.item.service;
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
 import lombok.Getter;
+import me.mykindos.betterpvp.core.combat.events.DamageEvent;
 import me.mykindos.betterpvp.core.item.ItemFactory;
 import me.mykindos.betterpvp.core.item.ItemInstance;
 import me.mykindos.betterpvp.core.item.component.ItemComponent;
@@ -80,6 +81,37 @@ public class ComponentLookupService {
         }
 
         return itemInstance.get().getComponent(componentClass);
+    }
+
+    /**
+     * Gets the damager's main-hand item for a damage event, resolving it at most once per event
+     * however many handlers ask.
+     *
+     * <p>Prefer this over {@code getComponent(equipment.getItemInMainHand(), ...)} in any
+     * {@link DamageEvent} handler -- see {@link DamageEvent#damagerMainHand} for why the repeated
+     * resolution was worth removing and why memoising on the event is safe.
+     *
+     * @param event The damage event whose damager to read
+     * @return Optional containing the damager's main-hand instance, otherwise empty
+     */
+    public Optional<ItemInstance> damagerMainHand(@NotNull DamageEvent event) {
+        return event.damagerMainHand(itemFactory::fromItemStack);
+    }
+
+    /**
+     * Gets a component of the specified type from the damager's main-hand item.
+     *
+     * @param event The damage event whose damager to read
+     * @param componentClass The component type to look for
+     * @param <T> The type of component
+     * @return Optional containing the component if found, otherwise empty
+     * @see #damagerMainHand(DamageEvent)
+     */
+    public <T extends ItemComponent> Optional<T> getDamagerComponent(
+            @NotNull DamageEvent event,
+            @NotNull Class<T> componentClass) {
+
+        return damagerMainHand(event).flatMap(instance -> instance.getComponent(componentClass));
     }
 
     /**

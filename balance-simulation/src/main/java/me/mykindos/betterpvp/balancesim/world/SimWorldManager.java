@@ -5,7 +5,9 @@ import com.google.inject.Singleton;
 import lombok.CustomLog;
 import me.mykindos.betterpvp.balancesim.BalanceSimulation;
 import me.mykindos.betterpvp.balancesim.SimulationGate;
+import me.mykindos.betterpvp.core.utilities.UtilServer;
 import org.bukkit.Bukkit;
+import org.bukkit.Chunk;
 import org.bukkit.Difficulty;
 import org.bukkit.GameRules;
 import org.bukkit.Location;
@@ -17,9 +19,12 @@ import org.bukkit.block.Block;
 import org.bukkit.entity.SpawnCategory;
 import org.jetbrains.annotations.Nullable;
 
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 
 /**
  * Owns the dedicated void world that duels run in, and hands out arena slots inside it.
@@ -37,16 +42,33 @@ public class SimWorldManager {
     /**
      * Arenas are laid out on a grid this many blocks apart, well beyond any skill's range.
      *
-     * <p>Sized against the world's view distance rather than against nothing. 64 blocks is four
-     * chunks, and {@link #shrinkTrackingDistances} pins view and simulation distance at 2, so no
-     * duel can see or tick another. The old 256 was chosen when arenas were allocated per duel and
-     * isolation was the only concern; now that {@code SimCombatantPool} keeps combatants resident,
-     * the live arena count is a multiple of the concurrency rather than equal to it, and every live
-     * arena holds its chunks loaded. At 64 the same number of platforms occupies a sixteenth of the
-     * area, which is the difference between a sweep touching a few hundred chunks and the sprawl
-     * that exhausted the heap before arenas were recycled at all.
+     * <p>Sized against Moonrise's spawn-tracking radius, which is the only distance here that is
+     * not ours to configure. {@code ChunkTickConstants.PLAYER_SPAWN_TRACK_RANGE} is a hardcoded 8
+     * chunks: every chunk keeps a list of players within 128 blocks, and
+     * {@code ChunkMap.collectSpawningChunks} walks every player-ticking chunk against that list on
+     * every tick of every world. Nine chunks of spacing puts each arena outside every other arena's
+     * list, so the walk is per-duel rather than quadratic in how many duels happen to be adjacent.
+     *
+     * <p>It was 64 -- four chunks -- which is enough to isolate duels for view and simulation
+     * distance (both pinned at 2 by {@link #shrinkTrackingDistances}) but not for spawn tracking,
+     * where a 128-block radius reaches two grid steps in every direction and swept roughly
+     * twenty-five arenas' worth of combatants into each chunk's list. A 988-second profile put
+     * 4.3% of the entire server thread in {@code isChunkNearPlayer} under that one call.
+     *
+     * <p>None of the spawn settings {@link #disableNaturalSpawning} applies can reach this. The
+     * collection runs outside the {@code SPAWN_MOBS} check in {@code ServerChunkCache.tickChunks},
+     * and the tracking radius is a constant rather than a function of {@code mobSpawnRange} or of
+     * the view distance -- so the gamerule, the difficulty and the zeroed spawn limits all leave
+     * the sweep itself untouched. Spacing is the only lever.
+     *
+     * <p>Widening is close to free now that {@code SimCombatantPool} keeps combatants resident and
+     * {@link #acquireArena} recycles slots. Each arena pins a fixed 5x5 chunks regardless of where
+     * it sits, and the live arena count is bounded by the sweep's concurrency, so this spreads the
+     * same number of platforms over more coordinates rather than creating more of them. The heap
+     * exhaustion that drove the old 256 down to 64 was unbounded arena <em>count</em> -- an index
+     * per duel, never reused -- which recycling fixed independently of spacing.
      */
-    private static final int ARENA_SPACING = 64;
+    private static final int ARENA_SPACING = 144;
     private static final int ARENA_Y = 64;
 
     /**
@@ -116,8 +138,14 @@ public class SimWorldManager {
      */
     private final Set<Integer> freeIndices = new LinkedHashSet<>();
 
-    /** Indices whose platform has already been laid, so the blocks are placed once per slot. */
+    /** Indices whose chunks are resident and whose platform has been laid. */
     private final Set<Integer> prepared = new HashSet<>();
+
+    /**
+     * Indices whose chunk loads are in flight, so a second {@link #prepareAsync} for the same slot
+     * does not start a duplicate set of loads while the first is still landing.
+     */
+    private final Set<Integer> preparing = new HashSet<>();
 
     private int nextIndex;
 
@@ -192,11 +220,17 @@ public class SimWorldManager {
      *
      * <p>The gamerule and the spawn limits are both needed, and they cut the path at different
      * depths. {@link GameRules#SPAWN_MOBS} stops the category loop inside
-     * {@code NaturalSpawner.spawnForChunk}, but the per-player chunk sweep that feeds it --
-     * {@code ChunkMap.collectSpawningChunks} and {@code isChunkNearPlayer}, another 1.7% between
-     * them -- runs before the rule is consulted. Zeroing the limits empties the spawn state those
-     * two build, so the sweep finds no category to collect for. {@link SpawnCategory#MISC} is
-     * excluded because {@link World#setSpawnLimit} rejects it.
+     * {@code NaturalSpawner.spawnForChunk}; zeroing the limits empties the spawn state that loop
+     * is built from, so nothing downstream finds a category to spawn for.
+     * {@link SpawnCategory#MISC} is excluded because {@link World#setSpawnLimit} rejects it.
+     *
+     * <p>Neither reaches {@code ChunkMap.collectSpawningChunks}, and no world setting does. In
+     * {@code ServerChunkCache.tickChunks} that call sits <em>outside</em> the
+     * {@code SPAWN_MOBS && (spawnEnemies || spawnFriendlies)} branch, so it walks every
+     * player-ticking chunk every tick whatever this method does; the earlier claim here that the
+     * zeroed limits stopped it was wrong, and a later profile still found 4.3% of the server
+     * thread underneath it. That cost is addressed by {@link #ARENA_SPACING} instead, which is
+     * what controls how many combatants land in each chunk's spawn-tracking list.
      *
      * <p>Peaceful difficulty is belt and braces: it also suppresses the hostile-mob paths that do
      * not consult the spawn state at all, and no sim damage comes from mobs.
@@ -269,8 +303,8 @@ public class SimWorldManager {
     /**
      * Takes an arena for a duel that is starting, reusing one a finished duel has released.
      *
-     * <p>Slots must be recycled rather than allocated per duel. Each index is a fresh 256-block
-     * step across the world, so numbering them by duel walked the sweep into virgin terrain
+     * <p>Slots must be recycled rather than allocated per duel. Each index is a fresh
+     * {@link #ARENA_SPACING} step across the world, so numbering them by duel walked the sweep into virgin terrain
      * forever: an 864-duel run spanned roughly 8000x7000 blocks, and every arena it ever built
      * stayed resident because the platform blocks kept the chunks loaded. That is what exhausted
      * the heap -- the result rows are flushed to the database in batches and never amounted to
@@ -281,12 +315,115 @@ public class SimWorldManager {
      * flight, so a sweep of any length touches the same handful of chunks it did in its first
      * second.
      */
-    public ArenaSlot acquireArena() {
+    public @Nullable ArenaSlot acquireArena() {
         final Integer recycled = freeIndices.isEmpty() ? null : freeIndices.iterator().next();
         if (recycled != null) {
             freeIndices.remove(recycled);
+            return slotAt(recycled);
         }
-        return prepareArena(recycled != null ? recycled : nextIndex++);
+
+        // Never built here. Preparing an arena means generating up to
+        // (2 * ARENA_TICKET_CHUNK_RADIUS + 1)^2 chunks, and the only synchronous way to do that is
+        // getChunkAt, which blocks the main thread inside ServerChunkCache.syncLoad until the
+        // generator finishes. That is what put single ticks into the seconds: a 1439-second profile
+        // measured a 14.2-second worst tick against a 50.8ms median, with 51 seconds of syncLoad
+        // underneath acquireArena. A sweep that stalls the tick it is measuring cannot measure it.
+        //
+        // So growth past the warmed set is a request, not a build. The caller already has a
+        // "nothing available this tick" path -- SimCombatantPool.acquire is documented to return
+        // null and SweepLoop.fill breaks on it -- and postponing a duel by a tick costs nothing,
+        // because the matchup is not polled until a slot is in hand.
+        final int index = nextIndex;
+        if (!prepared.contains(index)) {
+            prepareAsync(index);
+            return null;
+        }
+        nextIndex++;
+        return slotAt(index);
+    }
+
+    /**
+     * Builds every arena a sweep can ask for, before the sweep starts.
+     *
+     * <p>The chunk generation has to happen somewhere, and the only question is whether it lands
+     * inside the measurement. Doing it up front costs a warmup that is not being timed; doing it
+     * lazily costs multi-second stalls scattered through the run, which is both slower overall and
+     * ruins the tick-rate signal the sweep exists to produce.
+     *
+     * <p>Sized to the sweep's concurrency because that is the ceiling on arenas in flight -- a
+     * finished duel's slot goes back to {@link #freeIndices} and is handed straight out again, so
+     * a run of any length reuses this set rather than growing past it.
+     *
+     * @param arenaCount how many arenas to build, normally the sweep's max concurrent duels
+     * @return a future completing on the main thread once every arena is ready to duel on
+     */
+    public CompletableFuture<Void> warmUp(int arenaCount) {
+        final CompletableFuture<?>[] pending = new CompletableFuture<?>[arenaCount];
+        for (int index = 0; index < arenaCount; index++) {
+            pending[index] = prepareAsync(index);
+        }
+        // nextIndex is deliberately not advanced. It is the next index to hand out, not the next
+        // to build, and warming a slot is exactly what makes it handable -- moving it here would
+        // step the sweep straight past every arena this method just built.
+        return CompletableFuture.allOf(pending);
+    }
+
+    /**
+     * Loads the {@code index}-th arena's chunks off the main thread, then lays its platform on it.
+     *
+     * <p>{@link World#getChunkAtAsync} rather than {@link World#getChunkAt}: both generate the
+     * chunk if it does not exist, but only the former hands the work to the chunk system's threads
+     * and calls back when it lands. The platform loop and the ticket registration still run on the
+     * main thread -- they touch world state -- but by then every chunk they touch is resident, so
+     * neither can fault one in.
+     *
+     * @return a future completing once the arena is ready, already complete if it is
+     */
+    private CompletableFuture<Void> prepareAsync(int index) {
+        if (prepared.contains(index)) {
+            return CompletableFuture.completedFuture(null);
+        }
+        if (!preparing.add(index)) {
+            // Loads already in flight for this slot; the first call will lay the platform.
+            return CompletableFuture.completedFuture(null);
+        }
+
+        final Location centre = arenaCentre(index);
+        final World simWorld = centre.getWorld();
+        final int chunkX = centre.getBlockX() >> 4;
+        final int chunkZ = centre.getBlockZ() >> 4;
+
+        final List<CompletableFuture<Chunk>> loads = new ArrayList<>();
+        for (int dx = -ARENA_TICKET_CHUNK_RADIUS; dx <= ARENA_TICKET_CHUNK_RADIUS; dx++) {
+            for (int dz = -ARENA_TICKET_CHUNK_RADIUS; dz <= ARENA_TICKET_CHUNK_RADIUS; dz++) {
+                loads.add(simWorld.getChunkAtAsync(chunkX + dx, chunkZ + dz, true));
+            }
+        }
+
+        final CompletableFuture<Void> ready = new CompletableFuture<>();
+        CompletableFuture.allOf(loads.toArray(new CompletableFuture[0])).whenComplete((ignored, throwable) -> {
+            // Back onto the main thread: the callback fires on whichever thread completed the last
+            // load, and everything below this line touches world state.
+            UtilServer.runTask(plugin, () -> {
+                preparing.remove(index);
+                if (throwable != null) {
+                    log.error("Failed loading chunks for sim arena {}", index, throwable).submit();
+                    ready.completeExceptionally(throwable);
+                    return;
+                }
+                // A teardown between the load starting and landing leaves this holding a World that
+                // is no longer the sim world -- unloaded, and about to be regenerated from scratch
+                // if another run starts. Building into it would pin chunks in a dead world and lay
+                // a platform the next run cannot see, so the load is simply dropped.
+                if (world != simWorld) {
+                    ready.complete(null);
+                    return;
+                }
+                buildArena(index, centre, simWorld);
+                ready.complete(null);
+            });
+        });
+        return ready;
     }
 
     /**
@@ -302,43 +439,45 @@ public class SimWorldManager {
     }
 
     /**
-     * Lays a solid platform for the {@code index}-th arena and returns the two spawn points on
-     * it, facing each other. Must be called on the main thread ({@link Block#setType} touches
-     * world state).
+     * Pins and lays the {@code index}-th arena's platform. Must be called on the main thread, with
+     * the arena's chunks already resident ({@link Block#setType} touches world state, and a block
+     * write into an absent chunk is the synchronous load this class exists to avoid).
      *
      * <p>The platform is barrier blocks so nothing renders and nothing can be mined, one layer
-     * below the spawn Y. The two combatants start {@link #SPAWN_OFFSET} blocks either side of the
-     * centre along the X axis, each yawed to look at the other, so the very first melee swing has
-     * a valid target without the orchestrator having to path them together first.
-     *
-     * <p>The block loop runs only the first time a slot is used. A recycled arena is still handed
-     * back as a freshly built {@link ArenaSlot}: the spawn points are mutable {@code Location}s,
-     * and handing the same instances to successive duels would let anything that moved one corrupt
-     * every later duel on that platform.
+     * below the spawn Y.
      */
-    public ArenaSlot prepareArena(int index) {
-        final Location centre = arenaCentre(index);
-        final World simWorld = centre.getWorld();
+    private void buildArena(int index, Location centre, World simWorld) {
+        if (!prepared.add(index)) {
+            return;
+        }
 
-        if (prepared.add(index)) {
-            // Pinned before a single block is touched. Laying the platform is itself thousands of
-            // block writes across nine chunks, and without the ticket the first of them loads a
-            // chunk that a later one may find unloaded again.
-            pinChunks(simWorld, centre);
+        // Pinned before a single block is touched, so the chunks the async load just brought in
+        // cannot be unloaded again between here and the last block write.
+        pinChunks(simWorld, centre);
 
-            final int floorY = ARENA_Y - 1;
-            final int cx = centre.getBlockX();
-            final int cz = centre.getBlockZ();
-            for (int dx = -PLATFORM_RADIUS; dx <= PLATFORM_RADIUS; dx++) {
-                for (int dz = -PLATFORM_RADIUS; dz <= PLATFORM_RADIUS; dz++) {
-                    final Block block = simWorld.getBlockAt(cx + dx, floorY, cz + dz);
-                    if (block.getType() != Material.BARRIER) {
-                        block.setType(Material.BARRIER, false);
-                    }
+        final int floorY = ARENA_Y - 1;
+        final int cx = centre.getBlockX();
+        final int cz = centre.getBlockZ();
+        for (int dx = -PLATFORM_RADIUS; dx <= PLATFORM_RADIUS; dx++) {
+            for (int dz = -PLATFORM_RADIUS; dz <= PLATFORM_RADIUS; dz++) {
+                final Block block = simWorld.getBlockAt(cx + dx, floorY, cz + dz);
+                if (block.getType() != Material.BARRIER) {
+                    block.setType(Material.BARRIER, false);
                 }
             }
         }
+    }
 
+    /**
+     * The {@code index}-th arena's spawn points, for a slot whose platform is already laid.
+     *
+     * <p>A recycled arena is handed back as a freshly built {@link ArenaSlot} rather than a stored
+     * one: the spawn points are mutable {@code Location}s, and handing the same instances to
+     * successive duels would let anything that moved one corrupt every later duel on that platform.
+     */
+    private ArenaSlot slotAt(int index) {
+        final Location centre = arenaCentre(index);
+        final World simWorld = centre.getWorld();
         // West combatant looks east (yaw -90), east combatant looks west (yaw 90).
         final Location west = new Location(simWorld, centre.getX() - SPAWN_OFFSET, ARENA_Y, centre.getZ(), -90f, 0f);
         final Location east = new Location(simWorld, centre.getX() + SPAWN_OFFSET, ARENA_Y, centre.getZ(), 90f, 0f);
@@ -395,6 +534,11 @@ public class SimWorldManager {
         // next run an index it believes is already built, in a freshly generated void.
         freeIndices.clear();
         prepared.clear();
+        // Any load still in flight will call back into a world that is gone. Clearing here means
+        // buildArena's prepared.add is the only thing that could act on it, and that runs against
+        // the new world's arenaCentre -- so a late callback rebuilds a slot rather than corrupting
+        // one, which is the harmless half of the race.
+        preparing.clear();
         nextIndex = 0;
     }
 }

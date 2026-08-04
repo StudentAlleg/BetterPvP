@@ -1,7 +1,5 @@
 package me.mykindos.betterpvp.champions.item.ability;
 
-import me.mykindos.betterpvp.core.locale.Translations;
-
 import lombok.EqualsAndHashCode;
 import lombok.Getter;
 import lombok.Setter;
@@ -17,6 +15,7 @@ import me.mykindos.betterpvp.core.interaction.context.InteractionContext;
 import me.mykindos.betterpvp.core.item.BaseItem;
 import me.mykindos.betterpvp.core.item.ItemFactory;
 import me.mykindos.betterpvp.core.item.ItemInstance;
+import me.mykindos.betterpvp.core.locale.Translations;
 import net.kyori.adventure.text.Component;
 import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
@@ -26,6 +25,8 @@ import org.bukkit.event.Listener;
 import org.bukkit.inventory.ItemStack;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+
+import java.util.Optional;
 
 @Getter
 @Setter
@@ -79,8 +80,15 @@ public class ReverseKnockbackAbility extends AbstractInteraction implements Disp
             return; // Only apply to melee attacks
         }
 
-        // Check if the weapon is being held
-        itemFactory.fromItemStack(damager.getInventory().getItemInMainHand()).ifPresent(item -> {
+        // Check if the weapon is being held. Through the damage event's memo where possible, so
+        // this shares the resolution the damage handlers already paid for -- but only while the
+        // knockback event still describes the same attacker, since its damager is independently
+        // mutable and a handler may have reassigned it.
+        final Optional<ItemInstance> held = damager == event.getDamageEvent().getDamager()
+                ? event.getDamageEvent().damagerMainHand(itemFactory::fromItemStack)
+                : itemFactory.fromItemStack(damager.getInventory().getItemInMainHand());
+
+        held.ifPresent(item -> {
             if (item.getBaseItem() != heldItem) return; // Ensure the held item matches
 
             // Apply custom knockback settings

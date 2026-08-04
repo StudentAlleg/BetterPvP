@@ -190,7 +190,21 @@ public class EnergyService {
      * @param player the player to update the max energy for
      */
     public void updateMax(Player player) {
-        UtilServer.runTaskAsync(JavaPlugin.getPlugin(Core.class), () -> {
+        // Main thread, not async. The listeners were believed to "only read equipment and skill
+        // level, so neither needs a particular thread" -- but reading a skill level walks
+        // GamerBuilds and RoleManager's store, and the latter is a plain WeakHashMap mutated on the
+        // main thread by every role equip and every despawn. An unsynchronised map read racing a
+        // resize returns null for a key that is present, which is how RoleManager.getRole -- @NotNull,
+        // and written to answer Role.DEFAULT on a miss -- handed EnergyPool a null role and NPE'd
+        // Skill.getSkill. A sweep spawning and despawning combatants across 300 arenas hits that race
+        // constantly; a live server hits it rarely, which is why it read as a simulation-only fault.
+        //
+        // The NPE was the visible half. The invisible half is worse: the same race can return a stale
+        // or absent build and quietly compute the wrong maximum, with nothing logged.
+        //
+        // Still a task rather than an inline call, so the non-blocking contract callers rely on is
+        // unchanged and a caller already on the main thread cannot re-enter the energy map mid-update.
+        UtilServer.runTask(JavaPlugin.getPlugin(Core.class), () -> {
             final UpdateMaxEnergyEvent event = new UpdateMaxEnergyEvent(player, maxEnergy);
             double max = event.callEvent() ? event.getNewMax() : maxEnergy;
             // Seeded rather than assumed present: nothing guarantees the player has an entry by the

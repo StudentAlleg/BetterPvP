@@ -454,9 +454,27 @@ public class DuelOrchestrator {
                                         + " stays diffable against runs taken without it.",
                                 runId, settings.duelDiagnosticsMaxRows(), pending.size()).submit();
                     }
-                    // The matchup count is pending.size() / iterations, but taken from the queue
-                    // rather than recomputed, so a build skipped above is not counted as planned.
-                    new SweepLoop(runId, scope, pending, pending.size() / iterations, done, listener).start();
+                    // Every arena the sweep can ask for is built before the first duel, not on the
+                    // tick that first needs it. Generating an arena's chunks is seconds of work
+                    // that can only happen on the main thread once it has started, so lazily built
+                    // arenas showed up as multi-second ticks scattered through the run -- a
+                    // 1439-second profile had a 14.2s worst tick against a 50.8ms median. Paying it
+                    // here moves it outside the window anything is measured in.
+                    final long warmUpStart = System.currentTimeMillis();
+                    log.info("Building {} sim arenas before run {} starts.",
+                            settings.maxConcurrentDuels(), runId).submit();
+                    worldManager.warmUp(settings.maxConcurrentDuels()).whenComplete((ignored, warmUpError) -> {
+                        if (warmUpError != null) {
+                            running = false;
+                            done.completeExceptionally(warmUpError);
+                            return;
+                        }
+                        log.info("Sim arenas ready in {}ms; starting run {}.",
+                                System.currentTimeMillis() - warmUpStart, runId).submit();
+                        // The matchup count is pending.size() / iterations, but taken from the queue
+                        // rather than recomputed, so a build skipped above is not counted as planned.
+                        new SweepLoop(runId, scope, pending, pending.size() / iterations, done, listener).start();
+                    });
                 });
             });
         } catch (Exception e) {

@@ -14,8 +14,6 @@ import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.entity.EntityDamageEvent.DamageCause;
-import org.bukkit.inventory.EntityEquipment;
-import org.bukkit.inventory.ItemStack;
 
 import java.util.List;
 import java.util.Optional;
@@ -43,17 +41,11 @@ public class MeleeAttackSpeedStatHandler implements Listener {
             return; // Only melee damage causes are handled
         }
 
-        if (!(event.getDamager() instanceof LivingEntity livingEntity)) {
+        if (!(event.getDamager() instanceof LivingEntity)) {
             return; // Only living entities can deal melee damage
         }
 
-        final EntityEquipment equipment = livingEntity.getEquipment();
-        if (equipment == null) {
-            return; // No equipment, no item
-        }
-
-        final ItemStack item = equipment.getItemInMainHand();
-        itemFactory.fromItemStack(item).ifPresent(itemInstance -> {
+        event.damagerMainHand(itemFactory::fromItemStack).ifPresent(itemInstance -> {
             Optional<StatContainerComponent> statContainerOpt = itemInstance.getComponent(StatContainerComponent.class);
             if (statContainerOpt.isEmpty()) {
                 return; // No stat container, no stats

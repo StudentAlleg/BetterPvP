@@ -50,17 +50,22 @@ public record InteractionItemContext(
             return Optional.empty();
         }
 
-        Optional<ItemInstance> itemOpt = itemFactory.fromItemStack(itemStack);
-        if (itemOpt.isEmpty()) {
-            return Optional.empty();
-        }
+        return itemFactory.fromItemStack(itemStack).flatMap(InteractionItemContext::of);
+    }
 
-        ItemInstance itemInstance = itemOpt.get();
-        Optional<InteractionContainerComponent> containerOpt = itemInstance.getComponent(InteractionContainerComponent.class);
-        if (containerOpt.isEmpty()) {
-            return Optional.empty();
-        }
-
-        return Optional.of(new InteractionItemContext(itemStack, itemInstance, containerOpt.get()));
+    /**
+     * Build a context from an already-resolved instance, for callers that have one to hand.
+     *
+     * <p>Exists so damage handlers can reuse
+     * {@link me.mykindos.betterpvp.core.combat.events.DamageEvent#damagerMainHand} rather than
+     * deserializing the attacker's weapon a second time -- the resolution the other overloads do is
+     * the expensive part, and on the damage path it has already happened.
+     *
+     * @param itemInstance the resolved instance
+     * @return an Optional containing the context if the instance carries an interaction container
+     */
+    public static Optional<InteractionItemContext> of(@NotNull ItemInstance itemInstance) {
+        return itemInstance.getComponent(InteractionContainerComponent.class)
+                .map(container -> new InteractionItemContext(itemInstance.getItemStack(), itemInstance, container));
     }
 }

@@ -13,9 +13,6 @@ import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
-import org.bukkit.inventory.ItemStack;
-
-import java.util.Optional;
 
 @BPvPListener
 @Singleton
@@ -32,18 +29,12 @@ public class EmeraldGemHandler implements Listener {
 
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
     public void onDamage(DamageEvent event) {
-        if (event.getDamager() instanceof Player player) {
-            final ItemStack mainHand = player.getInventory().getItemInMainHand();
-            getSocketableContainer(mainHand).ifPresent(container -> {
+        if (event.getDamager() instanceof Player) {
+            componentLookupService.getDamagerComponent(event, SocketableContainerComponent.class).ifPresent(container -> {
                 if (container.hasRune(emeraldGem)) {
                     event.addModifier(new GenericModifier(emeraldGem.getName(), ModifierType.RUNE, DamageOperator.MULTIPLIER, 1.0 + emeraldGem.getDamageIncrease()));
                 }
             });
         }
-    }
-
-    private Optional<SocketableContainerComponent> getSocketableContainer(ItemStack item) {
-        if (item == null || item.getType().isAir()) return Optional.empty();
-        return componentLookupService.getComponent(item, SocketableContainerComponent.class);
     }
 }

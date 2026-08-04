@@ -11,8 +11,6 @@ import org.bukkit.entity.LivingEntity;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
-import org.bukkit.inventory.EntityEquipment;
-import org.bukkit.inventory.ItemStack;
 
 import java.util.Optional;
 
@@ -39,13 +37,7 @@ public class FerocityRuneHandler implements Listener {
             return; // Wasn't a melee hit
         }
 
-        final EntityEquipment equipment = damager.getEquipment();
-        if (equipment == null) {
-            return;
-        }
-
-        final ItemStack item = equipment.getItemInMainHand();
-        final Optional<SocketableContainerComponent> container = componentLookupService.getComponent(item, SocketableContainerComponent.class);
+        final Optional<SocketableContainerComponent> container = componentLookupService.getDamagerComponent(event, SocketableContainerComponent.class);
         if (container.isEmpty()) {
             return; // No runes present
         }

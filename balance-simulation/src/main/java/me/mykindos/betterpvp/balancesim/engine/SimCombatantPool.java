@@ -144,8 +144,9 @@ public class SimCombatantPool {
      *             quarantine of zero the head of the queue is always eligible, so this only decides
      *             anything when the knob has been turned back up.
      * @return a ready slot, or {@code null} when every resident is still quarantined and the pool
-     *         is at its ceiling. The caller must treat that as "not this tick" rather than as an
-     *         error, and must not have consumed a matchup before asking.
+     *         is at its ceiling, or when growing the pool would need an arena whose chunks are
+     *         still being generated. The caller must treat that as "not this tick" rather than as
+     *         an error, and must not have consumed a matchup before asking.
      */
     @Nullable
     public Slot acquire(long tick) {
@@ -444,8 +445,13 @@ public class SimCombatantPool {
         strategy = null;
     }
 
-    private Slot createSlot() {
+    private @Nullable Slot createSlot() {
         final SimWorldManager.ArenaSlot arena = worldManager.acquireArena();
+        if (arena == null) {
+            // Past the warmed set, and the arena's chunks are still generating. Treated exactly
+            // like a fully quarantined pool: the caller postpones the duel rather than dropping it.
+            return null;
+        }
         final Slot slot = new Slot(arena,
                 spawnResident(arena.index(), "atk", arena.spawnA()),
                 spawnResident(arena.index(), "def", arena.spawnB()));

@@ -117,7 +117,7 @@ class SkillRelevanceAuditTest {
         // Pressed 40 times, never once allowed through.
         audit.observe(skillBuild("Blizzard", 2), target(),
                 aggregate(4.0, 20.0, null,
-                        Map.of("Blizzard", new SimSkillLedger.SkillActivation(40, 0, 0, 0, 40))));
+                        Map.of("Blizzard", new SimSkillLedger.SkillActivation(40, 0, 0, 0, 40, 0))));
 
         final SkillVerdict verdict = only(audit);
         assertEquals(SkillRelevanceBucket.UNDRIVABLE, verdict.bucket());
@@ -229,7 +229,7 @@ class SkillRelevanceAuditTest {
     }
 
     private static Map<String, SimSkillLedger.SkillActivation> fired(String skillName, int successes) {
-        return Map.of(skillName, new SimSkillLedger.SkillActivation(successes, successes, 0, 0, 0));
+        return Map.of(skillName, new SimSkillLedger.SkillActivation(successes, successes, 0, 0, 0, 0));
     }
 
     /**
