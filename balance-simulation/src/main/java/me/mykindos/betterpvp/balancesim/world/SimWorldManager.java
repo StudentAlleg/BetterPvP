@@ -42,33 +42,47 @@ public class SimWorldManager {
     /**
      * Arenas are laid out on a grid this many blocks apart, well beyond any skill's range.
      *
-     * <p>Sized against Moonrise's spawn-tracking radius, which is the only distance here that is
-     * not ours to configure. {@code ChunkTickConstants.PLAYER_SPAWN_TRACK_RANGE} is a hardcoded 8
-     * chunks: every chunk keeps a list of players within 128 blocks, and
-     * {@code ChunkMap.collectSpawningChunks} walks every player-ticking chunk against that list on
-     * every tick of every world. Nine chunks of spacing puts each arena outside every other arena's
-     * list, so the walk is per-duel rather than quadratic in how many duels happen to be adjacent.
+     * <p>Four chunks. <strong>Set empirically -- widening it has been tried and measured, and it lost
+     * on every number that was checked.</strong> Read the rest of this comment before changing it.
      *
-     * <p>It was 64 -- four chunks -- which is enough to isolate duels for view and simulation
-     * distance (both pinned at 2 by {@link #shrinkTrackingDistances}) but not for spawn tracking,
-     * where a 128-block radius reaches two grid steps in every direction and swept roughly
-     * twenty-five arenas' worth of combatants into each chunk's list. A 988-second profile put
-     * 4.3% of the entire server thread in {@code isChunkNearPlayer} under that one call.
+     * <p>The path this constant is usually reasoned about is spawn tracking.
+     * {@code ChunkTickConstants.PLAYER_SPAWN_TRACK_RANGE} is a hardcoded 8 chunks: every chunk keeps
+     * a list of players within 128 blocks, and {@code ChunkMap.collectSpawningChunks} walks
+     * player-ticking chunks against that list every tick, calling {@code isChunkNearPlayer} on each.
+     * Nothing {@link #disableNaturalSpawning} sets can reach it -- the collection runs outside the
+     * {@code SPAWN_MOBS} check in {@code ServerChunkCache.tickChunks}, and the radius is a constant
+     * rather than a function of {@code mobSpawnRange} or view distance.
      *
-     * <p>None of the spawn settings {@link #disableNaturalSpawning} applies can reach this. The
-     * collection runs outside the {@code SPAWN_MOBS} check in {@code ServerChunkCache.tickChunks},
-     * and the tracking radius is a constant rather than a function of {@code mobSpawnRange} or of
-     * the view distance -- so the gamerule, the difficulty and the zeroed spawn limits all leave
-     * the sweep itself untouched. Spacing is the only lever.
+     * <h2>What was measured</h2>
      *
-     * <p>Widening is close to free now that {@code SimCombatantPool} keeps combatants resident and
-     * {@link #acquireArena} recycles slots. Each arena pins a fixed 5x5 chunks regardless of where
-     * it sits, and the live arena count is bounded by the sweep's concurrency, so this spreads the
-     * same number of platforms over more coordinates rather than creating more of them. The heap
-     * exhaustion that drove the old 256 down to 64 was unbounded arena <em>count</em> -- an index
-     * per duel, never reused -- which recycling fixed independently of spacing.
+     * <p>The argument for widening is that a sparser grid puts fewer players in each chunk's list,
+     * so each {@code isChunkNearPlayer} scan is shorter. That is true and it is not what happens to
+     * the total. Spacing was raised to 144 -- nine chunks, so no two arenas share anything -- and a
+     * profile of the resulting run came out worse on both halves of the product:
+     *
+     * <ul>
+     *   <li>{@code collectSpawningChunks} (which is essentially all {@code isChunkNearPlayer}) went
+     *       from about 4.3% of the server thread at 64 to about 6.7% of simulation time at 144. The
+     *       shorter per-chunk scan did not pay for itself, plausibly because the predicate answers
+     *       "is <em>any</em> player near" and returns on the first hit -- which is immediate on a
+     *       dense grid and a full miss-scan on a sparse one. That mechanism is inferred, not proven;
+     *       the two percentages are the part that was actually observed.</li>
+     *   <li>Resident chunks went from roughly 6,000 to 22,780. Simulation distance 2 gives each arena
+     *       a 5x5 ticking footprint and view distance a wider loaded one; at a four-chunk step those
+     *       overlap and dedupe, at a nine-chunk step they stop touching. Most of that difference is
+     *       loaded-not-ticking, so it costs warm-up generation and memory rather than per-tick
+     *       sweeps, but {@code iterateTickingChunksFaster} pays for part of it every tick.</li>
+     * </ul>
+     *
+     * <p>So: do not widen this on the strength of an {@code isChunkNearPlayer} percentage alone. The
+     * numbers that decide it are that percentage <em>and</em> the resident chunk count, together, from
+     * a run at each spacing.
+     *
+     * <p>Unrelated to any of the above: the original 256 came down to 64 because arena <em>count</em>
+     * was unbounded -- an index per duel, never reused -- and exhausted the heap.
+     * {@link #acquireArena} recycling slots fixed that independently of spacing.
      */
-    private static final int ARENA_SPACING = 144;
+    private static final int ARENA_SPACING = 64;
     private static final int ARENA_Y = 64;
 
     /**
@@ -229,8 +243,9 @@ public class SimWorldManager {
      * {@code SPAWN_MOBS && (spawnEnemies || spawnFriendlies)} branch, so it walks every
      * player-ticking chunk every tick whatever this method does; the earlier claim here that the
      * zeroed limits stopped it was wrong, and a later profile still found 4.3% of the server
-     * thread underneath it. That cost is addressed by {@link #ARENA_SPACING} instead, which is
-     * what controls how many combatants land in each chunk's spawn-tracking list.
+     * thread underneath it. It is not addressed here at all: as {@link #ARENA_SPACING} explains,
+     * the total is (players x chunks within 8 of a player) however the grid is laid out, so the
+     * only real levers on it are the resident player count and the resident chunk count.
      *
      * <p>Peaceful difficulty is belt and braces: it also suppresses the hostile-mob paths that do
      * not consult the spawn state at all, and no sim damage comes from mobs.

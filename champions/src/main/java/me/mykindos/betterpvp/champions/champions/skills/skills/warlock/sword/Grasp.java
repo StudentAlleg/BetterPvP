@@ -43,11 +43,11 @@ import org.bukkit.scheduler.BukkitRunnable;
 import org.bukkit.scheduler.BukkitTask;
 import org.bukkit.util.EulerAngle;
 import org.bukkit.util.Vector;
+import org.jetbrains.annotations.Nullable;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.Iterator;
-import java.util.Map;
+import java.util.List;
 import java.util.WeakHashMap;
 
 import static me.mykindos.betterpvp.core.combat.cause.DamageCauseCategory.RANGED;
@@ -56,8 +56,19 @@ import static me.mykindos.betterpvp.core.combat.cause.DamageCauseCategory.RANGED
 @BPvPListener
 public class Grasp extends Skill implements InteractSkill, CooldownSkill, Listener, OffensiveSkill, CrowdControlSkill, DamageSkill {
 
+    /** How long a single skull stays at one spot before it is moved on or taken down. */
+    private static final long SKULL_LIFETIME_MILLIS = 200L;
+
+    /**
+     * The helmet every skull wears. Shared because {@code setHelmet} copies what it is given, so no
+     * stand ever sees another's instance.
+     */
+    private static final ItemStack SKULL_HELMET = new ItemStack(Material.WITHER_SKELETON_SKULL);
+
     private final WeakHashMap<Player, ArrayList<LivingEntity>> cooldownJump = new WeakHashMap<>();
-    private final HashMap<ArmorStand, Long> stands = new HashMap<>();
+
+    /** One entry per cast still showing skulls. Drained by {@link #onUpdate()}. */
+    private final List<SkullTrail> trails = new ArrayList<>();
 
     private double baseDistance;
 
@@ -107,22 +118,92 @@ public class Grasp extends Skill implements InteractSkill, CooldownSkill, Listen
 
 
     /**
-     * Spawns a decorative skull. Purely cosmetic -- callers scatter {@code loc} randomly, so
-     * nothing that affects the outcome of the fight may be decided from it. Damage is dealt
-     * separately by {@link #damageNearby(Player, Location, int)} against the unscattered path.
+     * The skulls thrown by one cast, moved around rather than respawned.
+     *
+     * <p>A cast places thirty skulls every two ticks for forty ticks. Spawning each of those meant
+     * 600 entity spawns per cast, and every spawn runs {@code ChunkMap.addEntity ->
+     * TrackedEntity.updatePlayers}, which is linear in the players in the world. That put
+     * {@code createArmourStand} at 5.9% of an entire server thread in a balance-sim profile -- three
+     * times what the skill's damage cost -- and it is the same cost on a busy live server.
+     *
+     * <p>A skull only ever stands for {@link #SKULL_LIFETIME_MILLIS}, so by the time a third batch
+     * is placed the first batch is already due to come down. Moving one of those instead of taking
+     * it down and putting a fresh one up elsewhere looks the same and holds the spawn count to the
+     * two batches on screen at once -- sixty per cast rather than six hundred.
+     *
+     * <p>Purely cosmetic either way: callers scatter the position randomly, so nothing that decides
+     * the outcome of a fight may be read from a skull. Damage is dealt separately by
+     * {@link #damageNearby(Player, Location, int)} against the unscattered path.
      */
-    private void createArmourStand(Location loc) {
-        CustomArmourStand as = new CustomArmourStand(((CraftWorld) loc.getWorld()).getHandle());
-        ArmorStand test = (ArmorStand) as.spawn(loc);
-        test.setVisible(false);
-        // ArmorStand test = (ArmorStand) p.getWorld().spawnEntity(tempLoc, EntityType.ARMOR_STAND);
-        test.getEquipment().setHelmet(new ItemStack(Material.WITHER_SKELETON_SKULL));
-        test.setGravity(false);
+    private static final class SkullTrail {
 
-        test.setSmall(true);
-        test.setHeadPose(new EulerAngle(UtilMath.randomInt(360), UtilMath.randomInt(360), UtilMath.randomInt(360)));
+        /** Standing skulls, oldest first -- the lifetime is fixed, so placement order is expiry order. */
+        private final ArrayDeque<PlacedSkull> shown = new ArrayDeque<>();
 
-        stands.put(test, System.currentTimeMillis() + 200);
+        /** Set once the cast stops placing skulls, after which {@link #cull(long)} takes them down. */
+        private boolean finished;
+
+        private void place(Location loc, long now) {
+            ArmorStand stand = reclaim(now);
+            if (stand == null) {
+                final CustomArmourStand handle = new CustomArmourStand(((CraftWorld) loc.getWorld()).getHandle());
+                stand = (ArmorStand) handle.spawn(loc);
+                stand.setVisible(false);
+                stand.getEquipment().setHelmet(SKULL_HELMET);
+                stand.setGravity(false);
+                stand.setSmall(true);
+            } else {
+                stand.teleport(loc);
+            }
+
+            stand.setHeadPose(new EulerAngle(UtilMath.randomInt(360), UtilMath.randomInt(360), UtilMath.randomInt(360)));
+            shown.add(new PlacedSkull(stand, now + SKULL_LIFETIME_MILLIS));
+        }
+
+        /**
+         * The oldest skull if it has stood its time, ready to be moved on. Skips any that something
+         * else has already removed, since a stale handle cannot be teleported.
+         */
+        private @Nullable ArmorStand reclaim(long now) {
+            while (!shown.isEmpty() && shown.peek().expiresAt() <= now) {
+                final ArmorStand candidate = shown.poll().stand();
+                if (candidate.isValid()) {
+                    return candidate;
+                }
+            }
+            return null;
+        }
+
+        /**
+         * Takes down skulls that have stood their time, once the cast has stopped feeding this trail.
+         *
+         * <p>Only once it has stopped: while the cast is running, {@link #place} is what recycles an
+         * expired skull, and removing it here first would put the spawn count straight back to one
+         * per skull. Gating on {@link #finished} rather than on elapsed time keeps that true at any
+         * tick rate -- a wall-clock grace period would stop reclaiming as soon as two ticks took
+         * longer than the grace, which is exactly what happens in a loaded simulation run.
+         *
+         * @return whether this trail is done with and can be dropped
+         */
+        private boolean cull(long now) {
+            if (!finished) {
+                return false;
+            }
+            while (!shown.isEmpty() && shown.peek().expiresAt() <= now) {
+                final ArmorStand stand = shown.poll().stand();
+                if (stand.isValid()) {
+                    stand.remove();
+                }
+            }
+            return shown.isEmpty();
+        }
+
+        private void finish() {
+            finished = true;
+        }
+    }
+
+    private record PlacedSkull(ArmorStand stand, long expiresAt) {
     }
 
     private void damageNearby(Player player, Location loc, int level) {
@@ -150,14 +231,11 @@ public class Grasp extends Skill implements InteractSkill, CooldownSkill, Listen
 
     @UpdateEvent
     public void onUpdate() {
-        Iterator<Map.Entry<ArmorStand, Long>> it = stands.entrySet().iterator();
-        while (it.hasNext()) {
-            Map.Entry<ArmorStand, Long> next = it.next();
-            if (next.getValue() - System.currentTimeMillis() <= 0) {
-                next.getKey().remove();
-                it.remove();
-            }
+        if (trails.isEmpty()) {
+            return;
         }
+        final long now = System.currentTimeMillis();
+        trails.removeIf(trail -> trail.cull(now));
     }
 
 
@@ -176,6 +254,9 @@ public class Grasp extends Skill implements InteractSkill, CooldownSkill, Listen
 
         final Location loc = block.getLocation().add(v);
         cooldownJump.put(player, new ArrayList<>());
+
+        final SkullTrail trail = new SkullTrail();
+        trails.add(trail);
 
         final BukkitTask runnable = new BukkitRunnable() {
 
@@ -198,6 +279,9 @@ public class Grasp extends Skill implements InteractSkill, CooldownSkill, Listen
                 Location compare = loc.clone();
                 compare.setY(startPos.getY());
                 if (compare.distance(startPos) < 1) {
+                    // Nothing will place into this trail again, so hand it to onUpdate to take down
+                    // rather than leaving it standing until the delayed canceller fires.
+                    trail.finish();
                     cancel();
                     return;
                 }
@@ -215,9 +299,10 @@ public class Grasp extends Skill implements InteractSkill, CooldownSkill, Listen
                         Location tempLoc = new Location(player.getWorld(), loc.getX() + UtilMath.randDouble(-2D, 2.0D), loc.getY() + UtilMath.randDouble(0.0D, 0.5D) - 0.50,
                                 loc.getZ() + UtilMath.randDouble(-2.0D, 2.0D));
 
-                        createArmourStand(tempLoc.clone());
-                        createArmourStand(tempLoc.clone().add(0, 1, 0));
-                        createArmourStand(tempLoc.clone().add(0, 2, 0));
+                        final long now = System.currentTimeMillis();
+                        trail.place(tempLoc.clone(), now);
+                        trail.place(tempLoc.clone().add(0, 1, 0), now);
+                        trail.place(tempLoc.clone().add(0, 2, 0), now);
 
                         // Damage tracks the unscattered path, at the heights the skulls average out
                         // to (the Y jitter above is uniform over [0, 0.5) less 0.50, so -0.25).
@@ -243,6 +328,7 @@ public class Grasp extends Skill implements InteractSkill, CooldownSkill, Listen
             @Override
             public void run() {
                 runnable.cancel();
+                trail.finish();
                 cooldownJump.get(player).clear();
 
             }
