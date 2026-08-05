@@ -21,11 +21,14 @@ import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 
 import static me.mykindos.betterpvp.balancesim.database.jooq.Tables.SIM_BUILD;
+import static me.mykindos.betterpvp.balancesim.database.jooq.Tables.SIM_RESULT;
 import static me.mykindos.betterpvp.balancesim.database.jooq.Tables.SIM_RUN;
 
 /**
@@ -81,6 +84,117 @@ public class SimResultRepository {
     }
 
     /**
+     * The most recent run this one could pick up from, or null if there is none.
+     *
+     * <p>Candidacy is {@code config_hash} plus realm, and that is the whole of it. The hash already
+     * covers scope, scenario, iterations, timeout, concurrency, skill filter, the reviewed skill
+     * list, the channel hold budget, every balance value the config digest sees, and the engine
+     * version -- which is exactly the question "would these two runs be measuring the same thing".
+     * So a resume cannot silently splice rows from a different game onto a sweep: change any of
+     * that and the hash moves, no candidate is found, and a fresh run opens instead.
+     *
+     * <p>{@code maxBuilds} is deliberately not in the hash and does not need to be. It cannot change
+     * what is enumerated, only whether the enumeration is refused outright -- the catalog refuses
+     * rather than truncating -- so a resume under a different cap either sees the same catalog or
+     * never gets as far as this method.
+     *
+     * <p>Both {@code CANCELLED} and {@code RUNNING} are candidates. {@code CANCELLED} is the clean
+     * case, an admin stopping a sweep. {@code RUNNING} is a run whose server died before it could
+     * close its row: nothing is writing to it, because a sweep only exists inside a live
+     * orchestrator, so a {@code RUNNING} row with no process behind it is precisely a crashed run
+     * and is the case this feature exists for. Ordered newest first so a repeatedly interrupted
+     * sweep resumes from where it actually got to.
+     */
+    public CompletableFuture<@Nullable Long> findResumableRun(int realm, String configHash) {
+        return database.getAsyncDslContext().executeAsync(ctx -> ctx
+                .select(SIM_RUN.ID)
+                .from(SIM_RUN)
+                .where(SIM_RUN.REALM.eq(realm))
+                .and(SIM_RUN.CONFIG_HASH.eq(configHash))
+                .and(SIM_RUN.STATUS.in("CANCELLED", "RUNNING"))
+                .orderBy(SIM_RUN.STARTED_AT.desc(), SIM_RUN.ID.desc())
+                .limit(1)
+                .fetchOne(SIM_RUN.ID));
+    }
+
+    /**
+     * Puts a run back into {@code RUNNING} and clears its finish stamp.
+     *
+     * <p>{@code finished_at} is nulled rather than left as it was, so the column keeps meaning "when
+     * this run stopped for good". A resumed run that still carried the stamp from the attempt that
+     * was interrupted would report a finish time before some of its own rows were written.
+     */
+    public CompletableFuture<Void> reopenRun(long runId) {
+        return database.getAsyncDslContext().executeAsyncVoid(ctx -> ctx
+                .update(SIM_RUN)
+                .set(SIM_RUN.FINISHED_AT, (OffsetDateTime) null)
+                .set(SIM_RUN.STATUS, "RUNNING")
+                .where(SIM_RUN.ID.eq(runId))
+                .execute());
+    }
+
+    /**
+     * The build rows a run already has, fingerprint to id.
+     *
+     * <p>A resumed run writes into the same {@code sim_run} row and therefore against the same
+     * {@code sim_build} rows -- {@code idx_sim_build_run_fingerprint} is unique, so re-inserting the
+     * catalog would fail rather than duplicate. Re-fetching the ids is what lets the sweep skip the
+     * insert entirely for builds it already has.
+     */
+    public CompletableFuture<Map<String, Long>> findBuildIds(long runId) {
+        return database.getAsyncDslContext().executeAsync(ctx -> {
+            final Map<String, Long> ids = new HashMap<>();
+            ctx.select(SIM_BUILD.FINGERPRINT, SIM_BUILD.ID)
+                    .from(SIM_BUILD)
+                    .where(SIM_BUILD.RUN_ID.eq(runId))
+                    .fetch()
+                    .forEach(record -> ids.put(record.get(SIM_BUILD.FINGERPRINT), record.get(SIM_BUILD.ID)));
+            return ids;
+        });
+    }
+
+    /**
+     * Every matchup this run has already reduced to a row, as {@link #matchupKey} strings.
+     *
+     * <p>A {@code sim_result} row is the unit of resumable work because a matchup only becomes one
+     * once <em>all</em> of its Monte-Carlo iterations have landed -- {@code SimMeasurement} holds the
+     * iteration count and reduces once, so there is no half-measured matchup to reason about. A
+     * matchup is therefore either fully recorded and skippable, or absent and re-run from scratch,
+     * and resuming can never average iterations from two different sittings into one row.
+     *
+     * <p>Keyed on the build's fingerprint rather than its id, so the key means the same thing to the
+     * freshly enumerated catalog as it does to the stored rows without anything having to map ids
+     * back onto specs.
+     */
+    public CompletableFuture<Set<String>> findMeasuredMatchups(long runId) {
+        return database.getAsyncDslContext().executeAsync(ctx -> {
+            final Set<String> measured = new HashSet<>();
+            ctx.select(SIM_BUILD.FINGERPRINT, SIM_RESULT.TARGET_ROLE, SIM_RESULT.TARGET_ARMOR)
+                    .from(SIM_RESULT)
+                    .join(SIM_BUILD).on(SIM_BUILD.ID.eq(SIM_RESULT.BUILD_ID))
+                    .where(SIM_RESULT.RUN_ID.eq(runId))
+                    .fetch()
+                    .forEach(record -> measured.add(matchupKey(
+                            record.get(SIM_BUILD.FINGERPRINT),
+                            record.get(SIM_RESULT.TARGET_ROLE),
+                            record.get(SIM_RESULT.TARGET_ARMOR))));
+            return measured;
+        });
+    }
+
+    /**
+     * The identity of a matchup across sittings: which build, against which target.
+     *
+     * <p>Joined on a delimiter that cannot occur in any of the three parts -- a fingerprint is hex, a
+     * role is an enum name, and an armour set id is {@code none}, {@code role_set} or {@code role_set_}
+     * plus a roll name. Concatenating without one would let two different matchups collide onto a key
+     * and a resumed sweep would skip a matchup it had never measured.
+     */
+    public static String matchupKey(String fingerprint, String targetRole, String targetArmor) {
+        return fingerprint + ' ' + targetRole + ' ' + targetArmor;
+    }
+
+    /**
      * Stamps {@code finished_at} and the terminal status on a run.
      *
      * @param status {@code COMPLETED}, {@code FAILED} or {@code CANCELLED}
@@ -123,7 +237,8 @@ public class SimResultRepository {
                         SIM_BUILD.SKILLS, SIM_BUILD.POINTS_SPENT, SIM_BUILD.BOOSTER, SIM_BUILD.FINGERPRINT,
                         SIM_BUILD.WEAPON_DAMAGE_BASE, SIM_BUILD.WEAPON_DAMAGE_MIN, SIM_BUILD.WEAPON_DAMAGE_MAX,
                         SIM_BUILD.WEAPON_ATTACK_SPEED_BASE, SIM_BUILD.WEAPON_ATTACK_SPEED_MIN,
-                        SIM_BUILD.WEAPON_ATTACK_SPEED_MAX, SIM_BUILD.WEAPON_SLOT, SIM_BUILD.WEAPON_ALIASES);
+                        SIM_BUILD.WEAPON_ATTACK_SPEED_MAX, SIM_BUILD.WEAPON_SLOT, SIM_BUILD.WEAPON_ALIASES,
+                        SIM_BUILD.WEAPON_ROLL);
                 for (SimBuildSpec build : chunk) {
                     final SimWeaponProfile weapon = build.weapon();
                     insert = insert.values(runId,
@@ -138,10 +253,9 @@ public class SimResultRepository {
                             build.booster(),
                             build.fingerprint(),
                             // The weapon's configured figures, denormalised so a row stays readable
-                            // after the item config it was measured under has moved on. Only the base
-                            // is exercised -- MeleeDamageStatHandler applies stat.getValue() and
-                            // ItemFactory.create rolls nothing -- so the min/max pair describes what
-                            // the item could roll, not what this build swung for.
+                            // after the item config it was measured under has moved on. All three are
+                            // the item's envelope; weapon_roll below says which of them this build was
+                            // actually instantiated at, and only that one was swung for.
                             BigDecimal.valueOf(weapon.damageBase()),
                             BigDecimal.valueOf(weapon.damageMin()),
                             BigDecimal.valueOf(weapon.damageMax()),
@@ -152,7 +266,9 @@ public class SimResultRepository {
                             // Every weapon key this row's measurement covers. A dashboard resolving a
                             // weapon through this list is the difference between "never swept" and
                             // "swept under an equivalent key", which are opposite conclusions.
-                            jsonb(stringsToJson(build.weaponAliases()), "[]"));
+                            jsonb(stringsToJson(build.weaponAliases()), "[]"),
+                            // Which of the three damage figures above the duel was fought at.
+                            build.weaponRoll().id());
                 }
 
                 insert.returning(SIM_BUILD.ID, SIM_BUILD.FINGERPRINT)

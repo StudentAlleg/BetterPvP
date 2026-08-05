@@ -17,6 +17,11 @@ import java.util.List;
  *                     exists because a defender is spawned from a spec too, and its armour is what
  *                     {@code sim_result.target_armor} and {@code target_hp} describe.
  * @param runeKeys     rune/gem item keys applied to the loadout
+ * @param weaponRoll   where in its band the weapon's stats sit. {@link SimStatRoll#BASE} for every
+ *                     sweep taken before the roll axis existed, and for any tier that does not vary
+ *                     it -- so a stored row without the column reads correctly as the base roll it
+ *                     was. {@link #weapon()} carries all three figures either way; this says which
+ *                     of them the duel was actually fought with
  * @param skills       one entry per filled slot
  * @param pointsSpent  sum of allocated levels, bounded by {@code RoleBuild.points} (12)
  * @param booster      whether the weapon is a skill booster (from {@code SkillWeapons.isBooster})
@@ -32,6 +37,7 @@ public record SimBuildSpec(String role,
                            String weaponKey,
                            String armorSetId,
                            List<String> runeKeys,
+                           SimStatRoll weaponRoll,
                            List<SimSkillAllocation> skills,
                            int pointsSpent,
                            boolean booster,
@@ -41,6 +47,20 @@ public record SimBuildSpec(String role,
 
     public SimBuildSpec {
         weaponAliases = List.copyOf(weaponAliases);
+    }
+
+    /**
+     * The damage the weapon actually deals at this build's roll.
+     *
+     * <p>Denormalised figures on {@link #weapon()} describe the item's whole envelope; this picks the
+     * corner of it the duel was fought at, so a dashboard does not have to re-implement the choice.
+     */
+    public double effectiveDamage() {
+        return switch (weaponRoll) {
+            case MIN -> weapon.damageMin();
+            case BASE -> weapon.damageBase();
+            case MAX -> weapon.damageMax();
+        };
     }
 
     /** Whether this build's measurement was reused for weapons other than the one it names. */

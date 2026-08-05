@@ -29,14 +29,37 @@ champions:
     #   LOADOUT - distinct weapon profiles x every rune each accepts, no skills. Neither
     #             WEAPONS nor RUNES crosses those two axes, so until this tier a rune had
     #             only ever been measured on the default weapon.
-    #   FULL    - every budget-feasible build. Expect hours; check the logged count first.
-    #   BASELINE- FULL with every lossless reduction applied: weapons deduplicated by stat
-    #             profile, targets collapsed by health, skills limited to relevantSkills
-    #             below. The reductions are what make an exhaustive run finishable, which is
-    #             what makes it a baseline -- a stopped FULL is a sample, not one. Runes are
-    #             not a term here (see LOADOUT); the two tiers together are the baseline.
+    #   EQUIPMENT-the whole item space and nothing else: distinct weapon profiles, each at
+    #             min/base/max damage, carrying every rune SET it can hold (combinations up
+    #             to 4 sockets -- 386 per sword, 562 per axe), against armour at base and max.
+    #             This is LOADOUT without its two restrictions: LOADOUT takes one rune at a
+    #             time and only ever the configured roll. Large: budget on the order of
+    #             100,000 builds, so raise maxBuilds and drop iterations before running it.
+    #   FULL    - all of EQUIPMENT crossed with every budget-feasible build. Genuinely
+    #             exhaustive and correspondingly enormous -- the rune axis alone multiplies
+    #             the space by several hundred. Only enumerable under a narrow skillFilter,
+    #             and refused with its count when it is not. Check the logged count first.
+    #   BASELINE- FULL's build half with every lossless reduction applied: weapons
+    #             deduplicated by stat profile, targets collapsed by health, skills limited
+    #             to relevantSkills below. The reductions are what make an exhaustive run
+    #             finishable, which is what makes it a baseline -- a stopped FULL is a
+    #             sample, not one. Runes and stat rolls are not terms here; BASELINE and
+    #             EQUIPMENT together are the pair that covers what FULL does, separately
+    #             enough that each one finishes.
     # A running sweep can be stopped with "/simulate stop", which drains the duels in
     # flight and writes everything measured so far under status CANCELLED.
+    #
+    # A stopped or crashed sweep can be picked up with "/simulate <SCOPE> --resume". It
+    # continues the newest interrupted run at the same config_hash -- same sim_run row, same
+    # sim_build rows, skipping every matchup already reduced to a sim_result row -- so a long
+    # sweep can be finished across several sittings and still be ONE run to a dashboard.
+    # Candidacy is config_hash alone, which covers scope, scenario, iterations, timeout,
+    # concurrency, skill filter, relevantSkills, channelHoldTicks, every balance value and the
+    # engine version: change any of them and there is no candidate, so a resume can never
+    # splice rows measured under a different game onto an existing run. It opens a new run in
+    # that case rather than failing, so the flag is safe to type when there is nothing to
+    # resume. Note that maxBuilds is deliberately NOT part of the hash -- it can only refuse an
+    # enumeration, never truncate one, so raising it between sittings is safe.
     scope: MELEE
     # Whether a duel drives one side or both, when /simulate is given no second argument.
     #   ONE_WAY - only the attacker acts. ttk_s is an unconditional "how long this build
@@ -49,6 +72,11 @@ champions:
     scenario: ONE_WAY
     # Refuse a scope that enumerates more builds than this rather than truncating it -- a
     # prefix of an enumeration is a biased sample and nothing on the row would say so.
+    #
+    # 10,000 is sized for the tiers that predate the rune and stat-roll axes. EQUIPMENT and
+    # FULL cross both and run to six figures; raising this for them is the deliberate act it
+    # should be, because the duel count that follows is builds x targets x iterations and
+    # duels cost wall clock. Size it from the count the refusal prints, not upward in guesses.
     maxBuilds: 10000
     # Which skills may appear in an enumerated build. Skills occupy six independent slots,
     # so this is the lever with the most leverage on sweep size: FULL over every enabled

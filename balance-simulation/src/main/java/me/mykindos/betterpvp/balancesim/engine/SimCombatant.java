@@ -398,7 +398,8 @@ public class SimCombatant {
         final ItemStack previous = inventory.getItemInMainHand();
         // With the build's runes socketed in. The rune handlers read the container off the held stack, so
         // this is the only place a rune becomes real -- there is no separate "apply rune" step.
-        final ItemStack weapon = context.equipment().weaponStack(build.weaponKey(), build.runeKeys());
+        final ItemStack weapon = context.equipment()
+                .weaponStack(build.weaponKey(), build.runeKeys(), build.weaponRoll());
         inventory.setItemInMainHand(weapon);
         UtilServer.callEvent(new PlayerInventorySlotChangeEvent(player,
                 HOTBAR_MENU_SLOT_OFFSET + inventory.getHeldItemSlot(), previous, weapon));

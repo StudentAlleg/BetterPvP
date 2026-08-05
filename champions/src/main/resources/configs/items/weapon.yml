@@ -151,8 +151,8 @@ wind_blade:
   velocityStrength: 0.5
   damage:
     base: 6.0
-    min: 7.0
-    max: 8.0
+    min: 5.0
+    max: 7.0
   durability: 2048
   attack_speed:
     min: -0.25

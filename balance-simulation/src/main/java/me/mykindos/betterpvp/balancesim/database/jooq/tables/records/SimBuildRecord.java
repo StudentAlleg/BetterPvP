@@ -275,6 +275,21 @@ public class SimBuildRecord extends UpdatableRecordImpl<SimBuildRecord> {
         return (JSONB) get(16);
     }
 
+    /**
+     * Setter for <code>public.sim_build.weapon_roll</code>.
+     */
+    public SimBuildRecord setWeaponRoll(String value) {
+        set(17, value);
+        return this;
+    }
+
+    /**
+     * Getter for <code>public.sim_build.weapon_roll</code>.
+     */
+    public String getWeaponRoll() {
+        return (String) get(17);
+    }
+
     // -------------------------------------------------------------------------
     // Primary key information
     // -------------------------------------------------------------------------
@@ -298,7 +313,7 @@ public class SimBuildRecord extends UpdatableRecordImpl<SimBuildRecord> {
     /**
      * Create a detached, initialised SimBuildRecord
      */
-    public SimBuildRecord(Long id, Long runId, String role, String weapon, JSONB runes, JSONB skills, Integer pointsSpent, Boolean booster, String fingerprint, BigDecimal weaponDamageBase, BigDecimal weaponDamageMin, BigDecimal weaponDamageMax, BigDecimal weaponAttackSpeedBase, BigDecimal weaponAttackSpeedMin, BigDecimal weaponAttackSpeedMax, String weaponSlot, JSONB weaponAliases) {
+    public SimBuildRecord(Long id, Long runId, String role, String weapon, JSONB runes, JSONB skills, Integer pointsSpent, Boolean booster, String fingerprint, BigDecimal weaponDamageBase, BigDecimal weaponDamageMin, BigDecimal weaponDamageMax, BigDecimal weaponAttackSpeedBase, BigDecimal weaponAttackSpeedMin, BigDecimal weaponAttackSpeedMax, String weaponSlot, JSONB weaponAliases, String weaponRoll) {
         super(SimBuild.SIM_BUILD);
 
         setId(id);
@@ -318,6 +333,7 @@ public class SimBuildRecord extends UpdatableRecordImpl<SimBuildRecord> {
         setWeaponAttackSpeedMax(weaponAttackSpeedMax);
         setWeaponSlot(weaponSlot);
         setWeaponAliases(weaponAliases);
+        setWeaponRoll(weaponRoll);
         resetChangedOnNotNull();
     }
 }

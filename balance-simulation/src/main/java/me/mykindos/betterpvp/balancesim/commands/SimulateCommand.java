@@ -50,8 +50,21 @@ public class SimulateCommand extends Command implements IConsoleCommand {
      */
     private static final String AUDIT_FLAG = "--audit";
 
+    /**
+     * Continues the newest interrupted run at this configuration instead of opening a new one.
+     *
+     * <p>A flag rather than a separate subcommand because what it modifies is where the rows go, not
+     * what is measured: the scope and scenario arguments mean exactly what they always did, and a
+     * resumed sitting enumerates the same catalog. Writing it as {@code /simulate FULL --resume} also
+     * keeps the scope visible at the call site, which matters because the scope is part of what
+     * decides whether an interrupted run is a candidate at all.
+     *
+     * <p>Safe to type when there is nothing to resume: no candidate means a new run opens normally.
+     */
+    private static final String RESUME_FLAG = "--resume";
+
     /** Every flag this command accepts, so an unrecognised one can be refused by name. */
-    private static final List<String> FLAGS = List.of(AUDIT_FLAG);
+    private static final List<String> FLAGS = List.of(AUDIT_FLAG, RESUME_FLAG);
 
     private final SimulationGate gate;
     private final DuelOrchestrator orchestrator;
@@ -91,11 +104,14 @@ public class SimulateCommand extends Command implements IConsoleCommand {
         final List<String> unknownFlags = new ArrayList<>();
         final List<String> positional = new ArrayList<>();
         boolean audit = false;
+        boolean resume = false;
         for (String arg : args) {
             if (!arg.startsWith("--")) {
                 positional.add(arg);
             } else if (AUDIT_FLAG.equalsIgnoreCase(arg)) {
                 audit = true;
+            } else if (RESUME_FLAG.equalsIgnoreCase(arg)) {
+                resume = true;
             } else {
                 unknownFlags.add(arg);
             }
@@ -149,6 +165,11 @@ public class SimulateCommand extends Command implements IConsoleCommand {
 
         UtilMessage.message(sender, "core.prefix.command", "balancesim.command.simulate.started",
                 Component.text(scope.name()), Component.text(scenario.name()));
+        if (resume) {
+            // Said up front rather than only in the log, because whether a candidate was found decides
+            // how long this sitting takes, and the answer arrives seconds later in the resume line.
+            UtilMessage.message(sender, "core.prefix.command", "balancesim.command.simulate.resuming");
+        }
         if (audit) {
             // Warned rather than refused. A skill audit needs skill-less baseline builds to subtract,
             // which only the tiers that enumerate skills produce -- but an admin auditing a scope that
@@ -160,7 +181,8 @@ public class SimulateCommand extends Command implements IConsoleCommand {
                             : "balancesim.command.simulate.auditScope",
                     Component.text(scope.name()));
         }
-        orchestrator.run(SimulationTrigger.COMMAND, scope, scenario, audit, progress -> report(sender, progress))
+        orchestrator.run(SimulationTrigger.COMMAND, scope, scenario, audit, resume,
+                        progress -> report(sender, progress))
                 .thenAccept(summary -> report(sender, summary))
                 .exceptionally(ex -> {
                     log.error("Simulation run failed", ex).submit();

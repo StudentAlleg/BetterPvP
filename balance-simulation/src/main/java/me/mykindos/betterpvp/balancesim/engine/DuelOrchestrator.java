@@ -16,6 +16,7 @@ import me.mykindos.betterpvp.balancesim.catalog.SimScenario;
 import me.mykindos.betterpvp.balancesim.catalog.SimScope;
 import me.mykindos.betterpvp.balancesim.catalog.SimSkillAllocation;
 import me.mykindos.betterpvp.balancesim.catalog.SimSkillFilter;
+import me.mykindos.betterpvp.balancesim.catalog.SimStatRoll;
 import me.mykindos.betterpvp.balancesim.catalog.SimTargetSpec;
 import me.mykindos.betterpvp.balancesim.repository.SimDuelDiagnosticRow;
 import me.mykindos.betterpvp.balancesim.repository.SimResultRepository;
@@ -91,7 +92,18 @@ public class DuelOrchestrator {
     // enumerates skill-less baselines alongside its single-skill builds. Neither changes what an
     // existing figure means, but a SKILLS run at -2 has no baseline rows and cannot be audited, which
     // is exactly the kind of difference this string exists to keep visible.
-    private static final String ENGINE_VERSION = "phase3-actives-3";
+    //
+    // Bumped for the stat-roll and rune-combination axes. This one is load-bearing rather than
+    // informational, because it is what keeps two incompatible things apart:
+    //   1. FULL now enumerates a different space. It was ALL_MELEE x budget vectors with no runes and
+    //      no rolls; it is now DISTINCT_MELEE x budget vectors x every rune set x min/base/max. A FULL
+    //      row from before and one from after answer different questions under the same tier name.
+    //   2. Resume keys on config_hash, which this string feeds. Without the bump, an interrupted run
+    //      enumerated under the old catalog would be a resume candidate for a sweep enumerating the
+    //      new one -- and the two would merge into a single sim_run whose rows came from two different
+    //      permutation spaces. The build-drift warning in startSweep would fire, but a warning is not
+    //      a guard, and there are already 19 crashed RUNNING rows on the dev realm that would qualify.
+    private static final String ENGINE_VERSION = "phase3-rolls-1";
 
     private static final long MILLIS_PER_TICK = 50L;
 
@@ -306,6 +318,45 @@ public class DuelOrchestrator {
                                              SimScenario scenario,
                                              boolean audit,
                                              Consumer<SimProgress> listener) {
+        return run(trigger, scope, scenario, audit, false, listener);
+    }
+
+    /**
+     * Starts a sweep, optionally continuing one that was stopped or died rather than opening a new one.
+     *
+     * <p>Resuming writes into the <em>same</em> {@code sim_run} row as the interrupted attempt, and
+     * that is the point of it. A sweep split across two run ids is two partial sweeps as far as every
+     * dashboard is concerned -- "latest run" finds the second half and nothing joins the two -- so
+     * finishing a long sweep across several sittings has to produce one run, or the reason for
+     * resuming at all is defeated.
+     *
+     * <p>What that requires, and why each part holds:
+     * <ul>
+     *   <li><b>The same catalog.</b> Enumeration is deterministic by construction -- weapons, runes,
+     *       skills and roles are all sorted, and the catalog says so at each point it sorts -- so the
+     *       second sitting enumerates the same builds in the same order as the first.</li>
+     *   <li><b>The same measurement.</b> Guaranteed by {@code config_hash}, which candidacy is keyed
+     *       on: change the scope, scenario, iteration count, skill filter, timeout, concurrency or any
+     *       balance value and no candidate matches, so a resume that would have spliced together two
+     *       different games silently opens a fresh run instead.</li>
+     *   <li><b>No half-done work.</b> A matchup becomes a {@code sim_result} row only once every one
+     *       of its iterations has landed, so the stored rows are exactly the finished matchups and
+     *       everything else is re-run whole. No row is ever an average of iterations from two
+     *       sittings.</li>
+     * </ul>
+     *
+     * <p>When no candidate is found this opens a new run and says so rather than failing. "Nothing to
+     * resume" is the normal state the first time a sweep is started, and an admin who habitually types
+     * the flag should not have to know which case they are in.
+     *
+     * @param resume whether to look for an interrupted run at this {@code config_hash} and continue it
+     */
+    public CompletableFuture<SimSummary> run(SimulationTrigger trigger,
+                                             SimScope scope,
+                                             SimScenario scenario,
+                                             boolean audit,
+                                             boolean resume,
+                                             Consumer<SimProgress> listener) {
         if (!gate.isEnabled()) {
             throw new IllegalStateException("Simulation is disabled");
         }
@@ -332,10 +383,11 @@ public class DuelOrchestrator {
 
         final CompletableFuture<SimSummary> done = new CompletableFuture<>();
         final int realm = Core.getCurrentRealm().getId();
+        final String configHash = configHash(scope);
 
-        repository.openRun(realm, trigger, ENGINE_VERSION, configHash(scope), scenarioJson(scope))
-                .whenComplete((runId, throwable) -> {
-                    if (throwable != null || runId == null) {
+        openOrResume(realm, trigger, scope, configHash, resume)
+                .whenComplete((state, throwable) -> {
+                    if (throwable != null || state == null) {
                         running = false;
                         done.completeExceptionally(throwable != null ? throwable
                                 : new IllegalStateException("sim_run insert returned no id"));
@@ -343,10 +395,67 @@ public class DuelOrchestrator {
                     }
                     // Everything from here touches world and entity state, so it must be on the
                     // main thread; the repository future completed on a database thread.
-                    UtilServer.runTask(plugin, () -> startSweep(runId, scope, done, listener));
+                    UtilServer.runTask(plugin, () -> startSweep(state, scope, done, listener));
                 });
 
         return done;
+    }
+
+    /**
+     * Opens a fresh run, or reopens the newest interrupted one at this {@code config_hash}.
+     *
+     * <p>The three reads a resume needs -- the run id, the build ids it already has, and the matchups
+     * it already measured -- are chained here rather than inside {@link #startSweep} so that the
+     * sweep begins with one immutable {@link RunState} and never has to ask the database anything
+     * again mid-run.
+     */
+    private CompletableFuture<RunState> openOrResume(int realm,
+                                                     SimulationTrigger trigger,
+                                                     SimScope scope,
+                                                     String configHash,
+                                                     boolean resume) {
+        if (!resume) {
+            return repository.openRun(realm, trigger, ENGINE_VERSION, configHash, scenarioJson(scope))
+                    .thenApply(RunState::fresh);
+        }
+        return repository.findResumableRun(realm, configHash).thenCompose(existing -> {
+            if (existing == null) {
+                // Not an error: this is what the first sitting of any sweep looks like.
+                log.info("Resume requested for scope {} but no interrupted run matches config_hash {};"
+                        + " opening a new run.", scope, configHash).submit();
+                return repository.openRun(realm, trigger, ENGINE_VERSION, configHash, scenarioJson(scope))
+                        .thenApply(RunState::fresh);
+            }
+            return repository.reopenRun(existing)
+                    .thenCompose(ignored -> repository.findBuildIds(existing))
+                    .thenCompose(buildIds -> repository.findMeasuredMatchups(existing)
+                            .thenApply(measured -> {
+                                log.info("Resuming simulation run {} at config_hash {}: {} builds already"
+                                                + " inserted, {} matchups already measured and will be skipped.",
+                                        existing, configHash, buildIds.size(), measured.size()).submit();
+                                return new RunState(existing, true, buildIds, measured);
+                            }));
+        });
+    }
+
+    /**
+     * What a sweep starts from: its run row, and whatever an earlier sitting already did.
+     *
+     * <p>Immutable and resolved before the first duel, so the tick loop never depends on a database
+     * read. A fresh run carries empty collections rather than nulls, which is what lets
+     * {@link #startSweep} treat both cases with one code path -- the resume logic is then a filter
+     * over an empty set, not a branch.
+     *
+     * @param runId    the {@code sim_run} row being written to
+     * @param resumed  whether this is continuing an interrupted attempt
+     * @param buildIds fingerprint to {@code sim_build.id} for rows the run already has
+     * @param measured {@link SimResultRepository#matchupKey} of every matchup already reduced to a row
+     */
+    private record RunState(long runId, boolean resumed, Map<String, Long> buildIds, Set<String> measured) {
+
+        static RunState fresh(long runId) {
+            return new RunState(runId, false, Map.of(), Set.of());
+        }
     }
 
     /**
@@ -384,10 +493,11 @@ public class DuelOrchestrator {
      *
      * <p>Main thread only: enumeration reads the item registry and creates {@code ItemStack}s.
      */
-    private void startSweep(long runId,
+    private void startSweep(RunState state,
                             SimScope scope,
                             CompletableFuture<SimSummary> done,
                             Consumer<SimProgress> listener) {
+        final long runId = state.runId();
         try {
             // One registry read per run: the axes are then fixed for its duration, so a reload
             // part-way through cannot make a target's measured armour differ from the armour its
@@ -412,14 +522,31 @@ public class DuelOrchestrator {
                 return;
             }
 
-            repository.insertBuilds(runId, builds).whenComplete((buildIds, throwable) -> {
+            // Only the builds this run does not already have a row for. On a fresh run that is all of
+            // them; on a resume it should be none, because the catalog is deterministic. A non-zero
+            // count here is therefore worth logging rather than silently inserting: it means the
+            // enumeration drifted while config_hash did not, which is a bug in one of them.
+            final List<SimBuildSpec> missing = state.resumed()
+                    ? builds.stream().filter(build -> !state.buildIds().containsKey(build.fingerprint())).toList()
+                    : builds;
+            if (state.resumed() && !missing.isEmpty()) {
+                log.warn("Resumed run {} enumerated {} builds its earlier sitting did not have."
+                                + " The catalog should be deterministic at a fixed config_hash, so this is"
+                                + " a drift between enumeration and the hash; inserting them anyway.",
+                        runId, missing.size()).submit();
+            }
+
+            repository.insertBuilds(runId, missing).whenComplete((insertedIds, throwable) -> {
                 if (throwable != null) {
                     running = false;
                     done.completeExceptionally(throwable);
                     return;
                 }
+                final Map<String, Long> buildIds = new HashMap<>(state.buildIds());
+                buildIds.putAll(insertedIds);
                 UtilServer.runTask(plugin, () -> {
                     final Deque<Matchup> pending = new ArrayDeque<>();
+                    int skipped = 0;
                     for (SimBuildSpec build : builds) {
                         final Long buildId = buildIds.get(build.fingerprint());
                         if (buildId == null) {
@@ -431,6 +558,15 @@ public class DuelOrchestrator {
                             continue;
                         }
                         for (SimTargetSpec target : targets) {
+                            // Already reduced to a row by an earlier sitting of this run. Skipped
+                            // whole rather than re-measured: re-running it would either duplicate the
+                            // row or overwrite a good measurement with a second one taken under
+                            // different residency, and neither is worth the duels.
+                            if (state.measured().contains(SimResultRepository.matchupKey(
+                                    build.fingerprint(), target.role(), target.armorSetId()))) {
+                                skipped++;
+                                continue;
+                            }
                             // One Matchup, one SimMeasurement; the iteration count lives in the
                             // measurement so a matchup is only reduced once every duel for it has
                             // been recorded.
@@ -440,6 +576,27 @@ public class DuelOrchestrator {
                                 pending.add(matchup);
                             }
                         }
+                    }
+                    if (state.resumed()) {
+                        // Both halves, because they answer different questions: what this sitting will
+                        // cost, and how much of the sweep is already in the table. A resume that found
+                        // nothing to skip is a resume that is quietly starting over, and the only way
+                        // to notice is for the skipped count to be printed even when it is zero.
+                        log.info("Run {} resuming: {} matchups already measured, {} remaining"
+                                        + " ({} duels this sitting).",
+                                runId, skipped, pending.size() / iterations, pending.size()).submit();
+                    }
+
+                    // A resume of a sweep that turned out to be finished. Closed as COMPLETED rather
+                    // than left RUNNING: the previous sitting measured everything and only died before
+                    // it could stamp the row, so the run genuinely is complete and should stop being a
+                    // resume candidate. Returning here also avoids warming up arenas for no duels.
+                    if (pending.isEmpty()) {
+                        log.info("Run {} has no matchups left to measure; closing it as COMPLETED.",
+                                runId).submit();
+                        finish(runId, done, List.of(), List.of(),
+                                SimSummary.empty(runId, scope, "COMPLETED"));
+                        return;
                     }
                     // Creating the world here rather than lazily inside a duel keeps the one
                     // blocking, main-thread-only operation out of the tick loop.
@@ -1346,8 +1503,13 @@ public class DuelOrchestrator {
                     // defender's weapon as well would square the space to answer a question no column on
                     // the row asks.
                     context.equipment().defaultWeapon().key(),
+                    // The armour roll rides on the set id rather than being a field here, so it
+                    // reaches SimEquipment.armorStacks through the same string sim_result records.
                     target.armorSetId(),
                     List.of(),
+                    // The defender's weapon is never swung under ONE_WAY and is not an axis under
+                    // MUTUAL, so there is nothing for a roll to vary; base is what it has always been.
+                    SimStatRoll.DEFAULT,
                     target.skills(),
                     target.pointsSpent(),
                     false,

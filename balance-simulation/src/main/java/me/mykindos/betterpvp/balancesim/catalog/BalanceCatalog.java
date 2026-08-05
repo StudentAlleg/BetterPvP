@@ -162,7 +162,9 @@ public class BalanceCatalog {
         for (Role role : Role.values()) {
             targets.add(target(role, SimEquipment.NO_ARMOR));
             if (scope.isArmorSets()) {
-                targets.add(target(role, SimEquipment.ROLE_ARMOR));
+                for (SimStatRoll roll : scope.getArmorRollAxis().rolls()) {
+                    targets.add(target(role, SimEquipment.armorSetId(roll)));
+                }
             }
         }
         return scope.isCollapseTargets()
@@ -211,6 +213,9 @@ public class BalanceCatalog {
         final Map<Double, List<String>> aliases = new LinkedHashMap<>();
         final List<SimTargetSpec> kept = new ArrayList<>();
         for (SimTargetSpec target : targets) {
+            // Any armoured target keeps its own row whatever its roll -- the premise below is about
+            // bare targets only, and two rolls of one set agreeing on health could still differ
+            // elsewhere for the same reason two different sets could.
             if (!SimEquipment.NO_ARMOR.equals(target.armorSetId()) || !target.skills().isEmpty()) {
                 kept.add(target);
                 continue;
@@ -246,11 +251,36 @@ public class BalanceCatalog {
     // Skill axis
     // -------------------------------------------------------------------------
 
-    /** A bare role on each weapon of the axis, and each rune set of the axis. */
+    /** A bare role on each weapon of the axis, at each roll, with each rune set of the axis. */
     private void enumerateSkilless(Role role, SimScope scope, List<SimBuildSpec> out) {
-        for (WeaponOption weapon : weaponsFor(scope, null)) {
-            for (List<String> runes : runesFor(scope, weapon)) {
-                out.add(build(role, weapon, runes, List.of()));
+        emitLoadouts(role, scope, null, List.of(), out);
+    }
+
+    /**
+     * Emits one build per (weapon x roll x rune set) for a fixed skill allocation.
+     *
+     * <p>The three loadout axes are crossed in one place rather than at each of the three skill
+     * tiers, so a tier cannot pick up one axis and miss another -- which is how the rune axis came to
+     * be absent from {@code FULL} while being present in {@code LOADOUT}. Whether an axis varies at
+     * all is decided by {@code scope}, so a tier that does not want one still calls this and gets a
+     * single element back from it.
+     *
+     * <p>Ordered weapon-major, then roll, then rune set, with the identity value of each axis first
+     * ({@link SimStatRoll#BASE}, the empty rune set). A prefix of the enumeration is therefore the
+     * plainer sweep rather than an arbitrary slice of the widest one, which is the same property
+     * {@link #interleaveByRole} gives the role axis and matters for the same reason: these sweeps
+     * are stopped rather than finished.
+     */
+    private void emitLoadouts(Role role,
+                              SimScope scope,
+                              @Nullable SkillType slot,
+                              List<SimSkillAllocation> allocation,
+                              List<SimBuildSpec> out) {
+        for (WeaponOption weapon : weaponsFor(scope, slot)) {
+            for (SimStatRoll roll : scope.getWeaponRollAxis().rolls()) {
+                for (List<String> runes : runesFor(scope, weapon)) {
+                    out.add(build(role, weapon, roll, runes, allocation));
+                }
             }
         }
     }
@@ -278,12 +308,7 @@ public class BalanceCatalog {
             for (Skill skill : entry.getValue()) {
                 final int maxLevel = Math.min(skill.getMaxLevel(), budget);
                 for (int level = 1; level <= maxLevel; level++) {
-                    final List<SimSkillAllocation> allocation = List.of(allocation(skill, level));
-                    for (WeaponOption weapon : weaponsFor(scope, entry.getKey())) {
-                        for (List<String> runes : runesFor(scope, weapon)) {
-                            out.add(build(role, weapon, runes, allocation));
-                        }
-                    }
+                    emitLoadouts(role, scope, entry.getKey(), List.of(allocation(skill, level)), out);
                 }
                 checkCap(out.size(), maxBuilds, scope);
             }
@@ -319,12 +344,7 @@ public class BalanceCatalog {
             // The empty build is emitted by the skill-less tier and would be duplicated here once
             // per role, so only allocations that actually spend a point become a row.
             if (!chosen.isEmpty()) {
-                final SkillType boostable = boostableSlot(chosen);
-                for (WeaponOption weapon : weaponsFor(scope, boostable)) {
-                    for (List<String> runes : runesFor(scope, weapon)) {
-                        out.add(build(role, weapon, runes, List.copyOf(chosen)));
-                    }
-                }
+                emitLoadouts(role, scope, boostableSlot(chosen), List.copyOf(chosen), out);
                 checkCap(out.size(), maxBuilds, scope);
             }
             return;
@@ -478,15 +498,25 @@ public class BalanceCatalog {
      * than an error.
      */
     private List<List<String>> runesFor(SimScope scope, WeaponOption weapon) {
-        if (scope.getRuneAxis() == SimScope.RuneAxis.NONE) {
-            return NO_RUNES;
+        switch (scope.getRuneAxis()) {
+            case NONE -> {
+                return NO_RUNES;
+            }
+            // Every set the weapon can hold, cached per weapon in SimEquipment because the
+            // enumeration asks for it once per skill allocation and the sets do not change.
+            case ALL_COMBINATIONS -> {
+                return equipment.weaponRuneSets(weapon.key());
+            }
+            case ONE_AT_A_TIME -> {
+                final List<List<String>> sets = new ArrayList<>();
+                sets.add(List.of());
+                for (SimEquipment.RuneOption rune : equipment.weaponRunes(weapon.key())) {
+                    sets.add(List.of(rune.key()));
+                }
+                return List.copyOf(sets);
+            }
+            default -> throw new IllegalStateException("Unhandled rune axis " + scope.getRuneAxis());
         }
-        final List<List<String>> sets = new ArrayList<>();
-        sets.add(List.of());
-        for (SimEquipment.RuneOption rune : equipment.weaponRunes(weapon.key())) {
-            sets.add(List.of(rune.key()));
-        }
-        return List.copyOf(sets);
     }
 
     /** The single "no runes at all" rune set, hoisted so the common case allocates nothing. */
@@ -498,6 +528,7 @@ public class BalanceCatalog {
 
     private SimBuildSpec build(Role role,
                                WeaponOption weapon,
+                               SimStatRoll weaponRoll,
                                List<String> runeKeys,
                                List<SimSkillAllocation> skills) {
         int points = 0;
@@ -515,10 +546,11 @@ public class BalanceCatalog {
                 weapon.key(),
                 SimEquipment.NO_ARMOR,
                 runeKeys,
+                weaponRoll,
                 skills,
                 points,
                 weapon.booster(),
-                fingerprint(role, weapon, runeKeys, skills),
+                fingerprint(role, weapon, weaponRoll, runeKeys, skills),
                 equipment.profileOf(weapon.key()),
                 equipment.weaponAliases(weapon.key()));
     }
@@ -558,9 +590,16 @@ public class BalanceCatalog {
      */
     private static String fingerprint(Role role,
                                       WeaponOption weapon,
+                                      SimStatRoll weaponRoll,
                                       List<String> runeKeys,
                                       List<SimSkillAllocation> skills) {
         final StringBuilder canonical = new StringBuilder(role.name()).append('|').append(weapon.key());
+        // Appended only when it is not the base roll, so every fingerprint taken before the roll axis
+        // existed still hashes to the same value. Two runs of the same build must join across the
+        // change, and a build at the configured roll is the same build it always was.
+        if (weaponRoll != SimStatRoll.DEFAULT) {
+            canonical.append("|roll:").append(weaponRoll.id());
+        }
         runeKeys.stream().sorted().forEach(rune -> canonical.append('|').append(rune));
         // Sorted so two builds that differ only in enumeration order hash identically.
         skills.stream()

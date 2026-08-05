@@ -21,6 +21,8 @@ import me.mykindos.betterpvp.core.item.component.impl.stat.StatContainerComponen
 import me.mykindos.betterpvp.core.item.component.impl.stat.StatTypes;
 import me.mykindos.betterpvp.core.item.model.ArmorItem;
 import me.mykindos.betterpvp.core.item.model.WeaponItem;
+import me.mykindos.betterpvp.core.item.runeslot.RuneSlotDistribution;
+import me.mykindos.betterpvp.core.item.runeslot.RuneSlotDistributionRegistry;
 import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
 import org.bukkit.inventory.EquipmentSlot;
@@ -104,7 +106,10 @@ public class SimEquipment {
     private final Map<String, SkillType> skillTypeCache = new HashMap<>();
     private final Map<Role, List<BaseItem>> armorCache = new EnumMap<>(Role.class);
     private final Map<String, List<RuneOption>> runeCache = new HashMap<>();
+    private final Map<String, List<List<String>>> runeSetCache = new HashMap<>();
     private final Map<String, SimWeaponProfile> profileCache = new HashMap<>();
+    @Nullable
+    private Integer socketCeilingCache;
 
     /** Representative weapon key to every key sharing its profile, including the representative. */
     private final Map<String, List<String>> aliasCache = new HashMap<>();
@@ -121,13 +126,25 @@ public class SimEquipment {
      */
     private final SocketableRegistry socketableRegistry;
 
+    /**
+     * Core's rune slot distributions, the source of {@link #socketCeiling()}.
+     *
+     * <p>From Core's injector for the reason {@link #socketableRegistry} is: a just-in-time binding
+     * in this sibling injector would construct a second registry, and this one reloads itself from
+     * the database in its constructor. A duplicate would therefore issue its own query on
+     * construction and then serve whatever the table held at that moment, drifting from the values
+     * attunement actually rolls against.
+     */
+    private final RuneSlotDistributionRegistry runeSlotRegistry;
+
     @Inject
     public SimEquipment(ItemRegistry itemRegistry, ItemFactory itemFactory, EntityHealthService entityHealthService) {
         this.itemRegistry = itemRegistry;
         this.itemFactory = itemFactory;
         this.entityHealthService = entityHealthService;
-        this.socketableRegistry = JavaPlugin.getPlugin(Core.class).getInjector()
-                .getInstance(SocketableRegistry.class);
+        final var coreInjector = JavaPlugin.getPlugin(Core.class).getInjector();
+        this.socketableRegistry = coreInjector.getInstance(SocketableRegistry.class);
+        this.runeSlotRegistry = coreInjector.getInstance(RuneSlotDistributionRegistry.class);
     }
 
     /**
@@ -142,8 +159,10 @@ public class SimEquipment {
         skillTypeCache.clear();
         armorCache.clear();
         runeCache.clear();
+        runeSetCache.clear();
         profileCache.clear();
         aliasCache.clear();
+        socketCeilingCache = null;
     }
 
     /**
@@ -341,7 +360,7 @@ public class SimEquipment {
      * @throws IllegalArgumentException if the key is not registered
      */
     public ItemStack weaponStack(String key) {
-        return weaponStack(key, List.of());
+        return weaponStack(key, List.of(), SimStatRoll.DEFAULT);
     }
 
     /**
@@ -359,15 +378,24 @@ public class SimEquipment {
      * a fresh drop happens to allow. The build's fingerprint records which runes were fitted, so a row
      * is never ambiguous about it.
      *
+     * <p>The roll is applied to the created instance rather than to the registered {@code BaseItem}:
+     * the registry holds one shared instance per item, and moving its stats would change every
+     * weapon the sweep hands out afterwards -- including the ones already equipped on a resident
+     * combatant, since {@code MeleeDamageStatHandler} re-reads the stat off the held stack on every
+     * swing. Rolling the copy keeps a {@code MIN} build and a {@code MAX} build fightable at the
+     * same time, which they must be: duels run concurrently.
+     *
      * @param runeKeys rune keys as written to {@code sim_build.runes}, in catalog order
+     * @param roll     where in its band each of the weapon's stats sits
      * @throws IllegalArgumentException if the weapon key or any rune key is not registered
      */
-    public ItemStack weaponStack(String key, List<String> runeKeys) {
+    public ItemStack weaponStack(String key, List<String> runeKeys, SimStatRoll roll) {
         final BaseItem item = itemRegistry.getItem(key);
         if (item == null) {
             throw new IllegalArgumentException("No registered item for weapon key " + key);
         }
         ItemInstance instance = itemFactory.create(item);
+        instance = rolled(instance, roll);
         if (!runeKeys.isEmpty()) {
             final List<Socketable> socketables = new ArrayList<>(runeKeys.size());
             for (String runeKey : runeKeys) {
@@ -379,6 +407,16 @@ public class SimEquipment {
         return instance.createItemStack();
     }
 
+    /** Moves an instance's stats to {@code roll}, or returns it untouched if it has no stats. */
+    private static ItemInstance rolled(ItemInstance instance, SimStatRoll roll) {
+        if (roll == SimStatRoll.BASE) {
+            return instance;
+        }
+        return instance.getComponent(StatContainerComponent.class)
+                .map(container -> instance.withComponent(roll.apply(container)))
+                .orElse(instance);
+    }
+
     /**
      * One rune of the sweep's rune axis.
      *
@@ -386,6 +424,103 @@ public class SimEquipment {
      * @param name   the rune's stable identity string, only used in logs
      */
     public record RuneOption(String key, String name) {
+    }
+
+    /**
+     * Every rune set a weapon can be carrying, from empty up to a full complement of sockets.
+     *
+     * <p>Combinations, not permutations: a set is enumerated once regardless of socket order, because
+     * socket order is not part of a build's identity -- {@code BalanceCatalog.fingerprint} sorts the
+     * rune keys before hashing, so two orderings are one build and enumerating both would measure the
+     * same fight twice under one fingerprint.
+     *
+     * <p>Sets are ordered by size and then by the weapon's own rune order, so the empty set comes
+     * first and a sweep enumerates the same space twice. That ordering is load-bearing for the same
+     * reason {@code BalanceCatalog.interleaveByRole} exists: a rune sweep is long, and a prefix of it
+     * should be a usable answer about the cheap sets rather than an arbitrary slice.
+     *
+     * @see #socketCeiling() for why the bound is not the weapon's own socket count
+     */
+    public List<List<String>> weaponRuneSets(String weaponKey) {
+        return runeSetCache.computeIfAbsent(weaponKey,
+                key -> runeSets(weaponRunes(key).stream().map(RuneOption::key).toList(), socketCeiling()));
+    }
+
+    /**
+     * Every combination of {@code runes} of size {@code 0..ceiling}, smallest first.
+     *
+     * <p>Package-private rather than private so the sizes can be tested directly. This decides how
+     * large every sweep that varies runes is -- an off-by-one either drops whole combination sizes
+     * from the catalog or multiplies the duel count past what will finish, and neither is visible
+     * afterwards from a build total nobody can check against an expected figure.
+     *
+     * @param ceiling most runes a weapon may carry; clamped to the rune count, so a weapon accepting
+     *                fewer runes than it has sockets yields sets up to what it actually accepts
+     */
+    static List<List<String>> runeSets(List<String> runes, int ceiling) {
+        final List<List<String>> sets = new ArrayList<>();
+        for (int size = 0; size <= Math.min(ceiling, runes.size()); size++) {
+            combinations(runes, size, 0, new ArrayList<>(), sets);
+        }
+        return List.copyOf(sets);
+    }
+
+    private static void combinations(List<String> runes,
+                                     int size,
+                                     int from,
+                                     List<String> chosen,
+                                     List<List<String>> out) {
+        if (chosen.size() == size) {
+            out.add(List.copyOf(chosen));
+            return;
+        }
+        // Stop as soon as too few runes remain to reach the target size, so the recursion never
+        // walks a branch that cannot produce a set.
+        for (int index = from; index <= runes.size() - (size - chosen.size()); index++) {
+            chosen.add(runes.get(index));
+            combinations(runes, size, index + 1, chosen, out);
+            chosen.remove(chosen.size() - 1);
+        }
+    }
+
+    /**
+     * The most runes any weapon can be carrying at once.
+     *
+     * <p>Deliberately <em>not</em> the socket count on the registered item. Every {@code WeaponItem}
+     * is constructed with {@code new SocketableContainerComponent(0, 0)} and nothing in the item
+     * config raises it, so a weapon as the registry ships it holds no runes at all -- reading the
+     * ceiling off the item would make the rune axis a single empty set and the sweep would report,
+     * truthfully and uselessly, that runes do nothing.
+     *
+     * <p>Sockets are something an item acquires: {@code AttunementButton} rolls {@code sockets} and
+     * {@code maxSockets} from the {@link RuneSlotDistribution} for the item's purity, and
+     * {@code SocketableImbuementRecipe} grants one directly. So the number of runes a weapon
+     * <em>allows</em> is the highest {@code maxSockets} any purity can roll, which is what this
+     * reads -- from the live registry, so a distribution edited in
+     * {@code purity_rune_slot_distributions} reaches the sweep without a change here.
+     *
+     * <p>Weights of zero are excluded rather than counted. {@code PITIFUL} lists {@code "4": 0},
+     * which is a socket count that purity can never actually produce; treating it as reachable would
+     * add a whole combination size to every weapon's axis on the strength of an entry that exists
+     * only to keep the weight maps the same shape.
+     */
+    public int socketCeiling() {
+        if (socketCeilingCache != null) {
+            return socketCeilingCache;
+        }
+        int ceiling = 0;
+        for (RuneSlotDistribution distribution : runeSlotRegistry.getAllDistributions().values()) {
+            for (Map.Entry<Integer, Integer> entry : distribution.getMaxSocketWeights().entrySet()) {
+                if (entry.getValue() > 0) {
+                    ceiling = Math.max(ceiling, entry.getKey());
+                }
+            }
+        }
+        socketCeilingCache = ceiling;
+        log.info("Rune axis: a weapon may hold up to {} runes at once (highest maxSockets any purity"
+                + " can roll); registered weapons ship with 0 sockets and acquire them by attunement",
+                ceiling).submit();
+        return ceiling;
     }
 
     /**
@@ -443,16 +578,50 @@ public class SimEquipment {
      * set on every run for {@code target_hp} to be comparable across them.
      */
     public List<ItemStack> armorStacks(Role role, String armorSetId) {
-        if (!ROLE_ARMOR.equals(armorSetId)) {
+        final SimStatRoll roll = armorRollOf(armorSetId);
+        if (roll == null) {
             return List.of();
         }
         // Fresh stacks every call: these are equipped onto a combatant, and handing two duels the
         // same instance would let one duel's durability or socket state follow the other's.
         final List<ItemStack> stacks = new ArrayList<>(ARMOR_SLOTS.size());
         for (BaseItem item : armorSet(role)) {
-            stacks.add(itemFactory.create(item).createItemStack());
+            stacks.add(rolled(itemFactory.create(item), roll).createItemStack());
         }
         return stacks;
+    }
+
+    /**
+     * The armour set id a target wearing its role's set at {@code roll} is recorded under.
+     *
+     * <p>The roll is folded into the id rather than carried as a separate column because
+     * {@code armorSetId} is already a free-form discriminator -- {@code "none"} against
+     * {@code "role_set"} -- and it is already the thing written to {@code sim_result.target_armor}
+     * and read by every dashboard that groups by armour. A new column would have to be joined in
+     * everywhere that string is already understood, and a stored row taken before this axis existed
+     * still reads correctly as the base roll it was.
+     */
+    public static String armorSetId(SimStatRoll roll) {
+        return roll == SimStatRoll.DEFAULT ? ROLE_ARMOR : ROLE_ARMOR + "_" + roll.id();
+    }
+
+    /**
+     * The roll an armour set id names, or null when it names no armour at all.
+     *
+     * <p>An unrecognised id is {@code null} -- no armour -- which is what {@link #armorStacks} did
+     * with anything that was not {@code "role_set"} before the roll axis existed.
+     */
+    @Nullable
+    public static SimStatRoll armorRollOf(String armorSetId) {
+        if (ROLE_ARMOR.equals(armorSetId)) {
+            return SimStatRoll.DEFAULT;
+        }
+        for (SimStatRoll roll : SimStatRoll.values()) {
+            if (armorSetId(roll).equals(armorSetId)) {
+                return roll;
+            }
+        }
+        return null;
     }
 
     /**

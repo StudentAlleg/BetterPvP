@@ -2,6 +2,7 @@ package me.mykindos.betterpvp.balancesim.audit;
 
 import me.mykindos.betterpvp.balancesim.catalog.SimBuildSpec;
 import me.mykindos.betterpvp.balancesim.catalog.SimSkillAllocation;
+import me.mykindos.betterpvp.balancesim.catalog.SimStatRoll;
 import me.mykindos.betterpvp.balancesim.catalog.SimTargetSpec;
 import me.mykindos.betterpvp.balancesim.catalog.SimWeaponProfile;
 import me.mykindos.betterpvp.balancesim.engine.SimEnergyLedger;
@@ -224,8 +225,11 @@ class SkillRelevanceAuditTest {
      * future field from being filled in differently per call site and quietly breaking the matchup key.
      */
     private static SimBuildSpec build(List<SimSkillAllocation> skills, int points, String fingerprint) {
-        return new SimBuildSpec(ROLE, WEAPON, "none", List.of(), skills, points, false, fingerprint,
-                WEAPON_PROFILE, List.of(WEAPON));
+        // The roll is held constant alongside the weapon, for the reason the javadoc gives: a verdict
+        // is a delta between rows agreeing on everything but one skill, and two rolls of one weapon
+        // deal different damage.
+        return new SimBuildSpec(ROLE, WEAPON, "none", List.of(), SimStatRoll.DEFAULT, skills, points,
+                false, fingerprint, WEAPON_PROFILE, List.of(WEAPON));
     }
 
     private static Map<String, SimSkillLedger.SkillActivation> fired(String skillName, int successes) {

@@ -148,6 +148,11 @@ public class SimBuild extends TableImpl<SimBuildRecord> {
      */
     public final TableField<SimBuildRecord, JSONB> WEAPON_ALIASES = createField(DSL.name("weapon_aliases"), SQLDataType.JSONB.nullable(false).defaultValue(DSL.field(DSL.raw("'[]'::jsonb"), SQLDataType.JSONB)), this, "");
 
+    /**
+     * The column <code>public.sim_build.weapon_roll</code>.
+     */
+    public final TableField<SimBuildRecord, String> WEAPON_ROLL = createField(DSL.name("weapon_roll"), SQLDataType.CLOB.nullable(false).defaultValue(DSL.field(DSL.raw("'base'::text"), SQLDataType.CLOB)), this, "");
+
     private SimBuild(Name alias, Table<SimBuildRecord> aliased) {
         this(alias, aliased, (Field<?>[]) null, null);
     }
@@ -217,7 +222,7 @@ public class SimBuild extends TableImpl<SimBuildRecord> {
 
     @Override
     public List<Index> getIndexes() {
-        return Arrays.asList(Indexes.IDX_SIM_BUILD_FINGERPRINT, Indexes.IDX_SIM_BUILD_RUN, Indexes.IDX_SIM_BUILD_RUN_FINGERPRINT, Indexes.IDX_SIM_BUILD_WEAPON_DAMAGE);
+        return Arrays.asList(Indexes.IDX_SIM_BUILD_FINGERPRINT, Indexes.IDX_SIM_BUILD_RUN, Indexes.IDX_SIM_BUILD_RUN_FINGERPRINT, Indexes.IDX_SIM_BUILD_WEAPON_DAMAGE, Indexes.IDX_SIM_BUILD_WEAPON_ROLL);
     }
 
     @Override

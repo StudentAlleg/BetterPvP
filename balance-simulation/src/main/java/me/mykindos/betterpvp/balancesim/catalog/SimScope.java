@@ -2,6 +2,7 @@ package me.mykindos.betterpvp.balancesim.catalog;
 
 import lombok.Getter;
 
+import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
 
@@ -67,6 +68,23 @@ public enum SimScope {
     /** Role x default weapon x one rune at a time, no skills, vs armoured targets. */
     RUNES(WeaponAxis.ROLE_DEFAULT, SkillAxis.NONE, RuneAxis.ONE_AT_A_TIME, true, false),
 
+    /**
+     * Every distinct weapon at every roll, carrying every rune set it can hold, no skills.
+     *
+     * <p>The equipment space, exhaustively, and the tier to reach for when the question is about
+     * items rather than builds. {@link #LOADOUT} crosses weapons with runes but takes one rune at a
+     * time and only ever at the configured roll; this is the same cross without either restriction,
+     * which is what makes it answer "what is the best possible instance of this weapon actually
+     * worth" rather than "what is the catalogue entry worth".
+     *
+     * <p>Affordable only because the skill axis is absent. Rune sets run to several hundred per
+     * weapon (see {@link RuneAxis#ALL_COMBINATIONS}) and the roll axis triples that again; crossing
+     * the product with budget vectors is what {@link #FULL} does and why {@link #FULL} needs a narrow
+     * skill filter to enumerate at all.
+     */
+    EQUIPMENT(WeaponAxis.DISTINCT_MELEE, SkillAxis.NONE, RuneAxis.ALL_COMBINATIONS, true, true,
+            StatRollAxis.MIN_BASE_MAX, StatRollAxis.BASE_AND_MAX),
+
     /** Role x one skill at a time x level, on the default and booster weapons, vs armoured targets. */
     SKILLS(WeaponAxis.DEFAULT_AND_BOOSTER, SkillAxis.ONE_AT_A_TIME, RuneAxis.NONE, true, false),
 
@@ -82,8 +100,29 @@ public enum SimScope {
      */
     LOADOUT(WeaponAxis.DISTINCT_MELEE, SkillAxis.NONE, RuneAxis.ONE_AT_A_TIME, true, true),
 
-    /** Role x every budget-feasible level vector x every melee weapon, vs armoured targets. */
-    FULL(WeaponAxis.ALL_MELEE, SkillAxis.BUDGET_VECTORS, RuneAxis.NONE, true, false),
+    /**
+     * Everything: every budget-feasible build, on every distinct weapon at every roll, carrying
+     * every rune set that weapon can hold, against armoured targets at every armour roll.
+     *
+     * <p>Runes and rolls used to be absent here, and the reason given was that they multiply a space
+     * that is already combinatorial. That is still true and is now the point: {@code FULL} is the
+     * tier that claims to be exhaustive, and a tier that silently omitted two axes of the item system
+     * was making a claim it did not meet. The multiplication is real -- a weapon contributes
+     * (rune sets x 3 rolls) rather than 1, which is several hundred to over a thousand -- so
+     * {@code FULL} is now enumerable only under a narrow {@code skillFilter}, and
+     * {@code BalanceCatalog.checkCap} refuses it with a count when it is not.
+     *
+     * <p>The weapon axis is {@link WeaponAxis#DISTINCT_MELEE} rather than {@link WeaponAxis#ALL_MELEE}
+     * for the same reason {@link #BASELINE} uses it: two weapons sharing a profile produce the same
+     * duel by construction, and the fold is recorded as aliases rather than dropped. Sweeping both
+     * would multiply the largest axis in the catalog by a factor that measures nothing.
+     *
+     * <p>If this refuses to enumerate, the tiers below it are not lesser versions of it -- they are
+     * the axes separated so each stays answerable. {@link #EQUIPMENT} is this tier's item half with
+     * no skills; {@link #BASELINE} is its build half with no runes and no rolls.
+     */
+    FULL(WeaponAxis.DISTINCT_MELEE, SkillAxis.BUDGET_VECTORS, RuneAxis.ALL_COMBINATIONS, true, true,
+            StatRollAxis.MIN_BASE_MAX, StatRollAxis.BASE_AND_MAX),
 
     /**
      * The reduced full sweep: every budget-feasible vector over the audited-relevant skills, on
@@ -156,7 +195,49 @@ public enum SimScope {
         /** No runes; the weapon as the registry ships it. */
         NONE,
         /** One socketed rune per build, swept over every rune the weapon accepts, plus a bare baseline. */
-        ONE_AT_A_TIME
+        ONE_AT_A_TIME,
+        /**
+         * Every rune set the weapon can be carrying, from empty to a full complement of sockets.
+         *
+         * <p>Combinations of the weapon's own applicable runes, bounded by
+         * {@code SimEquipment.socketCeiling} -- the highest {@code maxSockets} any purity can roll,
+         * which is 4 as the distributions ship. A melee weapon accepts 10 runes and an axe 11, so
+         * that is 386 sets per sword and 562 per axe. Order within the sockets is not enumerated,
+         * because the build fingerprint sorts rune keys and two orderings are one build.
+         *
+         * <p>Unlike {@link #ONE_AT_A_TIME} this cannot be decomposed: a build carrying four runes
+         * yields one DPS figure and no way to attribute it among them. The two axes answer different
+         * questions and neither replaces the other -- this one measures loadouts a player can
+         * actually assemble, that one measures what an individual rune is worth.
+         */
+        ALL_COMBINATIONS
+    }
+
+    /**
+     * Where in their bands an item's stats are swept.
+     *
+     * <p>Separate axes for weapons and armour because the two are worth different amounts. A weapon's
+     * damage band is the difference between a floor and a ceiling instance of the same item and is
+     * what a balance question is usually about; an armour piece's {@code health.min} is {@code 0.0}
+     * on several pieces, which makes a minimum-roll set very nearly a bare target -- a permutation
+     * the target axis already enumerates as {@code "none"}.
+     */
+    public enum StatRollAxis {
+        /** Only the configured values. What every sweep taken before this axis existed measured. */
+        BASE_ONLY,
+        /** The configured values and the top of every band. */
+        BASE_AND_MAX,
+        /** Both ends of every band and the configured values between them. */
+        MIN_BASE_MAX;
+
+        /** The rolls this axis sweeps, base first so a prefix of the sweep is the familiar one. */
+        public List<SimStatRoll> rolls() {
+            return switch (this) {
+                case BASE_ONLY -> List.of(SimStatRoll.BASE);
+                case BASE_AND_MAX -> List.of(SimStatRoll.BASE, SimStatRoll.MAX);
+                case MIN_BASE_MAX -> List.of(SimStatRoll.BASE, SimStatRoll.MIN, SimStatRoll.MAX);
+            };
+        }
     }
 
     private final WeaponAxis weaponAxis;
@@ -179,16 +260,35 @@ public enum SimScope {
      */
     private final boolean collapseTargets;
 
+    /** Where in its band the attacker's weapon sits. */
+    private final StatRollAxis weaponRollAxis;
+
+    /** Where in its band a target's armour sits. Only meaningful when {@link #armorSets} is set. */
+    private final StatRollAxis armorRollAxis;
+
     SimScope(WeaponAxis weaponAxis,
              SkillAxis skillAxis,
              RuneAxis runeAxis,
              boolean armorSets,
              boolean collapseTargets) {
+        this(weaponAxis, skillAxis, runeAxis, armorSets, collapseTargets,
+                StatRollAxis.BASE_ONLY, StatRollAxis.BASE_ONLY);
+    }
+
+    SimScope(WeaponAxis weaponAxis,
+             SkillAxis skillAxis,
+             RuneAxis runeAxis,
+             boolean armorSets,
+             boolean collapseTargets,
+             StatRollAxis weaponRollAxis,
+             StatRollAxis armorRollAxis) {
         this.weaponAxis = weaponAxis;
         this.skillAxis = skillAxis;
         this.runeAxis = runeAxis;
         this.armorSets = armorSets;
         this.collapseTargets = collapseTargets;
+        this.weaponRollAxis = weaponRollAxis;
+        this.armorRollAxis = armorRollAxis;
     }
 
     /**
