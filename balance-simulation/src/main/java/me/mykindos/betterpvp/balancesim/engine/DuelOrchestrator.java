@@ -318,7 +318,7 @@ public class DuelOrchestrator {
                                              SimScenario scenario,
                                              boolean audit,
                                              Consumer<SimProgress> listener) {
-        return run(trigger, scope, scenario, audit, false, listener);
+        return run(trigger, scope, scenario, audit, false, null, listener);
     }
 
     /**
@@ -349,13 +349,19 @@ public class DuelOrchestrator {
      * resume" is the normal state the first time a sweep is started, and an admin who habitually types
      * the flag should not have to know which case they are in.
      *
-     * @param resume whether to look for an interrupted run at this {@code config_hash} and continue it
+     * @param resume  whether to look for an interrupted run at this {@code config_hash} and continue it
+     * @param resumeId a specific run to continue regardless of {@code config_hash}, or null to search.
+     *                 The escape hatch for a run whose hash has since moved -- an engine version bump
+     *                 being the usual cause -- where the admin knows the catalog is unchanged and the
+     *                 automatic check cannot. Deliberately requires naming the id, so bypassing the
+     *                 safety check is never something that happens by default
      */
     public CompletableFuture<SimSummary> run(SimulationTrigger trigger,
                                              SimScope scope,
                                              SimScenario scenario,
                                              boolean audit,
                                              boolean resume,
+                                             @Nullable Long resumeId,
                                              Consumer<SimProgress> listener) {
         if (!gate.isEnabled()) {
             throw new IllegalStateException("Simulation is disabled");
@@ -385,7 +391,7 @@ public class DuelOrchestrator {
         final int realm = Core.getCurrentRealm().getId();
         final String configHash = configHash(scope);
 
-        openOrResume(realm, trigger, scope, configHash, resume)
+        openOrResume(realm, trigger, scope, configHash, resume, resumeId)
                 .whenComplete((state, throwable) -> {
                     if (throwable != null || state == null) {
                         running = false;
@@ -413,10 +419,22 @@ public class DuelOrchestrator {
                                                      SimulationTrigger trigger,
                                                      SimScope scope,
                                                      String configHash,
-                                                     boolean resume) {
-        if (!resume) {
+                                                     boolean resume,
+                                                     @Nullable Long resumeId) {
+        if (!resume && resumeId == null) {
             return repository.openRun(realm, trigger, ENGINE_VERSION, configHash, scenarioJson(scope))
                     .thenApply(RunState::fresh);
+        }
+        if (resumeId != null) {
+            // Named explicitly, so the config_hash check is skipped entirely. Warned rather than
+            // refused: the check exists to stop an accidental splice, and naming an id is not an
+            // accident -- but the admin is now the one asserting the catalog has not moved, and that
+            // assertion should be in the log next to the rows it produced.
+            log.warn("Resuming run {} by id, bypassing the config_hash check. Its rows and this"
+                            + " sitting's will share a sim_run, so this is only correct if the catalog"
+                            + " is unchanged -- scope, skill filter, iterations and every balance value.",
+                    resumeId).submit();
+            return resumeInto(resumeId, configHash);
         }
         return repository.findResumableRun(realm, configHash).thenCompose(existing -> {
             if (existing == null) {
@@ -426,16 +444,21 @@ public class DuelOrchestrator {
                 return repository.openRun(realm, trigger, ENGINE_VERSION, configHash, scenarioJson(scope))
                         .thenApply(RunState::fresh);
             }
-            return repository.reopenRun(existing)
-                    .thenCompose(ignored -> repository.findBuildIds(existing))
-                    .thenCompose(buildIds -> repository.findMeasuredMatchups(existing)
-                            .thenApply(measured -> {
-                                log.info("Resuming simulation run {} at config_hash {}: {} builds already"
-                                                + " inserted, {} matchups already measured and will be skipped.",
-                                        existing, configHash, buildIds.size(), measured.size()).submit();
-                                return new RunState(existing, true, buildIds, measured);
-                            }));
+            return resumeInto(existing, configHash);
         });
+    }
+
+    /** Reopens a run and gathers what it already did. Shared by the searched and named paths. */
+    private CompletableFuture<RunState> resumeInto(long runId, String configHash) {
+        return repository.reopenRun(runId)
+                .thenCompose(ignored -> repository.findBuildIds(runId))
+                .thenCompose(buildIds -> repository.findMeasuredMatchups(runId)
+                        .thenApply(measured -> {
+                            log.info("Resuming simulation run {} at config_hash {}: {} builds already"
+                                            + " inserted, {} matchups already measured and will be skipped.",
+                                    runId, configHash, buildIds.size(), measured.size()).submit();
+                            return new RunState(runId, true, buildIds, measured);
+                        }));
     }
 
     /**
@@ -780,15 +803,34 @@ public class DuelOrchestrator {
      *       different skill sets;</li>
      *   <li>the scenario and the channel hold budget, because both change what a row <em>means</em>
      *       rather than just how much of the space it covers;</li>
-     *   <li>iterations, timeout and concurrency, which bound the measurement's precision;</li>
+     *   <li>iterations and the duel timeout, which bound the measurement's precision;</li>
      *   <li>the engine version, so a semantics change cannot masquerade as an unchanged config.</li>
      * </ul>
      * The retry interval is deliberately absent: it rate-limits attempts the real gates would have
      * refused anyway, so two runs differing only in it are measuring the same thing.
+     *
+     * <h2>Why concurrency is no longer here</h2>
+     * {@code maxConcurrentDuels} was hashed on the grounds that it bounds precision. It does not: a
+     * duel is tick-driven from end to end -- the timeout is converted to ticks and compared against
+     * elapsed ticks -- and duels do not interact, so running more of them at once changes how fast
+     * the sweep gets through them and not what any one of them measures.
+     *
+     * <p>What concurrency really moves is the tick rate, and through it the roughly 130 files that
+     * time game logic with {@code System.currentTimeMillis}. That is a real effect and it is
+     * <em>not</em> a function of the knob: the same ceiling on a busy machine and an idle one
+     * produces different tick rates and therefore different rows, so hashing the knob never captured
+     * it. With {@code adaptiveConcurrency} the knob stopped even naming one number -- concurrency
+     * varies within a single run by design.
+     *
+     * <p>Keeping it made the hash a false witness in both directions, and it broke resume for the
+     * case resume exists for: a sweep stopped, its concurrency retuned, and restarted was refused as
+     * a candidate over a knob that changes nothing about the measurement. The concurrency settings
+     * are recorded on {@code sim_run.scenario} instead, and what the run actually sustained is logged
+     * when it closes -- which is the honest place for an outcome.
      */
     private String configHash(SimScope scope) {
         return Integer.toHexString((scope + ":" + scenario + ":" + settings.iterations()
-                + ":" + settings.duelTimeoutSeconds() + ":" + settings.maxConcurrentDuels()
+                + ":" + settings.duelTimeoutSeconds()
                 + ":" + settings.skillFilter()
                 + ":" + settings.relevantSkillsCanonical()
                 + ":" + settings.channelHoldTicks()
@@ -813,6 +855,12 @@ public class DuelOrchestrator {
                 + ",\"actives\":true"
                 + ",\"rotation\":\"greedy\""
                 + ",\"channel_hold_ticks\":" + settings.channelHoldTicks()
+                // The ceiling and the budget it was governed against, so a row says what bounded it.
+                // What the run actually sustained is not knowable when this is written -- the run has
+                // not started -- and is logged in the closing summary instead.
+                + ",\"max_concurrent_duels\":" + settings.maxConcurrentDuels()
+                + ",\"adaptive_concurrency\":" + settings.adaptiveConcurrency()
+                + ",\"target_mspt\":" + settings.targetMsptMillis()
                 + ",\"skill_filter\":\"" + settings.skillFilter() + '"'
                 // The count rather than the names: the list runs to dozens of entries and this column
                 // is read at a glance, while config_hash already makes two different lists distinct.
@@ -880,6 +928,9 @@ public class DuelOrchestrator {
     private record SweepSettings(int iterations,
                                  int maxBuilds,
                                  int maxConcurrentDuels,
+                                 boolean adaptiveConcurrency,
+                                 double targetMsptMillis,
+                                 int minConcurrentDuels,
                                  double duelTimeoutSeconds,
                                  int duelSetupsPerTick,
                                  double progressIntervalSeconds,
@@ -893,13 +944,19 @@ public class DuelOrchestrator {
 
         /** Stands in before the first run, so the field is never null for a reader that beats it. */
         private static final SweepSettings NONE =
-                new SweepSettings(1, 0, 0, 0, 1, 15, 1, SimSkillFilter.OFFENSIVE, Set.of(),
+                new SweepSettings(1, 0, 0, false, 45, 1, 0, 1, 15, 1, SimSkillFilter.OFFENSIVE, Set.of(),
                         false, 0, false, 0);
 
         private static SweepSettings from(SimulationGate gate) {
+            final int ceiling = gate.getMaxConcurrentDuels();
             return new SweepSettings(Math.max(1, gate.getIterations()),
                     gate.getMaxBuilds(),
-                    gate.getMaxConcurrentDuels(),
+                    ceiling,
+                    gate.isAdaptiveConcurrency(),
+                    gate.getTargetMsptMillis(),
+                    // Clamped to the ceiling so a floor configured above it cannot invert the range;
+                    // the governor would otherwise be handed a band it can never satisfy.
+                    Math.max(1, Math.min(gate.getMinConcurrentDuels(), ceiling)),
                     gate.getDuelTimeoutSeconds(),
                     gate.getDuelSetupsPerTick(),
                     gate.getProgressIntervalSeconds(),
@@ -974,6 +1031,9 @@ public class DuelOrchestrator {
         private final int plannedMatchups;
         private final long startedAtMillis = System.currentTimeMillis();
 
+        /** Decides how many duels may be in flight. Immovable when the adaptive knob is off. */
+        private final ConcurrencyGovernor governor;
+
         private long completedDuels;
         private int completedMatchups;
         private long lastProgressTick;
@@ -987,6 +1047,12 @@ public class DuelOrchestrator {
          * {@link #noteBarrenTimeout()}.
          */
         private long barrenTimeouts;
+
+        /**
+         * Duels that landed hits and still ran the full timeout without a kill. See
+         * {@link #noteNonLethalTimeout()}.
+         */
+        private long nonLethalTimeouts;
 
         /**
          * Builds whose effective levels have already been written back, so the update runs once per
@@ -1012,9 +1078,25 @@ public class DuelOrchestrator {
             this.plannedMatchups = plannedMatchups;
             this.done = done;
             this.listener = listener;
+            // Started at the configured concurrency rather than at the floor, so a run that needs no
+            // governing behaves exactly as it did before the knob existed and an adaptive one only
+            // has to find its way down if the machine cannot hold the tick budget.
+            this.governor = settings.adaptiveConcurrency()
+                    ? ConcurrencyGovernor.adaptive(settings.minConcurrentDuels(),
+                            settings.maxConcurrentDuels(), settings.targetMsptMillis(),
+                            settings.maxConcurrentDuels())
+                    : ConcurrencyGovernor.fixed(settings.maxConcurrentDuels());
         }
 
         private void start() {
+            if (governor.isAdaptive()) {
+                log.info("Simulation run {} governing concurrency between {} and {} duels to hold a"
+                                + " {}ms median tick. The ceiling is fixed by the arenas warmed up above;"
+                                + " their chunks stay pinned whether or not a duel is using them, so"
+                                + " lowering the limit trims per-duel load and not that fixed cost.",
+                        runId, settings.minConcurrentDuels(), settings.maxConcurrentDuels(),
+                        String.format(Locale.ROOT, "%.0f", settings.targetMsptMillis())).submit();
+            }
             task = Bukkit.getScheduler().runTaskTimer(plugin, this, 1L, 1L);
             report();
         }
@@ -1022,6 +1104,7 @@ public class DuelOrchestrator {
         @Override
         public void run() {
             tick++;
+            governor.observe();
             try {
                 // A stop stops the queue, not the fights. Duels already in flight are measurements
                 // seconds from completing, and abandoning them would leave their matchups with some
@@ -1034,8 +1117,9 @@ public class DuelOrchestrator {
                 step();
                 if (active.isEmpty() && (pending.isEmpty() || stopRequested)) {
                     task.cancel();
+                    logSustainedConcurrency();
                     report();
-                    logBarrenTimeouts();
+                    logTimeouts();
                     finish(runId, done, List.copyOf(results), List.copyOf(flushes),
                             summarise(stopRequested ? "CANCELLED" : "COMPLETED"));
                     return;
@@ -1050,7 +1134,7 @@ public class DuelOrchestrator {
                 log.error("Simulation run {} aborted after {} of {} duels", runId, completedDuels,
                         plannedDuels, e).submit();
                 report();
-                logBarrenTimeouts();
+                logTimeouts();
                 // Still finished through the same path, so the partial run's rows are flushed and
                 // summarised rather than discarded -- an aborted sweep's measurements are valid for
                 // the matchups that did complete, and the summary says how far it got.
@@ -1100,6 +1184,27 @@ public class DuelOrchestrator {
         }
 
         /**
+         * Counts a duel that landed hits and still ran its whole timeout without killing.
+         *
+         * <p>Unlike a barren timeout this is a real measurement -- the row carries damage and DPS,
+         * and "this build cannot kill that target inside {@code duelTimeoutSeconds}" is a legitimate
+         * balance answer. It is counted because it is the run's throughput, not its validity: a duel
+         * that ends on a kill costs a couple of seconds and one that runs the timeout costs the whole
+         * timeout, so a region of the catalog that stops killing divides duels/second by an order of
+         * magnitude while every other figure on the progress line stays healthy. Run 1's EQUIPMENT
+         * sweep fell from ~130 duels/s to ~22 in a single progress interval and held there for three
+         * hours with the median tick <em>improving</em>; nothing counted the reason, so the only
+         * visible symptom was an ETA that kept receding.
+         *
+         * <p>Silent per duel and never warned on the first: unlike the barren case this is expected
+         * to be non-zero on any sweep with a tanky target in it. The count carries the signal, and
+         * {@link #logTimeouts()} turns it into wall clock at the end.
+         */
+        private void noteNonLethalTimeout() {
+            nonLethalTimeouts++;
+        }
+
+        /**
          * Dumps everything knowable about the first barren duel of the run, while it is still alive.
          *
          * <p>The placement is the point. Every previous dissection ran from
@@ -1145,23 +1250,53 @@ public class DuelOrchestrator {
         }
 
         /**
-         * Closes the run with what fraction of it measured nothing, when any of it did.
+         * Closes the run with how much of it ran the clock out, split by whether that measured
+         * anything.
          *
-         * <p>Next to the summary rather than inside it, because it is a verdict on whether the rows
-         * are worth querying rather than a count of work done -- and it is the one figure that
-         * separates "this sweep found some very tanky targets" from "this sweep was broken". Silent
-         * when the count is zero, so a healthy run gains no noise.
+         * <p>Both halves are here because the split is the whole point: the barren count is a verdict
+         * on whether the rows are worth querying -- the one figure separating "this sweep found some
+         * very tanky targets" from "this sweep was broken" -- while the non-lethal count is a verdict
+         * on the run's duration, and reporting either alone invites the reader to draw the other's
+         * conclusion. Warned and merely logged respectively, for the same reason.
+         *
+         * <p>Next to the summary rather than inside it, because neither is a count of work done. Each
+         * half is silent at zero, so a healthy run gains no noise.
          */
-        private void logBarrenTimeouts() {
-            if (barrenTimeouts == 0) {
+        private void logTimeouts() {
+            if (barrenTimeouts > 0) {
+                log.warn("Simulation run {} [{}]: {} of {} completed duels ({}%) timed out without the"
+                                + " attacker landing a hit. Those rows carry NULL damage and TTK and measure"
+                                + " nothing; treat the run as suspect rather than as a balance result.",
+                        runId, scope, barrenTimeouts, completedDuels,
+                        String.format(Locale.ROOT, "%.1f",
+                                completedDuels == 0 ? 0.0 : 100.0 * barrenTimeouts / completedDuels)).submit();
+            }
+            if (nonLethalTimeouts == 0) {
                 return;
             }
-            log.warn("Simulation run {} [{}]: {} of {} completed duels ({}%) timed out without the"
-                            + " attacker landing a hit. Those rows carry NULL damage and TTK and measure"
-                            + " nothing; treat the run as suspect rather than as a balance result.",
-                    runId, scope, barrenTimeouts, completedDuels,
+            // Priced in occupied slot-time rather than left as a count, because that is the decision
+            // it informs. These duels each held a concurrency slot for the whole timeout, so this
+            // total is what the timeout knob is worth on this catalog: halve duelTimeoutSeconds and
+            // roughly half of it comes back as throughput. Divided by the ceiling it is wall clock,
+            // which is why the sweep can take far longer than its duel count suggests.
+            final long slotSeconds = Math.round(nonLethalTimeouts * settings.duelTimeoutSeconds());
+            log.info("Simulation run {} [{}]: {} of {} completed duels ({}%) landed hits but ran the"
+                            + " full {}s timeout without a kill, holding a concurrency slot for {} in"
+                            + " total. Those rows are valid measurements -- 'this build cannot kill this"
+                            + " target in {}s' -- so the cost is throughput and not correctness: if the"
+                            + " sweep ran slower than its duel count suggests, this is where it went.",
+                    runId, scope, nonLethalTimeouts, completedDuels,
                     String.format(Locale.ROOT, "%.1f",
-                            completedDuels == 0 ? 0.0 : 100.0 * barrenTimeouts / completedDuels)).submit();
+                            completedDuels == 0 ? 0.0 : 100.0 * nonLethalTimeouts / completedDuels),
+                    settings.duelTimeoutSeconds(),
+                    SimProgress.format(Duration.ofSeconds(slotSeconds)),
+                    settings.duelTimeoutSeconds()).submit();
+        }
+
+        /** Share of completed duels that ran the full timeout, barren or not. */
+        private double timeoutSharePercent() {
+            return completedDuels == 0 ? 0.0
+                    : 100.0 * (nonLethalTimeouts + barrenTimeouts) / completedDuels;
         }
 
         /** Freezes the loop's counters into the run's result. */
@@ -1196,17 +1331,62 @@ public class DuelOrchestrator {
             // packet backlog is reported for the opposite reason -- it should never be anything but
             // zero, and the run that discovered it retained tens of millions of packets and showed
             // nothing at all until the heap ran out.
-            log.info("Simulation run {} [{}]: {}/{} duels ({}%), {} in flight, {} combatants resident,"
-                            + " {} packets queued, {} barren timeouts, {}/{} matchups measured."
+            // The limit and the median tick beside the in-flight count, because "40 in flight" reads
+            // as a stalled sweep and as a governed one, and only the limit tells them apart.
+            //
+            // Both timeout counts, because between them they are the run's throughput. Every other
+            // figure here describes the server, and a sweep whose duels have stopped ending on a kill
+            // looks perfectly healthy in all of them -- the tick even improves, since a duel that is
+            // waiting out its timeout is cheaper per tick than one still swinging. The share of
+            // completed duels that ran the full timeout is the number that explains a receding ETA,
+            // and until it was here it was recoverable only by querying sim_result afterwards.
+            log.info("Simulation run {} [{}]: {}/{} duels ({}%), {} in flight (limit {}, median tick"
+                            + " {}ms), {} combatants resident,"
+                            + " {} packets queued, {} timeouts ({}% of completed, {} barren),"
+                            + " {}/{} matchups measured."
                             + " Elapsed {}, remaining {}, ETA {}.",
                     runId, scope, completedDuels, plannedDuels,
                     String.format(Locale.ROOT, "%.1f", progress.percent()), active.size(),
+                    governor.getLimit(), String.format(Locale.ROOT, "%.1f", governor.medianTickMillis()),
                     combatantPool.residentCount(), combatantPool.queuedPacketBacklog(),
+                    nonLethalTimeouts + barrenTimeouts,
+                    String.format(Locale.ROOT, "%.1f", timeoutSharePercent()),
                     barrenTimeouts, completedMatchups, plannedMatchups,
                     progress.elapsedFormatted(), progress.etaFormatted(),
                     progress.estimatedFinish()).submit();
 
             listener.accept(progress);
+        }
+
+        /**
+         * What concurrency the run actually held, once it is over.
+         *
+         * <p>The number a governed run is sized from next time, and it cannot be recovered from
+         * anything else: {@code sim_run.scenario} records the ceiling and the tick budget, because
+         * those are known when the row is written, but what the machine turned out to sustain under
+         * them is an outcome of the whole run.
+         *
+         * <p>Says explicitly when the governor never left the ceiling. That is the interesting case
+         * -- it means the budget was never threatened and the ceiling, not the machine, is what
+         * bounded the sweep, so raising {@code maxConcurrentDuels} would buy throughput.
+         */
+        private void logSustainedConcurrency() {
+            if (!governor.isAdaptive()) {
+                return;
+            }
+            if (governor.getLowestLimit() == settings.maxConcurrentDuels()) {
+                log.info("Simulation run {} never left its concurrency ceiling of {} (median tick"
+                                + " stayed under the {}ms target). The ceiling bounded this run, not the"
+                                + " server -- raising maxConcurrentDuels would raise throughput.",
+                        runId, settings.maxConcurrentDuels(),
+                        String.format(Locale.ROOT, "%.0f", settings.targetMsptMillis())).submit();
+                return;
+            }
+            log.info("Simulation run {} sustained {} concurrent duels on average (between {} and {})"
+                            + " against a {}ms target.",
+                    runId, String.format(Locale.ROOT, "%.0f", governor.meanLimit()),
+                    governor.getLowestLimit(), governor.getHighestLimit(),
+                    String.format(Locale.ROOT, "%.0f", settings.targetMsptMillis())).submit();
         }
 
         /** How often a snapshot is emitted, floored at a second so a bad config cannot spam. */
@@ -1221,7 +1401,7 @@ public class DuelOrchestrator {
         private void fill() {
             int setupsRemaining = Math.max(1, settings.duelSetupsPerTick());
             while (setupsRemaining-- > 0
-                    && active.size() < settings.maxConcurrentDuels()
+                    && active.size() < governor.getLimit()
                     && !pending.isEmpty()) {
                 // Asked for before the matchup is polled, because the pool can legitimately have
                 // nothing to give: past the residency cap every slot may still be inside its
@@ -1645,10 +1825,18 @@ public class DuelOrchestrator {
             // nothing else. Reported because it is otherwise invisible: run 140 spent 16 minutes here
             // for 95.6% of its duels while the progress line counted them as measured, and the only
             // trace was a NULL dmg_per_hit in a table nobody reads until the sweep is over.
-            if (resolvedAtTick < 0 && hits.isEmpty()) {
-                barren = true;
-                loop.noteBarrenTimeout();
-                loop.dissectFirstBarrenDuel(this);
+            if (resolvedAtTick < 0) {
+                if (hits.isEmpty()) {
+                    barren = true;
+                    loop.noteBarrenTimeout();
+                    loop.dissectFirstBarrenDuel(this);
+                } else {
+                    // The other half of the same condition: still the timeout path, but this one
+                    // measured something. Counted separately because the two mean opposite things --
+                    // a barren duel is a broken run, a non-lethal one is a slow build -- while
+                    // costing the run the identical full timeout.
+                    loop.noteNonLethalTimeout();
+                }
             }
 
             // The fight is measured from the first landed hit, not from when the duel object was

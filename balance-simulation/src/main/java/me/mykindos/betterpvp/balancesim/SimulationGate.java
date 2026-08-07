@@ -36,6 +36,53 @@ public class SimulationGate {
     @Config(path = "champions.simulation.maxConcurrentDuels", defaultValue = "64")
     private int maxConcurrentDuels;
 
+    /**
+     * Whether the sweep varies its concurrency to hold {@link #targetMsptMillis}.
+     *
+     * <p>Off by default, because it changes what a run is: with it on, {@code maxConcurrentDuels}
+     * stops being the concurrency and becomes a ceiling the run may sit anywhere below. Both the flag
+     * and the target are part of {@code config_hash} for that reason -- a governed run and a fixed
+     * one are not the same measurement even at the same ceiling.
+     *
+     * <p>Note what it cannot do. Arenas are warmed up to {@code maxConcurrentDuels} before the first
+     * duel and their chunks stay pinned for the whole run, so the per-tick chunk sweeps cost the same
+     * whether the governor is using those arenas or not. Lowering the limit trims per-duel work only;
+     * the ceiling itself is a fixed cost that is paid up front and never governed away. Set the
+     * ceiling near what you actually intend to run rather than far above it.
+     */
+    @Inject
+    @Config(path = "champions.simulation.adaptiveConcurrency", defaultValue = "false")
+    private boolean adaptiveConcurrency;
+
+    /**
+     * Median tick time in milliseconds the governor holds the sweep under.
+     *
+     * <p>50 ms is 20 TPS exactly, so the 45 default leaves a little headroom for the controller to
+     * settle in rather than sitting on the boundary.
+     *
+     * <p>This is a correctness knob more than a speed one. Throughput actually rises with
+     * concurrency and merely saturates -- see {@code ConcurrencyGovernor} for the model and the
+     * measured coefficients -- so holding 20 TPS gives up a little of it. What it buys is that
+     * roughly 130 files across champions and core time their game logic with
+     * {@code System.currentTimeMillis}, so a sweep running at 10 TPS elapses every wall-clock
+     * cooldown in half the intended ticks and measures a game nobody plays. Raise it if a run's
+     * purpose is throughput and its numbers are not going into a baseline.
+     */
+    @Inject
+    @Config(path = "champions.simulation.targetMsptMillis", defaultValue = "45.0")
+    private double targetMsptMillis;
+
+    /**
+     * Fewest duels the governor will reduce the sweep to.
+     *
+     * <p>A floor rather than zero so a sweep that cannot hold its budget keeps measuring slowly
+     * instead of stopping. A run governed down to nothing would look identical to a wedged one: the
+     * progress line simply stops advancing, with nothing saying why.
+     */
+    @Inject
+    @Config(path = "champions.simulation.minConcurrentDuels", defaultValue = "16")
+    private int minConcurrentDuels;
+
     @Inject
     @Config(path = "champions.simulation.duelTimeoutSeconds", defaultValue = "30.0")
     private double duelTimeoutSeconds;

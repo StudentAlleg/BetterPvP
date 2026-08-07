@@ -105,12 +105,26 @@ public class SimulateCommand extends Command implements IConsoleCommand {
         final List<String> positional = new ArrayList<>();
         boolean audit = false;
         boolean resume = false;
+        Long resumeId = null;
         for (String arg : args) {
             if (!arg.startsWith("--")) {
                 positional.add(arg);
             } else if (AUDIT_FLAG.equalsIgnoreCase(arg)) {
                 audit = true;
             } else if (RESUME_FLAG.equalsIgnoreCase(arg)) {
+                resume = true;
+            } else if (arg.toLowerCase(Locale.ROOT).startsWith(RESUME_FLAG + "=")) {
+                // --resume=<runId>: continue that run specifically, skipping the config_hash check.
+                final String raw = arg.substring(RESUME_FLAG.length() + 1);
+                try {
+                    resumeId = Long.parseLong(raw.trim());
+                } catch (NumberFormatException e) {
+                    // Refused rather than falling back to a search: an admin who typed an id meant
+                    // that run, and quietly resuming a different one is the worst possible answer.
+                    UtilMessage.message(sender, "core.prefix.command",
+                            "balancesim.command.simulate.badResumeId", Component.text(raw));
+                    return;
+                }
                 resume = true;
             } else {
                 unknownFlags.add(arg);
@@ -181,7 +195,7 @@ public class SimulateCommand extends Command implements IConsoleCommand {
                             : "balancesim.command.simulate.auditScope",
                     Component.text(scope.name()));
         }
-        orchestrator.run(SimulationTrigger.COMMAND, scope, scenario, audit, resume,
+        orchestrator.run(SimulationTrigger.COMMAND, scope, scenario, audit, resume, resumeId,
                         progress -> report(sender, progress))
                 .thenAccept(summary -> report(sender, summary))
                 .exceptionally(ex -> {

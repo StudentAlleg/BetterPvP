@@ -16,8 +16,56 @@ champions:
     iterations: 1
     # How many duels the orchestrator runs at once. All combat state is keyed per player
     # UUID, so this is bounded by tick budget rather than correctness.
+    #
+    # Also the number of arenas built during warm-up, and they stay pinned for the whole run
+    # whether or not a duel is using them -- so this is a fixed per-tick cost (chunk sweeps)
+    # as well as a concurrency limit. Set it near what you intend to run, not far above.
     maxConcurrentDuels: 128
+    # Vary concurrency during the run to hold targetMsptMillis, instead of pinning it at
+    # maxConcurrentDuels. The ceiling above still bounds it, and still costs its arenas.
+    #
+    # Worth being clear about what this does and does not buy. Throughput RISES with
+    # concurrency and saturates -- a duel takes a fixed number of ticks and the server does
+    # fixed work per duel, so duels/second is C/(D*(F + P*C)), which is increasing in C. On
+    # measured coefficients (~7ms/tick fixed, ~0.17ms per duel) dropping 300 -> 150 costs
+    # about 11% of throughput. Governing DOWN to 20 TPS therefore gives throughput up.
+    #
+    # What it buys is that the rows mean something: ~130 files across champions and core time
+    # their logic with System.currentTimeMillis, so a sweep at 10 TPS elapses every wall-clock
+    # cooldown in half the intended ticks and measures a game nobody plays.
+    #
+    # To chase throughput instead, raise maxConcurrentDuels and set a looser target -- the
+    # governor will climb to whatever the machine holds and the closing log line says where
+    # it settled. If it reports never leaving the ceiling, the ceiling was the binding
+    # constraint and there is more throughput available.
+    #
+    # NOT part of config_hash, and neither are maxConcurrentDuels, the target or the floor.
+    # Concurrency does not change what a duel measures -- duels are tick-driven end to end and
+    # do not interact -- it changes how fast the sweep gets through them. Hashing it only broke
+    # resume: a sweep stopped, retuned and restarted was refused as a candidate over a knob
+    # that changes nothing. All of it is recorded on sim_run.scenario instead, and what the run
+    # actually sustained is logged when it closes.
+    adaptiveConcurrency: false
+    # Median tick PROCESSING time (ms) the governor holds under -- MSPT, read from the
+    # server's own tick times, not the interval between ticks. The distinction matters: a
+    # healthy server sleeps out the rest of its budget, so the interval is pinned at 50ms
+    # however idle the machine is and a controller fed it can never see headroom. MSPT is the
+    # work, and on a healthy sweep reads well under 50.
+    #
+    # 50.0 is the whole budget (20 TPS); 45 leaves the controller room to settle rather than
+    # sitting on the boundary. Growth needs the median 8% under this, so at 45 the sweep grows
+    # while MSPT is below ~41ms. Raise the target to trade tick headroom for throughput.
+    targetMsptMillis: 45.0
+    # Fewest duels the governor will cut to. A floor rather than zero, so a sweep that cannot
+    # hold its budget keeps measuring slowly instead of silently ceasing to advance.
+    minConcurrentDuels: 16
     # Hard stop for a single duel, so a matchup that can never kill does not stall a run.
+    #
+    # Also the run's main throughput term once the sweep reaches builds that cannot kill: a duel
+    # ending on a kill frees its concurrency slot in a couple of seconds, one that times out holds
+    # it for all of this. The progress line reports how many completed duels ran the clock out and
+    # what share of the run that is, and the closing line prices it in slot-time -- read those
+    # before lowering this, and before assuming a receding ETA means the server is struggling.
     duelTimeoutSeconds: 30.0
     # Which slice of the permutation space /simulate sweeps when given no argument.
     #   MELEE   - role x default weapon. The phase 1 baseline; cheapest.
