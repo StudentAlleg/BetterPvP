@@ -290,6 +290,21 @@ public class SimBuildRecord extends UpdatableRecordImpl<SimBuildRecord> {
         return (String) get(17);
     }
 
+    /**
+     * Setter for <code>public.sim_build.config_scope_hash</code>.
+     */
+    public SimBuildRecord setConfigScopeHash(String value) {
+        set(18, value);
+        return this;
+    }
+
+    /**
+     * Getter for <code>public.sim_build.config_scope_hash</code>.
+     */
+    public String getConfigScopeHash() {
+        return (String) get(18);
+    }
+
     // -------------------------------------------------------------------------
     // Primary key information
     // -------------------------------------------------------------------------
@@ -313,7 +328,7 @@ public class SimBuildRecord extends UpdatableRecordImpl<SimBuildRecord> {
     /**
      * Create a detached, initialised SimBuildRecord
      */
-    public SimBuildRecord(Long id, Long runId, String role, String weapon, JSONB runes, JSONB skills, Integer pointsSpent, Boolean booster, String fingerprint, BigDecimal weaponDamageBase, BigDecimal weaponDamageMin, BigDecimal weaponDamageMax, BigDecimal weaponAttackSpeedBase, BigDecimal weaponAttackSpeedMin, BigDecimal weaponAttackSpeedMax, String weaponSlot, JSONB weaponAliases, String weaponRoll) {
+    public SimBuildRecord(Long id, Long runId, String role, String weapon, JSONB runes, JSONB skills, Integer pointsSpent, Boolean booster, String fingerprint, BigDecimal weaponDamageBase, BigDecimal weaponDamageMin, BigDecimal weaponDamageMax, BigDecimal weaponAttackSpeedBase, BigDecimal weaponAttackSpeedMin, BigDecimal weaponAttackSpeedMax, String weaponSlot, JSONB weaponAliases, String weaponRoll, String configScopeHash) {
         super(SimBuild.SIM_BUILD);
 
         setId(id);
@@ -334,6 +349,7 @@ public class SimBuildRecord extends UpdatableRecordImpl<SimBuildRecord> {
         setWeaponSlot(weaponSlot);
         setWeaponAliases(weaponAliases);
         setWeaponRoll(weaponRoll);
+        setConfigScopeHash(configScopeHash);
         resetChangedOnNotNull();
     }
 }

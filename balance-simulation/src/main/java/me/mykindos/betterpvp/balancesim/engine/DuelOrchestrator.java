@@ -14,6 +14,7 @@ import me.mykindos.betterpvp.balancesim.catalog.SimBuildSpec;
 import me.mykindos.betterpvp.balancesim.catalog.SimEquipment;
 import me.mykindos.betterpvp.balancesim.catalog.SimScenario;
 import me.mykindos.betterpvp.balancesim.catalog.SimScope;
+import me.mykindos.betterpvp.balancesim.catalog.SimSelection;
 import me.mykindos.betterpvp.balancesim.catalog.SimSkillAllocation;
 import me.mykindos.betterpvp.balancesim.catalog.SimSkillFilter;
 import me.mykindos.betterpvp.balancesim.catalog.SimStatRoll;
@@ -177,6 +178,13 @@ public class DuelOrchestrator {
 
     /** Guards against a second sweep being started while one is in flight. */
     private volatile boolean running;
+
+    /**
+     * What the in-flight sweep was asked for, snapshotted at the same point {@link #settings} is and
+     * for the same reason: from the top of the run to its summary, nothing re-reads the invocation.
+     */
+    private volatile SimSweepRequest request = SimSweepRequest.of(
+            SimulationTrigger.COMMAND, SimScope.MELEE, SimScenario.ONE_WAY);
 
     /**
      * The in-flight sweep's damage-pipeline watcher, or null between runs.
@@ -363,6 +371,17 @@ public class DuelOrchestrator {
                                              boolean resume,
                                              @Nullable Long resumeId,
                                              Consumer<SimProgress> listener) {
+        return run(new SimSweepRequest(trigger, scope, scenario, SimSelection.ALL,
+                audit, resume, resumeId, false, null, true), listener);
+    }
+
+    /**
+     * Starts a sweep from a fully described request.
+     *
+     * <p>The general form the overloads above delegate to. See {@link SimSweepRequest} for how the
+     * three ways of narrowing a sweep -- the scope, the selection and the delta -- differ and compose.
+     */
+    public CompletableFuture<SimSummary> run(SimSweepRequest request, Consumer<SimProgress> listener) {
         if (!gate.isEnabled()) {
             throw new IllegalStateException("Simulation is disabled");
         }
@@ -374,10 +393,11 @@ public class DuelOrchestrator {
         }
         running = true;
         stopRequested = false;
-        this.scenario = scenario;
+        this.request = request;
+        this.scenario = request.scenario();
         // Constructed per run rather than injected, because it accumulates that run's observations
         // and a singleton would carry one sweep's baselines into the next.
-        this.audit = audit
+        this.audit = request.audit()
                 ? new SkillRelevanceAudit(context.skillManager(), AuditThresholds.defaults())
                 : null;
         // Before configHash, and before anything else reads a knob: from here to the summary the run
@@ -389,9 +409,10 @@ public class DuelOrchestrator {
 
         final CompletableFuture<SimSummary> done = new CompletableFuture<>();
         final int realm = Core.getCurrentRealm().getId();
+        final SimScope scope = request.scope();
         final String configHash = configHash(scope);
 
-        openOrResume(realm, trigger, scope, configHash, resume, resumeId)
+        openOrResume(realm, request.trigger(), scope, configHash, request.resume(), request.resumeId())
                 .whenComplete((state, throwable) -> {
                     if (throwable != null || state == null) {
                         running = false;
@@ -527,10 +548,12 @@ public class DuelOrchestrator {
             // target_hp was computed from.
             context.equipment().invalidate();
 
-            final List<SimBuildSpec> builds = catalog.enumerateBuilds(scope, settings.maxBuilds());
+            final SimSelection selection = request.selection();
+            final List<SimBuildSpec> builds =
+                    catalog.enumerateBuilds(scope, settings.maxBuilds(), selection);
             // The scenario is passed because it decides whether the target axis may be reduced: a
             // MUTUAL defender fights back, so its role is not reducible to a health total.
-            final List<SimTargetSpec> targets = catalog.enumerateTargets(scope, scenario);
+            final List<SimTargetSpec> targets = catalog.enumerateTargets(scope, scenario, selection);
             final int iterations = settings.iterations();
 
             final long duels = (long) builds.size() * targets.size() * iterations;
@@ -567,7 +590,16 @@ public class DuelOrchestrator {
                 }
                 final Map<String, Long> buildIds = new HashMap<>(state.buildIds());
                 buildIds.putAll(insertedIds);
-                UtilServer.runTask(plugin, () -> {
+                // For a delta run this stages the plan, carries the unchanged rows in and comes back
+                // with the short list of matchups that still need duels. For every other run it
+                // completes immediately with null, and the queue below is built the way it always was.
+                planDelta(runId, builds, targets, buildIds).whenComplete((deltaPending, deltaError) -> {
+                    if (deltaError != null) {
+                        running = false;
+                        done.completeExceptionally(deltaError);
+                        return;
+                    }
+                    UtilServer.runTask(plugin, () -> {
                     final Deque<Matchup> pending = new ArrayDeque<>();
                     int skipped = 0;
                     for (SimBuildSpec build : builds) {
@@ -581,12 +613,21 @@ public class DuelOrchestrator {
                             continue;
                         }
                         for (SimTargetSpec target : targets) {
+                            final String key = SimResultRepository.matchupKey(
+                                    build.fingerprint(), target.role(), target.armorSetId());
                             // Already reduced to a row by an earlier sitting of this run. Skipped
                             // whole rather than re-measured: re-running it would either duplicate the
                             // row or overwrite a good measurement with a second one taken under
                             // different residency, and neither is worth the duels.
-                            if (state.measured().contains(SimResultRepository.matchupKey(
-                                    build.fingerprint(), target.role(), target.armorSetId()))) {
+                            if (state.measured().contains(key)) {
+                                skipped++;
+                                continue;
+                            }
+                            // A delta run drives from an allow-list where a resume drives from a
+                            // skip-list. Same decision, read from whichever end is cheaper to hold:
+                            // a delta's pending set is the few matchups that changed, while its
+                            // skipped set is nearly the whole catalog and would not fit in memory.
+                            if (deltaPending != null && !deltaPending.contains(key)) {
                                 skipped++;
                                 continue;
                             }
@@ -594,7 +635,7 @@ public class DuelOrchestrator {
                             // measurement so a matchup is only reduced once every duel for it has
                             // been recorded.
                             final Matchup matchup = new Matchup(build, buildId, target,
-                                    new SimMeasurement(iterations));
+                                    new SimMeasurement(iterations), matchupScopeHash(build, target));
                             for (int iteration = 0; iteration < iterations; iteration++) {
                                 pending.add(matchup);
                             }
@@ -655,11 +696,160 @@ public class DuelOrchestrator {
                         // rather than recomputed, so a build skipped above is not counted as planned.
                         new SweepLoop(runId, scope, pending, pending.size() / iterations, done, listener).start();
                     });
+                    });
                 });
             });
         } catch (Exception e) {
             running = false;
-            done.completeExceptionally(e);
+            // The sim_run row is opened before the catalog is enumerated, so a refused enumeration --
+            // a scope over the build cap, or a selector that matched nothing -- would otherwise leave
+            // a RUNNING row behind with no process. That row is a resume candidate: the next
+            // /simulate --resume at this config_hash would adopt an empty run and write a whole
+            // sweep's rows into it. Stamping it FAILED closes that off, and is the truth besides.
+            repository.closeRun(runId, "FAILED").whenComplete((ignored, closeError) -> {
+                if (closeError != null) {
+                    log.warn("Could not mark run {} FAILED after it aborted during enumeration",
+                            runId, closeError).submit();
+                }
+                done.completeExceptionally(e);
+            });
+        }
+    }
+
+    /**
+     * Works out which of a delta run's matchups still need duels, and carries the rest forward.
+     *
+     * <p>Completes with null for a run that is not a delta, which is what lets the queue builder above
+     * treat both cases with one code path.
+     *
+     * <p>The sequence, and why it is this way round:
+     * <ol>
+     *   <li><b>Find a baseline.</b> Newest finished run at the same scope and scenario. No baseline is
+     *       not an error -- the first delta run on a fresh database has nothing to diff against -- so
+     *       it degrades to a full sweep and says so, rather than refusing.</li>
+     *   <li><b>Stage the plan.</b> Every matchup this run intends to cover, with the digest of what it
+     *       depends on <em>now</em>. Written to the database rather than diffed in memory; see
+     *       {@code sim_delta_plan}.</li>
+     *   <li><b>Carry.</b> One server-side insert copies every planned matchup the baseline already
+     *       measured under an unchanged scope. This is what makes a delta run a whole run.</li>
+     *   <li><b>Read back what is left.</b> The short list, which is the sweep.</li>
+     * </ol>
+     *
+     * <p>Carrying before measuring rather than after is deliberate. A sweep can be stopped or die
+     * halfway, and a run whose carried rows had not landed yet would be a fraction of a run with
+     * nothing saying so -- exactly the failure the whole-run property exists to prevent. Doing it
+     * first means an interrupted delta run is still a complete picture of everything that did not
+     * change, plus however much of the change it got through.
+     */
+    private CompletableFuture<@Nullable Set<String>> planDelta(long runId,
+                                                              List<SimBuildSpec> builds,
+                                                              List<SimTargetSpec> targets,
+                                                              Map<String, Long> buildIds) {
+        if (!request.isDelta()) {
+            return CompletableFuture.completedFuture(null);
+        }
+        final int realm = Core.getCurrentRealm().getId();
+        final CompletableFuture<@Nullable Long> baseline = request.baselineId() != null
+                ? CompletableFuture.completedFuture(request.baselineId())
+                : repository.findBaselineRun(realm, request.scope().name(), scenario.jsonValue());
+
+        return baseline.thenCompose(baselineId -> {
+            if (baselineId == null) {
+                log.info("Run {} was asked to measure only what changed, but no finished {} {} run"
+                                + " exists to diff against. Measuring everything; this run becomes the"
+                                + " baseline the next --changed sweep uses.",
+                        runId, request.scope(), scenario).submit();
+                return CompletableFuture.completedFuture(null);
+            }
+            if (baselineId == runId) {
+                // Reachable when --changed is combined with --resume and the resumed run is itself the
+                // newest one at this scope. Carrying a run into itself would be a no-op join at best
+                // and a duplicate-row insert at worst, and the resume path already skips what it
+                // measured -- so the delta has nothing to add.
+                log.info("Run {} is its own newest baseline, so there is nothing to carry forward;"
+                        + " the resume path already skips what it measured.", runId).submit();
+                return CompletableFuture.completedFuture(null);
+            }
+
+            final List<SimResultRepository.DeltaPlanRow> plan =
+                    new ArrayList<>(builds.size() * targets.size());
+            int unfingerprinted = 0;
+            for (SimBuildSpec build : builds) {
+                if (!buildIds.containsKey(build.fingerprint())) {
+                    continue;
+                }
+                for (SimTargetSpec target : targets) {
+                    final String hash = matchupScopeHash(build, target);
+                    if (hash.isEmpty()) {
+                        // The config could not be digested, so nothing can be claimed unchanged. Left
+                        // out of the plan entirely rather than staged with an empty hash, so it can
+                        // never join and is measured -- and counted, so the log says how much of the
+                        // sweep the delta could not reason about.
+                        unfingerprinted++;
+                        continue;
+                    }
+                    plan.add(new SimResultRepository.DeltaPlanRow(
+                            build.fingerprint(), target.role(), target.armorSetId(), hash));
+                }
+            }
+            final int unmeasurableScopes = unfingerprinted;
+            if (unmeasurableScopes > 0) {
+                log.warn("Run {}: {} matchups could not be config-fingerprinted and will be measured"
+                        + " rather than carried forward.", runId, unmeasurableScopes).submit();
+            }
+
+            final long planned = (long) builds.size() * targets.size();
+            log.info("Run {} planning a delta against run {}: {} matchups staged.",
+                    runId, baselineId, plan.size()).submit();
+
+            return repository.stageDeltaPlan(runId, plan)
+                    .thenCompose(ignored -> request.carry()
+                            ? repository.carryForwardResults(runId, baselineId)
+                            // --no-carry: the delta still decides what to measure, it just does not
+                            // keep a copy of what it did not. A lean run for the case where the
+                            // question is "what did my change do" rather than "what does the game
+                            // look like now" -- and the pipeline's run_diff mart answers the first
+                            // from two whole runs anyway, so this is the narrower tool.
+                            : CompletableFuture.completedFuture(0))
+                    .thenCompose(carried -> repository.findPendingMatchups(runId, baselineId)
+                            .thenCompose(pending -> repository.clearDeltaPlan(runId)
+                                    .thenApply(cleared -> {
+                                        // Every matchup the plan could not account for is measured:
+                                        // the ones left out above never entered the plan, so they are
+                                        // absent from `pending` too and must be added back.
+                                        final Set<String> toMeasure = new HashSet<>(pending);
+                                        if (unmeasurableScopes > 0) {
+                                            addUnfingerprinted(builds, targets, buildIds, toMeasure);
+                                        }
+                                        log.info("Run {} delta against run {}: {} of {} matchups"
+                                                        + " carried forward unchanged, {} to measure"
+                                                        + " ({}% of the sweep avoided).",
+                                                runId, baselineId, carried, planned, toMeasure.size(),
+                                                planned == 0 ? 0 : 100L * carried / planned).submit();
+                                        return toMeasure;
+                                    })));
+        });
+    }
+
+    /**
+     * Adds back the matchups that were left out of the delta plan because they could not be
+     * fingerprinted. They are not in the pending set for the same reason they were not carried --
+     * they were never staged -- so without this they would be silently dropped from the sweep.
+     */
+    private void addUnfingerprinted(List<SimBuildSpec> builds,
+                                    List<SimTargetSpec> targets,
+                                    Map<String, Long> buildIds,
+                                    Set<String> toMeasure) {
+        for (SimBuildSpec build : builds) {
+            if (!buildIds.containsKey(build.fingerprint())) {
+                continue;
+            }
+            for (SimTargetSpec target : targets) {
+                if (matchupScopeHash(build, target).isEmpty()) {
+                    toMeasure.add(SimResultRepository.matchupKey(
+                            build.fingerprint(), target.role(), target.armorSetId()));
+                }
+            }
         }
     }
 
@@ -834,8 +1024,53 @@ public class DuelOrchestrator {
                 + ":" + settings.skillFilter()
                 + ":" + settings.relevantSkillsCanonical()
                 + ":" + settings.channelHoldTicks()
+                // A narrowed sweep is not the same sweep. Without this a --weapons=thornfang sitting
+                // would find the full EQUIPMENT run as a resume candidate, reopen it, measure a
+                // handful of matchups and close it -- and the thousands of missing rows would be
+                // indistinguishable from ones the sweep had simply not reached yet. Empty for an
+                // unrestricted run, so every existing run's hash is unchanged.
+                + ":" + request.selection().canonical()
                 + ":" + configDigest.digest()
                 + ":" + ENGINE_VERSION).hashCode());
+    }
+
+    /**
+     * The measurement terms a matchup's scope hash carries beyond the config its build and target
+     * depend on.
+     *
+     * <p>These are the knobs that change what a duel <em>means</em> rather than what the game is, and
+     * they belong in the per-matchup hash for the same reason the config does: a row measured over one
+     * Monte-Carlo iteration must not be carried forward into a ten-iteration run as though the two
+     * were the same measurement, and a {@code ONE_WAY} TTK is not a {@code MUTUAL} one.
+     *
+     * <p>Concurrency is absent, for the reason it is absent from {@code config_hash}: duels are
+     * tick-driven and do not interact, so how many ran at once changes how fast the sweep finished and
+     * nothing about any row.
+     */
+    private String measurementTerms() {
+        return scenario + ":" + settings.iterations()
+                + ":" + settings.duelTimeoutSeconds()
+                + ":" + settings.channelHoldTicks()
+                + ":" + ENGINE_VERSION;
+    }
+
+    /**
+     * The digest a delta sweep compares to decide whether a stored row still describes this matchup.
+     *
+     * <p>Composed rather than hashed from config directly: the build and target halves are already
+     * memoised per permutation, so this is a string concatenation per matchup rather than a config
+     * walk. That matters at catalog scale -- it is called once for every row of the plan.
+     */
+    private String matchupScopeHash(SimBuildSpec build, SimTargetSpec target) {
+        if (build.configScopeHash().isEmpty() || target.configScopeHash().isEmpty()) {
+            // The config could not be read, so nothing here is a claim about anything. Empty, which
+            // is stored as NULL and compares equal to no stored hash -- so the matchup re-measures.
+            return "";
+        }
+        return SimConfigDigest.compose(List.of(
+                "build=" + build.configScopeHash(),
+                "target=" + target.configScopeHash(),
+                "measurement=" + measurementTerms()));
     }
 
     /**
@@ -867,7 +1102,20 @@ public class DuelOrchestrator {
                 + ",\"relevant_skills\":" + settings.relevantSkills().size()
                 + ",\"balance_config\":\"" + configDigest.digest() + '"'
                 + ",\"timeout_s\":" + settings.duelTimeoutSeconds()
+                // What this sweep was narrowed to, if anything. Written even when empty, so a reader
+                // can tell "swept everything" from "column predates the feature" -- which are the two
+                // things an absent field would conflate, and they are opposite claims about coverage.
+                + ",\"selection\":\"" + escapeJson(request.selection().canonical()) + '"'
+                // Whether the rows were all measured by this run. A delta run is a whole run by
+                // construction, so nothing else about it would say that some of its rows are older
+                // measurements carried forward; sim_result.measured_run_id says which.
+                + ",\"delta\":" + request.isDelta()
                 + '}';
+    }
+
+    /** Minimal JSON string escaping for the scenario blob, which is hand-built. */
+    private static String escapeJson(String raw) {
+        return raw.replace("\\", "\\\\").replace("\"", "\\\"");
     }
 
     /**
@@ -987,7 +1235,16 @@ public class DuelOrchestrator {
      *                    foreign key without a second lookup at harvest time
      * @param measurement accumulates the iterations and reduces them once they are all in
      */
-    private record Matchup(SimBuildSpec build, long buildId, SimTargetSpec target, SimMeasurement measurement) {
+    /**
+     * @param configScopeHash what this matchup depends on, computed once when the queue is built
+     *                        rather than per result: it is the same for every iteration, and a
+     *                        catalog-sized sweep reduces millions of matchups
+     */
+    private record Matchup(SimBuildSpec build,
+                           long buildId,
+                           SimTargetSpec target,
+                           SimMeasurement measurement,
+                           String configScopeHash) {
     }
 
     /**
@@ -1456,7 +1713,10 @@ public class DuelOrchestrator {
                     // Observed, not modelled: SimRecorder watches for a skill use the real chain
                     // refused for energy rather than for a cooldown.
                     aggregate.energyLimited(),
-                    aggregate.extrasJson()));
+                    aggregate.extrasJson(),
+                    // What this row depended on, so a later --changed sweep can decide whether it is
+                    // still true without re-running it.
+                    matchup.configScopeHash()));
         }
 
         /**
@@ -1700,7 +1960,11 @@ public class DuelOrchestrator {
                     // the weapon dedupe applies to the swept attacker axis, and claiming the
                     // defender's fixed kit stood for other weapons would be false.
                     context.equipment().profileOf(context.equipment().defaultWeapon().key()),
-                    List.of(context.equipment().defaultWeapon().key()));
+                    List.of(context.equipment().defaultWeapon().key()),
+                    // Empty for the same reason the fingerprint is synthetic: this spec never reaches
+                    // sim_build, so nothing will ever compare its config scope to anything. The
+                    // defender's actual scope is on the target spec, where the delta plan reads it.
+                    "");
         }
 
         private void setUp() {

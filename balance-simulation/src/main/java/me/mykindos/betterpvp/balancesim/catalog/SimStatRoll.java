@@ -2,6 +2,7 @@ package me.mykindos.betterpvp.balancesim.catalog;
 
 import me.mykindos.betterpvp.core.item.component.impl.stat.ItemStat;
 import me.mykindos.betterpvp.core.item.component.impl.stat.StatContainerComponent;
+import me.mykindos.betterpvp.core.item.component.impl.stat.StatType;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -58,23 +59,61 @@ public enum SimStatRoll {
     }
 
     /**
-     * Rewrites a stat container so every stat in it sits at this roll.
+     * Rewrites a stat container so every stat in it sits at this roll, <em>as modifier stats</em>.
      *
      * <p>Returns the container unchanged for {@link #BASE}, so the common path allocates nothing and
      * a sweep that does not vary the axis produces byte-identical items to one taken before the axis
      * existed. That matters for more than speed: it is what lets a stored {@code BASE} baseline stay
      * comparable to a new run rather than being invalidated by the axis being added.
      *
-     * <p>Modifier stats are rolled alongside base stats. An item straight out of the registry has
-     * none -- they are what reforging writes -- but rolling only half of a container would produce an
-     * item whose lore and whose behaviour disagreed, which is worse than either extreme.
+     * <h2>Why the roll has to land in the modifier half</h2>
+     * This method used to rewrite the base stats, which does not survive the trip onto an entity and
+     * is why the axis measured nothing for its first three runs. {@code StatContainerSerializer}
+     * writes <em>only</em> modifier stats to the item's {@code PersistentDataContainer}, and on the
+     * way back it reads the base stats off the registered {@code BaseItem} rather than off the
+     * stack -- deliberately, so that editing a config value applies to items already in circulation.
+     * A rolled base stat is therefore discarded by {@code createItemStack} and replaced with the
+     * configured one by {@code fromItemStack}, which is the round trip every combatant's weapon and
+     * armour makes: {@code MeleeDamageStatHandler} re-reads the stat off the held stack on every
+     * swing, and {@code EntityHealthService} reads armour the same way.
+     *
+     * <p>The symptom was total and silent. {@code champions:thornfang} rolls 5 / 6 / 7 and measured
+     * {@code dmg_per_hit} 6.000 at all three; {@code role_set_max} targets had byte-identical HP to
+     * {@code role_set} ones. Every {@code min} and {@code max} row was a duplicate of its {@code
+     * base} row, so the axis tripled the weapon space and doubled the armoured target space while
+     * adding no information -- and triplicated rows average to exactly what the base rows alone
+     * would, so no aggregate looked wrong.
+     *
+     * <p>A modifier of the same {@code StatType} <em>replaces</em> its base stat rather than adding
+     * to it ({@code StatContainerComponent.getStats}), so the rolled value is the value the game
+     * reads, not a bonus on top of it. Base stats are left untouched so the item still describes
+     * where it came from.
+     *
+     * <p>This does mean a rolled item looks reforged rather than freshly dropped. That is invisible
+     * here -- these stacks exist for the duration of a duel and no player ever sees one -- and it is
+     * the same representation a reforged item in a real inventory has, so it goes through the live
+     * pipeline along exactly the paths a real item does.
      */
     public StatContainerComponent apply(StatContainerComponent container) {
         if (this == BASE) {
             return container;
         }
-        return new StatContainerComponent(rollAll(container.getBaseStats()),
-                rollAll(container.getModifierStats()));
+
+        final List<ItemStat<?>> modifiers = new ArrayList<>();
+        final List<StatType<?>> overridden = new ArrayList<>();
+        // Existing modifiers first, and they win: a modifier already overrides its base stat, so
+        // emitting a rolled copy of that base stat too would put two stats of one type in the
+        // container and leave which one the game reads down to list order.
+        for (ItemStat<?> stat : container.getModifierStats()) {
+            modifiers.add(roll(stat));
+            overridden.add(stat.getType());
+        }
+        for (ItemStat<?> stat : container.getBaseStats()) {
+            if (!overridden.contains(stat.getType())) {
+                modifiers.add(roll(stat));
+            }
+        }
+        return new StatContainerComponent(container.getBaseStats(), modifiers);
     }
 
     /**
@@ -87,14 +126,6 @@ public enum SimStatRoll {
      */
     public Optional<StatContainerComponent> applyTo(Optional<StatContainerComponent> container) {
         return container.map(this::apply);
-    }
-
-    private List<ItemStat<?>> rollAll(List<ItemStat<?>> stats) {
-        final List<ItemStat<?>> rolled = new ArrayList<>(stats.size());
-        for (ItemStat<?> stat : stats) {
-            rolled.add(roll(stat));
-        }
-        return rolled;
     }
 
     /**

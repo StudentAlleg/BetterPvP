@@ -32,6 +32,14 @@ import java.util.List;
  * @param weaponAliases every weapon key this build's measurement covers, {@link #weaponKey()}
  *                      first. Longer than one element only when the weapon axis was reduced to
  *                      distinct profiles; see {@code SimEquipment.distinctMeleeWeapons}
+ * @param configScopeHash digest of exactly the config this build's damage depends on -- its weapon,
+ *                      its runes, its skills and its role's base health, and nothing else.
+ *                      {@code config_hash} moves when <em>any</em> balance value moves, which is the
+ *                      right question for "are these two runs comparable" and the wrong one for "does
+ *                      this build need re-measuring": under it a delta sweep would re-run the whole
+ *                      catalog for one changed cooldown. This is the per-permutation answer; see
+ *                      {@code SimConfigDigest}. Empty when the digest was unavailable, which compares
+ *                      equal to nothing and therefore re-measures
  */
 public record SimBuildSpec(String role,
                            String weaponKey,
@@ -43,7 +51,8 @@ public record SimBuildSpec(String role,
                            boolean booster,
                            String fingerprint,
                            SimWeaponProfile weapon,
-                           List<String> weaponAliases) {
+                           List<String> weaponAliases,
+                           String configScopeHash) {
 
     public SimBuildSpec {
         weaponAliases = List.copyOf(weaponAliases);

@@ -18,6 +18,11 @@ import me.mykindos.betterpvp.balancesim.catalog.SimTargetSpec;
  * @param hitsToKill    mean hits required, {@code null} alongside a null TTK
  * @param energyLimited true when the rotation stalled on energy rather than cooldowns
  * @param extrasJson    JSON object of percentiles and modifier breakdown
+ * @param configScopeHash digest of exactly the config this matchup depended on -- the build's scope,
+ *                      the target's scope, and the measurement terms that decide what a duel means.
+ *                      What a later {@code --changed} sweep compares against to decide whether this
+ *                      row is still true; see {@code SimConfigDigest}. Empty when unavailable, which
+ *                      compares equal to nothing and so is never carried forward
  */
 public record SimResultRow(long buildId,
                            SimTargetSpec target,
@@ -27,5 +32,6 @@ public record SimResultRow(long buildId,
                            Double ttkSeconds,
                            Double hitsToKill,
                            boolean energyLimited,
-                           String extrasJson) {
+                           String extrasJson,
+                           String configScopeHash) {
 }

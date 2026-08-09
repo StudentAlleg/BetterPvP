@@ -260,6 +260,66 @@ public class SimResultRecord extends UpdatableRecordImpl<SimResultRecord> {
         return (JSONB) get(15);
     }
 
+    /**
+     * Setter for <code>public.sim_result.config_scope_hash</code>.
+     */
+    public SimResultRecord setConfigScopeHash(String value) {
+        set(16, value);
+        return this;
+    }
+
+    /**
+     * Getter for <code>public.sim_result.config_scope_hash</code>.
+     */
+    public String getConfigScopeHash() {
+        return (String) get(16);
+    }
+
+    /**
+     * Setter for <code>public.sim_result.measured_run_id</code>.
+     */
+    public SimResultRecord setMeasuredRunId(Long value) {
+        set(17, value);
+        return this;
+    }
+
+    /**
+     * Getter for <code>public.sim_result.measured_run_id</code>.
+     */
+    public Long getMeasuredRunId() {
+        return (Long) get(17);
+    }
+
+    /**
+     * Setter for <code>public.sim_result.target_armor_set</code>.
+     */
+    public SimResultRecord setTargetArmorSet(String value) {
+        set(18, value);
+        return this;
+    }
+
+    /**
+     * Getter for <code>public.sim_result.target_armor_set</code>.
+     */
+    public String getTargetArmorSet() {
+        return (String) get(18);
+    }
+
+    /**
+     * Setter for <code>public.sim_result.target_armor_tier</code>.
+     */
+    public SimResultRecord setTargetArmorTier(Integer value) {
+        set(19, value);
+        return this;
+    }
+
+    /**
+     * Getter for <code>public.sim_result.target_armor_tier</code>.
+     */
+    public Integer getTargetArmorTier() {
+        return (Integer) get(19);
+    }
+
     // -------------------------------------------------------------------------
     // Primary key information
     // -------------------------------------------------------------------------
@@ -283,7 +343,7 @@ public class SimResultRecord extends UpdatableRecordImpl<SimResultRecord> {
     /**
      * Create a detached, initialised SimResultRecord
      */
-    public SimResultRecord(Long id, Long runId, Long buildId, String targetRole, String targetArmor, BigDecimal targetHp, JSONB targetSkills, Integer targetPoints, BigDecimal dmgPerHit, BigDecimal dpsSustained, BigDecimal dpsBurst, BigDecimal ttkS, BigDecimal hitsToKill, Boolean energyLimited, JSONB extras, JSONB targetRoleAliases) {
+    public SimResultRecord(Long id, Long runId, Long buildId, String targetRole, String targetArmor, BigDecimal targetHp, JSONB targetSkills, Integer targetPoints, BigDecimal dmgPerHit, BigDecimal dpsSustained, BigDecimal dpsBurst, BigDecimal ttkS, BigDecimal hitsToKill, Boolean energyLimited, JSONB extras, JSONB targetRoleAliases, String configScopeHash, Long measuredRunId, String targetArmorSet, Integer targetArmorTier) {
         super(SimResult.SIM_RESULT);
 
         setId(id);
@@ -302,6 +362,10 @@ public class SimResultRecord extends UpdatableRecordImpl<SimResultRecord> {
         setEnergyLimited(energyLimited);
         setExtras(extras);
         setTargetRoleAliases(targetRoleAliases);
+        setConfigScopeHash(configScopeHash);
+        setMeasuredRunId(measuredRunId);
+        setTargetArmorSet(targetArmorSet);
+        setTargetArmorTier(targetArmorTier);
         resetChangedOnNotNull();
     }
 }

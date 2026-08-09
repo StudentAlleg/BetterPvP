@@ -31,13 +31,16 @@ import org.bukkit.plugin.java.JavaPlugin;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.TreeMap;
 
 /**
  * Resolves the loadout axes against the <em>live</em> {@code ItemRegistry}, never against a
@@ -82,6 +85,17 @@ public class SimEquipment {
     public static final List<EquipmentSlot> ARMOR_SLOTS =
             List.of(EquipmentSlot.HEAD, EquipmentSlot.CHEST, EquipmentSlot.LEGS, EquipmentSlot.FEET);
 
+    /**
+     * The word an armour key uses for each slot, which is the Minecraft material's rather than the
+     * {@code EquipmentSlot}'s: a helmet occupies {@code HEAD} and is named {@code _helmet}.
+     * Stripping it plus the role from a key leaves the set token -- see {@link #setIdOf}.
+     */
+    private static final Map<EquipmentSlot, String> SLOT_TOKENS = Map.of(
+            EquipmentSlot.HEAD, "helmet",
+            EquipmentSlot.CHEST, "chestplate",
+            EquipmentSlot.LEGS, "leggings",
+            EquipmentSlot.FEET, "boots");
+
     private final ItemRegistry itemRegistry;
     private final ItemFactory itemFactory;
     private final EntityHealthService entityHealthService;
@@ -104,7 +118,8 @@ public class SimEquipment {
     @Nullable
     private List<WeaponOption> distinctMeleeWeaponCache;
     private final Map<String, SkillType> skillTypeCache = new HashMap<>();
-    private final Map<Role, List<BaseItem>> armorCache = new EnumMap<>(Role.class);
+    /** Per role, every registered armour set keyed by set id, in ascending tier order. */
+    private final Map<Role, Map<String, ArmorSet>> armorCache = new EnumMap<>(Role.class);
     private final Map<String, List<RuneOption>> runeCache = new HashMap<>();
     private final Map<String, List<List<String>>> runeSetCache = new HashMap<>();
     private final Map<String, SimWeaponProfile> profileCache = new HashMap<>();
@@ -442,8 +457,33 @@ public class SimEquipment {
      * @see #socketCeiling() for why the bound is not the weapon's own socket count
      */
     public List<List<String>> weaponRuneSets(String weaponKey) {
-        return runeSetCache.computeIfAbsent(weaponKey,
-                key -> runeSets(weaponRunes(key).stream().map(RuneOption::key).toList(), socketCeiling()));
+        return weaponRuneSets(weaponKey, SimSelection.ALL);
+    }
+
+    /**
+     * Every rune set a weapon can be carrying, restricted to the runes {@code selection} admits.
+     *
+     * <p>The restriction is applied to the rune <em>list</em> before the combinations are generated
+     * rather than to the sets afterwards, and that is the whole point of the overload: the set count
+     * is exponential in the rune count, so filtering first turns 386 sets per sword into a handful,
+     * while filtering after would build all 386 and then discard them. On the {@code EQUIPMENT} tier
+     * this is the difference between a sweep that finishes over lunch and one that does not finish.
+     *
+     * <p>The empty set survives any selection, because it is the baseline every rune's contribution is
+     * read against -- a rune sweep with no zero point measures nothing that can be attributed.
+     */
+    public List<List<String>> weaponRuneSets(String weaponKey, SimSelection selection) {
+        // Keyed on the selection as well, so two weapons under different selections cannot share an
+        // entry. The canonical form is empty for the unrestricted case, so the common key is unchanged.
+        return runeSetCache.computeIfAbsent(weaponKey + ' ' + selection.canonical(), ignored -> {
+            final List<String> admitted = new ArrayList<>();
+            for (RuneOption rune : weaponRunes(weaponKey)) {
+                if (selection.admitsRune(rune.key())) {
+                    admitted.add(rune.key());
+                }
+            }
+            return runeSets(admitted, socketCeiling());
+        });
     }
 
     /**
@@ -570,75 +610,151 @@ public class SimEquipment {
     }
 
     /**
-     * The role's armour set, one piece per slot in helmet-to-boots order, or an empty list for
-     * {@link #NO_ARMOR}.
+     * The pieces of one armour set, one per slot in helmet-to-boots order.
      *
-     * <p>Where several registered items would fit a slot for the same role, the lowest key wins.
-     * That is arbitrary but stable, which is what matters: the same sweep must produce the same
-     * set on every run for {@code target_hp} to be comparable across them.
+     * @param id     the set's own name, with the role and slot tokens stripped off -- {@code
+     *               "reinforced"} for {@code champions:reinforced_knight_helmet}
+     * @param tier   1 for the flimsiest registered set, ascending. Tier 0 is {@link #NO_ARMOR},
+     *               which is not a set and has no entry here
+     * @param pieces the registered items, in {@link #ARMOR_SLOTS} order
+     * @param keys   {@code pieces}' registry keys, in the same order
+     * @param health the set's summed {@code StatTypes.HEALTH} at the base roll, which is what
+     *               {@link #tierOrder} sorts on
+     */
+    private record ArmorSet(String id, int tier, List<BaseItem> pieces, List<String> keys, double health) {
+    }
+
+    /**
+     * The armour a target wearing {@code armorSetId} is actually equipped with, or an empty list
+     * when the id names no armour at all.
+     *
+     * <p>An unrecognised id is bare, not an error, for the same reason it was before this class
+     * knew about more than one set: {@code target_armor} is a free-form discriminator that a stored
+     * row can carry from a sweep whose catalog no longer exists, and re-equipping such a row is
+     * better served by measuring nothing than by measuring the wrong set.
      */
     public List<ItemStack> armorStacks(Role role, String armorSetId) {
-        final SimStatRoll roll = armorRollOf(armorSetId);
-        if (roll == null) {
+        final ArmorSet set = armorSetOf(role, armorSetId);
+        if (set == null) {
             return List.of();
         }
+        final SimStatRoll roll = rollOf(armorSetId);
         // Fresh stacks every call: these are equipped onto a combatant, and handing two duels the
         // same instance would let one duel's durability or socket state follow the other's.
         final List<ItemStack> stacks = new ArrayList<>(ARMOR_SLOTS.size());
-        for (BaseItem item : armorSet(role)) {
+        for (BaseItem item : set.pieces()) {
             stacks.add(rolled(itemFactory.create(item), roll).createItemStack());
         }
         return stacks;
     }
 
     /**
-     * The armour set id a target wearing its role's set at {@code roll} is recorded under.
+     * Every armour set registered for a role, flimsiest first, {@link #NO_ARMOR} excluded.
      *
-     * <p>The roll is folded into the id rather than carried as a separate column because
-     * {@code armorSetId} is already a free-form discriminator -- {@code "none"} against
-     * {@code "role_set"} -- and it is already the thing written to {@code sim_result.target_armor}
-     * and read by every dashboard that groups by armour. A new column would have to be joined in
-     * everywhere that string is already understood, and a stored row taken before this axis existed
-     * still reads correctly as the base roll it was.
+     * <p>This is the tier axis. Before it existed the class assumed one set per role and picked, per
+     * slot, the lowest-sorting registered piece -- so adding a second tier would have replaced the
+     * first or been ignored entirely depending on how its key happened to alphabetise, and the sweep
+     * would have reported a full armour axis either way. The ids are returned rather than the sets
+     * because a caller wants them to build {@link #armorSetId} strings with.
      */
-    public static String armorSetId(SimStatRoll roll) {
-        return roll == SimStatRoll.DEFAULT ? ROLE_ARMOR : ROLE_ARMOR + "_" + roll.id();
+    public List<String> armorSetIds(Role role) {
+        return List.copyOf(armorSets(role).keySet());
     }
 
     /**
-     * The roll an armour set id names, or null when it names no armour at all.
+     * The tier {@code armorSetId} sits at: 0 for {@link #NO_ARMOR}, then 1 upwards by durability.
      *
-     * <p>An unrecognised id is {@code null} -- no armour -- which is what {@link #armorStacks} did
-     * with anything that was not {@code "role_set"} before the roll axis existed.
+     * <p>Ordered by the set's summed base health rather than declared anywhere, so registering a
+     * tier adds it to the ladder without a second place to update -- and a set that is *not* more
+     * durable than the one below it cannot be mislabelled as a higher tier, because the ordering is
+     * the measurement. Unknown ids are 0, matching {@link #armorStacks} treating them as bare.
      */
-    @Nullable
-    public static SimStatRoll armorRollOf(String armorSetId) {
-        if (ROLE_ARMOR.equals(armorSetId)) {
-            return SimStatRoll.DEFAULT;
-        }
+    public int armorTier(Role role, String armorSetId) {
+        final ArmorSet set = armorSetOf(role, armorSetId);
+        return set == null ? 0 : set.tier();
+    }
+
+    /** The set token of an armour set id, with any roll suffix removed. */
+    public static String setOf(String armorSetId) {
         for (SimStatRoll roll : SimStatRoll.values()) {
-            if (armorSetId(roll).equals(armorSetId)) {
+            final String suffix = "_" + roll.id();
+            if (roll != SimStatRoll.DEFAULT && armorSetId.endsWith(suffix)) {
+                return armorSetId.substring(0, armorSetId.length() - suffix.length());
+            }
+        }
+        return armorSetId;
+    }
+
+    /**
+     * The armour set id a target wearing {@code setId} at {@code roll} is recorded under.
+     *
+     * <p>The roll stays folded into the id rather than becoming its own column, for the reason it
+     * always was: this string is what {@code sim_result.target_armor} holds and what every dashboard
+     * already groups by, and a stored row taken before an axis existed still reads correctly as the
+     * base roll it was. The <em>set</em> does get its own column, because unlike the roll it is the
+     * thing a tier comparison groups by, and parsing a tier out of a discriminator in SQL is how
+     * dashboards start disagreeing with the sweep.
+     */
+    public static String armorSetId(String setId, SimStatRoll roll) {
+        return roll == SimStatRoll.DEFAULT ? setId : setId + "_" + roll.id();
+    }
+
+    /** The roll an armour set id names; {@link SimStatRoll#DEFAULT} when it names none. */
+    public static SimStatRoll rollOf(String armorSetId) {
+        for (SimStatRoll roll : SimStatRoll.values()) {
+            if (roll != SimStatRoll.DEFAULT && armorSetId.endsWith("_" + roll.id())) {
                 return roll;
             }
         }
-        return null;
+        return SimStatRoll.DEFAULT;
     }
 
     /**
-     * The registered armour pieces for a role, one per slot, in helmet-to-boots order.
+     * Resolves an armour set id against a role's registered sets, or null when it names no armour.
      *
-     * <p>Where several registered items would fit a slot for the same role, the lowest key wins.
-     * That is arbitrary but stable, which is what matters: the same sweep must produce the same
-     * set on every run for {@code target_hp} to be comparable across them.
+     * <p>{@link #ROLE_ARMOR} resolves to the lowest tier. Every run before the tier axis existed
+     * wrote that literal for the one set a role had, and those rows are still joined against by
+     * {@code run_diff} and by every delta sweep's baseline -- so it has to keep resolving to the set
+     * it used to mean rather than becoming an unknown id that silently measures bare.
      */
-    private List<BaseItem> armorSet(Role role) {
-        final List<BaseItem> cached = armorCache.get(role);
+    @Nullable
+    private ArmorSet armorSetOf(Role role, String armorSetId) {
+        if (NO_ARMOR.equals(armorSetId)) {
+            return null;
+        }
+        final Map<String, ArmorSet> sets = armorSets(role);
+        final String setId = setOf(armorSetId);
+        if (ROLE_ARMOR.equals(setId)) {
+            return sets.values().stream().findFirst().orElse(null);
+        }
+        return sets.get(setId);
+    }
+
+    /**
+     * Every registered armour set for a role, keyed by set id, in ascending tier order.
+     *
+     * <p>A set is identified by what its pieces' keys have in common once the role and the slot are
+     * stripped off: {@code champions:reinforced_knight_helmet} and {@code
+     * champions:reinforced_knight_boots} are two pieces of {@code reinforced}. That is derived from
+     * the keys rather than declared on the item because a tier is a naming convention the game
+     * already follows, and a declared field would be a second source of truth that could disagree
+     * with the name a designer reads.
+     *
+     * <p>A set missing pieces is kept rather than dropped. A three-piece tier is a real thing to
+     * measure and probably a mistake to see -- dropping it would hide the mistake, and its
+     * durability being short is exactly what a sweep would show.
+     */
+    private Map<String, ArmorSet> armorSets(Role role) {
+        final Map<String, ArmorSet> cached = armorCache.get(role);
         if (cached != null) {
             return cached;
         }
 
-        final Map<EquipmentSlot, NamespacedKey> chosenKeys = new EnumMap<>(EquipmentSlot.class);
-        final Map<EquipmentSlot, BaseItem> chosen = new EnumMap<>(EquipmentSlot.class);
+        // set id -> slot -> the lowest-sorting registered piece for it. The per-slot tie-break is
+        // the old behaviour, now scoped to within a set rather than across all of them: two models
+        // of one tier's helmet are still one helmet, but two tiers are no longer one set.
+        final Map<String, Map<EquipmentSlot, NamespacedKey>> keysBySet = new TreeMap<>();
+        final Map<String, Map<EquipmentSlot, BaseItem>> itemsBySet = new TreeMap<>();
         for (Map.Entry<NamespacedKey, BaseItem> entry : itemRegistry.getItems().entrySet()) {
             final BaseItem item = entry.getValue();
             if (!(item instanceof ArmorItem)) {
@@ -650,30 +766,115 @@ public class SimEquipment {
             if (!forRole) {
                 continue;
             }
-
             final EquipmentSlot slot = item.getModel().getType().getEquipmentSlot();
             if (!ARMOR_SLOTS.contains(slot)) {
                 continue;
             }
-            final NamespacedKey existing = chosenKeys.get(slot);
+
+            final String setId = setIdOf(entry.getKey(), role, slot);
+            final Map<EquipmentSlot, NamespacedKey> keys =
+                    keysBySet.computeIfAbsent(setId, ignored -> new EnumMap<>(EquipmentSlot.class));
+            final NamespacedKey existing = keys.get(slot);
             if (existing == null || entry.getKey().toString().compareTo(existing.toString()) < 0) {
-                chosenKeys.put(slot, entry.getKey());
-                chosen.put(slot, item);
+                keys.put(slot, entry.getKey());
+                itemsBySet.computeIfAbsent(setId, ignored -> new EnumMap<>(EquipmentSlot.class))
+                        .put(slot, item);
             }
         }
 
-        final List<BaseItem> set = new ArrayList<>(ARMOR_SLOTS.size());
-        for (EquipmentSlot slot : ARMOR_SLOTS) {
-            final BaseItem item = chosen.get(slot);
-            if (item != null) {
-                set.add(item);
+        final List<ArmorSet> unordered = new ArrayList<>(keysBySet.size());
+        keysBySet.forEach((setId, keys) -> {
+            final List<BaseItem> pieces = new ArrayList<>(ARMOR_SLOTS.size());
+            final List<String> pieceKeys = new ArrayList<>(ARMOR_SLOTS.size());
+            for (EquipmentSlot slot : ARMOR_SLOTS) {
+                final BaseItem item = itemsBySet.get(setId).get(slot);
+                if (item != null) {
+                    pieces.add(item);
+                    pieceKeys.add(keys.get(slot).toString());
+                }
             }
-        }
-        if (set.isEmpty()) {
+            if (pieces.size() < ARMOR_SLOTS.size()) {
+                log.warn("Armour set {} for role {} has {} of {} slots; it will be measured as it is"
+                                + " registered", setId, role, pieces.size(), ARMOR_SLOTS.size()).submit();
+            }
+            unordered.add(new ArmorSet(setId, 0, List.copyOf(pieces), List.copyOf(pieceKeys),
+                    setHealth(pieces)));
+        });
+
+        if (unordered.isEmpty()) {
             log.warn("No registered armour set for role {}; targets will be measured bare", role).submit();
         }
-        armorCache.put(role, List.copyOf(set));
-        return armorCache.get(role);
+        final Map<String, ArmorSet> ordered = tierOrder(unordered);
+        armorCache.put(role, ordered);
+        if (ordered.size() > 1) {
+            log.info("Armour axis for {}: {}", role, ordered.values().stream()
+                    .map(set -> "tier " + set.tier() + " " + set.id() + " (+" + set.health() + " HP)")
+                    .toList()).submit();
+        }
+        return ordered;
+    }
+
+    /**
+     * Numbers the sets by durability, flimsiest as tier 1, and returns them in that order.
+     *
+     * <p>Ties break on the id so the ordering is total. Two sets of equal health are a design
+     * question rather than a sweep one -- they will both be measured and their rows will agree,
+     * which is the finding.
+     */
+    private static Map<String, ArmorSet> tierOrder(List<ArmorSet> sets) {
+        final List<ArmorSet> sorted = new ArrayList<>(sets);
+        sorted.sort(Comparator.comparingDouble(ArmorSet::health).thenComparing(ArmorSet::id));
+        final Map<String, ArmorSet> ordered = new LinkedHashMap<>();
+        for (int index = 0; index < sorted.size(); index++) {
+            final ArmorSet set = sorted.get(index);
+            ordered.put(set.id(), new ArmorSet(set.id(), index + 1, set.pieces(), set.keys(), set.health()));
+        }
+        return Collections.unmodifiableMap(ordered);
+    }
+
+    /**
+     * The set token of an armour piece's key: the key's name with the role and the slot's material
+     * word removed.
+     *
+     * <p>{@code champions:reinforced_knight_helmet} in the KNIGHT helmet slot is {@code reinforced}.
+     * A key that does not carry both tokens keeps its whole name, so an oddly-named piece becomes
+     * its own single-piece set and shows up in the sweep as one -- visible, rather than folded into
+     * a set it does not belong to and quietly changing that set's durability.
+     */
+    private static String setIdOf(NamespacedKey key, Role role, EquipmentSlot slot) {
+        String name = key.getKey();
+        for (String token : List.of("_" + role.name().toLowerCase(Locale.ROOT), "_" + SLOT_TOKENS.get(slot))) {
+            final int at = name.indexOf(token);
+            if (at < 0) {
+                return key.getKey();
+            }
+            name = name.substring(0, at) + name.substring(at + token.length());
+        }
+        return name.isEmpty() ? key.getKey() : name;
+    }
+
+    /** A set's summed {@code StatTypes.HEALTH} at the base roll, through the game's own accessor. */
+    private double setHealth(List<BaseItem> pieces) {
+        if (pieces.isEmpty()) {
+            return 0.0;
+        }
+        final ItemStack[] stacks = pieces.stream()
+                .map(item -> itemFactory.create(item).createItemStack())
+                .toArray(ItemStack[]::new);
+        return entityHealthService.getHealth(stacks);
+    }
+
+    /**
+     * The registry keys of one of a role's armour sets, in helmet-to-boots order.
+     *
+     * <p>The same pieces {@link #armorStacks} equips, named rather than instantiated. A delta sweep
+     * needs the keys to fingerprint what a target's durability actually depends on -- an armour piece
+     * whose {@code health} moved invalidates every matchup against a target wearing it, and no other.
+     * Which is now per set: a tier-2 piece moving must not invalidate tier 1.
+     */
+    public List<String> armorSetKeys(Role role, String armorSetId) {
+        final ArmorSet set = armorSetOf(role, armorSetId);
+        return set == null ? List.of() : set.keys();
     }
 
     /**

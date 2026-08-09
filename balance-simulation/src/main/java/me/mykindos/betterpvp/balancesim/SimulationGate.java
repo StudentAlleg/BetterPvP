@@ -261,7 +261,7 @@ public class SimulationGate {
      * sweep affects its outcome, and a sampled table cannot answer a question about ordering.
      */
     @Inject
-    @Config(path = "champions.simulation.duelDiagnosticsMaxRows", defaultValue = "50000")
+    @Config(path = "champions.simulation.duelDiagnosticsMaxRows", defaultValue = "6000000")
     private int duelDiagnosticsMaxRows;
 
     /**
@@ -280,7 +280,7 @@ public class SimulationGate {
      * after the duel has ended rather than emitted from the damage path as hits land.
      */
     @Inject
-    @Config(path = "champions.simulation.hitTrace", defaultValue = "false")
+    @Config(path = "champions.simulation.hitTrace", defaultValue = "true")
     private boolean hitTrace;
 
     /**
@@ -301,9 +301,16 @@ public class SimulationGate {
      * <p>The default is therefore an order of magnitude above the largest sweep rather than close to
      * it. The rows are narrow and the writes are batched off-thread, so the cost of the headroom is
      * disk; the cost of running out of it is a re-run and a wrong number in between.
+     *
+     * <p>Raised from 2,000,000 for the 2026-08-08 baseline, which is a full {@code EQUIPMENT} sweep
+     * rather than a {@code SKILLS} one: run 1 averaged 12.17 hits over 4.34M {@code ONE_WAY} duels,
+     * so ~52.8M rows. The old ceiling would have captured about 4% of it and stopped, leaving a
+     * prefix with nothing in the data marking where it ended. Measured cost is 565 bytes a row --
+     * mostly the seven-column index rather than the row itself -- so this ceiling is ~45 GB against
+     * ~920 GB free on the volume Postgres sits on.
      */
     @Inject
-    @Config(path = "champions.simulation.hitTraceMaxRows", defaultValue = "2000000")
+    @Config(path = "champions.simulation.hitTraceMaxRows", defaultValue = "80000000")
     private int hitTraceMaxRows;
 
     /**

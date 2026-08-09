@@ -229,7 +229,7 @@ class SkillRelevanceAuditTest {
         // is a delta between rows agreeing on everything but one skill, and two rolls of one weapon
         // deal different damage.
         return new SimBuildSpec(ROLE, WEAPON, "none", List.of(), SimStatRoll.DEFAULT, skills, points,
-                false, fingerprint, WEAPON_PROFILE, List.of(WEAPON));
+                false, fingerprint, WEAPON_PROFILE, List.of(WEAPON), "");
     }
 
     private static Map<String, SimSkillLedger.SkillActivation> fired(String skillName, int successes) {

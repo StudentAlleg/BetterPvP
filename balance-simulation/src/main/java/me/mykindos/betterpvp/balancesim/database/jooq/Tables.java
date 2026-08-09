@@ -5,6 +5,7 @@ package me.mykindos.betterpvp.balancesim.database.jooq;
 
 
 import me.mykindos.betterpvp.balancesim.database.jooq.tables.SimBuild;
+import me.mykindos.betterpvp.balancesim.database.jooq.tables.SimDeltaPlan;
 import me.mykindos.betterpvp.balancesim.database.jooq.tables.SimDuelDiagnostic;
 import me.mykindos.betterpvp.balancesim.database.jooq.tables.SimResult;
 import me.mykindos.betterpvp.balancesim.database.jooq.tables.SimRun;
@@ -21,6 +22,11 @@ public class Tables {
      * The table <code>public.sim_build</code>.
      */
     public static final SimBuild SIM_BUILD = SimBuild.SIM_BUILD;
+
+    /**
+     * The table <code>public.sim_delta_plan</code>.
+     */
+    public static final SimDeltaPlan SIM_DELTA_PLAN = SimDeltaPlan.SIM_DELTA_PLAN;
 
     /**
      * The table <code>public.sim_duel_diagnostic</code>.

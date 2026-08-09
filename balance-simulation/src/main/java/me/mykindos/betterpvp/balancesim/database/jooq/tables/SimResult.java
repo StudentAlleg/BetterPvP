@@ -141,6 +141,26 @@ public class SimResult extends TableImpl<SimResultRecord> {
      */
     public final TableField<SimResultRecord, JSONB> TARGET_ROLE_ALIASES = createField(DSL.name("target_role_aliases"), SQLDataType.JSONB.nullable(false).defaultValue(DSL.field(DSL.raw("'[]'::jsonb"), SQLDataType.JSONB)), this, "");
 
+    /**
+     * The column <code>public.sim_result.config_scope_hash</code>.
+     */
+    public final TableField<SimResultRecord, String> CONFIG_SCOPE_HASH = createField(DSL.name("config_scope_hash"), SQLDataType.CLOB, this, "");
+
+    /**
+     * The column <code>public.sim_result.measured_run_id</code>.
+     */
+    public final TableField<SimResultRecord, Long> MEASURED_RUN_ID = createField(DSL.name("measured_run_id"), SQLDataType.BIGINT, this, "");
+
+    /**
+     * The column <code>public.sim_result.target_armor_set</code>.
+     */
+    public final TableField<SimResultRecord, String> TARGET_ARMOR_SET = createField(DSL.name("target_armor_set"), SQLDataType.CLOB, this, "");
+
+    /**
+     * The column <code>public.sim_result.target_armor_tier</code>.
+     */
+    public final TableField<SimResultRecord, Integer> TARGET_ARMOR_TIER = createField(DSL.name("target_armor_tier"), SQLDataType.INTEGER, this, "");
+
     private SimResult(Name alias, Table<SimResultRecord> aliased) {
         this(alias, aliased, (Field<?>[]) null, null);
     }
@@ -210,7 +230,7 @@ public class SimResult extends TableImpl<SimResultRecord> {
 
     @Override
     public List<Index> getIndexes() {
-        return Arrays.asList(Indexes.IDX_SIM_RESULT_BUILD, Indexes.IDX_SIM_RESULT_RUN);
+        return Arrays.asList(Indexes.IDX_SIM_RESULT_BUILD, Indexes.IDX_SIM_RESULT_MEASURED_RUN, Indexes.IDX_SIM_RESULT_RUN, Indexes.IDX_SIM_RESULT_RUN_SCOPE, Indexes.IDX_SIM_RESULT_RUN_TIER);
     }
 
     @Override
@@ -225,7 +245,7 @@ public class SimResult extends TableImpl<SimResultRecord> {
 
     @Override
     public List<ForeignKey<SimResultRecord, ?>> getReferences() {
-        return Arrays.asList(Keys.SIM_RESULT__SIM_RESULT_BUILD_ID_FKEY, Keys.SIM_RESULT__SIM_RESULT_RUN_ID_FKEY);
+        return Arrays.asList(Keys.SIM_RESULT__SIM_RESULT_BUILD_ID_FKEY, Keys.SIM_RESULT__SIM_RESULT_MEASURED_RUN_ID_FKEY, Keys.SIM_RESULT__SIM_RESULT_RUN_ID_FKEY);
     }
 
     private transient SimBuildPath _simBuild;
@@ -240,16 +260,30 @@ public class SimResult extends TableImpl<SimResultRecord> {
         return _simBuild;
     }
 
-    private transient SimRunPath _simRun;
+    private transient SimRunPath _simResultMeasuredRunIdFkey;
 
     /**
-     * Get the implicit join path to the <code>public.sim_run</code> table.
+     * Get the implicit join path to the <code>public.sim_run</code> table, via
+     * the <code>sim_result_measured_run_id_fkey</code> key.
      */
-    public SimRunPath simRun() {
-        if (_simRun == null)
-            _simRun = new SimRunPath(this, Keys.SIM_RESULT__SIM_RESULT_RUN_ID_FKEY, null);
+    public SimRunPath simResultMeasuredRunIdFkey() {
+        if (_simResultMeasuredRunIdFkey == null)
+            _simResultMeasuredRunIdFkey = new SimRunPath(this, Keys.SIM_RESULT__SIM_RESULT_MEASURED_RUN_ID_FKEY, null);
 
-        return _simRun;
+        return _simResultMeasuredRunIdFkey;
+    }
+
+    private transient SimRunPath _simResultRunIdFkey;
+
+    /**
+     * Get the implicit join path to the <code>public.sim_run</code> table, via
+     * the <code>sim_result_run_id_fkey</code> key.
+     */
+    public SimRunPath simResultRunIdFkey() {
+        if (_simResultRunIdFkey == null)
+            _simResultRunIdFkey = new SimRunPath(this, Keys.SIM_RESULT__SIM_RESULT_RUN_ID_FKEY, null);
+
+        return _simResultRunIdFkey;
     }
 
     @Override

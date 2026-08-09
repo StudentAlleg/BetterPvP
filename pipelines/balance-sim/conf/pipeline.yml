@@ -1,0 +1,111 @@
+# Balance-simulation medallion pipeline configuration.
+#
+# Everything the jobs need that is not code. Secrets come from the environment
+# (BALANCE_SIM_PG_PASSWORD) and the value here is only the local dev default that
+# grafana/provisioning/datasources/postgres.yml already carries in the clear.
+
+source:
+  # The OLTP database the Paper plugin writes sim_* rows into.
+  jdbc_url: jdbc:postgresql://localhost:5002/betterpvp
+  user: user
+  password: BetterPvP123!
+  # Rows are realm-scoped end to end; a pipeline invocation covers exactly one.
+  realm: 1
+  # JDBC reads are split on the source table's own primary key. sim_result is
+  # millions of rows per run, and an unpartitioned read pulls it through a single
+  # connection into a single Spark task.
+  read_partitions: 32
+  fetch_size: 20000
+
+lake:
+  # Bronze/silver/gold parquet. Relative paths resolve against the project root.
+  #
+  # Put this on a volume with room. The default keeps the lake beside the code, which is
+  # convenient and is fine while bronze is a few hundred MB -- but bronze ingests sim_trace,
+  # and with hit tracing on a full EQUIPMENT sweep is ~52.8M trace rows. Bronze is also an
+  # archive: every run's partitions are kept forever, by design, so it only grows.
+  #
+  # Check the free space on the drive this resolves to before a large sweep, not after. An
+  # absolute path is honoured; relative ones resolve against the project root, e.g. ./data.
+  #
+  # This points at G: deliberately. C: had 31.6 GB free when this was set, and a full sweep's
+  # bronze alone is ~28 GB of sim_trace -- the lake would have filled the system drive rather
+  # than merely run out. G: had 1.04 TB. On a machine without a G:, change this line; nothing
+  # else in the pipeline hardcodes a location.
+  #
+  # G: is exFAT with a 1 MB allocation unit, which matters more than it sounds. Every file
+  # costs a whole megabyte of disk however small it is, and parquet output is many small
+  # files: moving the run-1 lake across cost 586 MB of content but 2.0 GB of disk, a 3.5x
+  # inflation driven by the 561 files under 4 KB (mostly .crc sidecars and _SUCCESS markers).
+  # Budget on file *count*, not just bytes. The large datasets are barely affected -- a
+  # 64-partition write of 52.8M trace rows is 64 large files -- so the practical worst case
+  # is roughly 1 MB x total files of slack, tens of GB against 1 TB.
+  #
+  # Verified on exFAT: 6.5M-row read, partitioned write, and overwrite-in-place (the
+  # rename-based commit, which is the part that filesystems break) all round-trip correctly.
+  root: G:/betterpvp-lake
+  # Bronze is immutable per (run, ingest); silver/gold are overwritten per run.
+  # Overwriting only the partitions a run owns is what makes a re-run idempotent
+  # rather than duplicative.
+  partition_overwrite: true
+
+warehouse:
+  # Where gold marts are published for Grafana. Same database as the source: the
+  # lake is the system of record for the transforms, Postgres is the serving
+  # layer, and keeping them in one place means the existing datasource works
+  # unchanged.
+  jdbc_url: jdbc:postgresql://localhost:5002/betterpvp
+  user: user
+  password: BetterPvP123!
+  table_prefix: sim_gold_
+  # Marts to build in the lake but NOT push to Postgres, by mart name.
+  #
+  # Two of them are per-matchup rather than aggregated, so on a full EQUIPMENT sweep
+  # they are the same order of magnitude as the fact itself -- run 1 came out at 6.51M
+  # `matchup` rows and 6.42M `rune_set_synergy` rows -- and pushing both over JDBC is
+  # by a wide margin the slowest step in the pipeline. Every panel except the
+  # drill-down table groups them anyway.
+  #
+  # Naming a mart here does not lose it: the parquet copy in the lake is written
+  # either way, so `python -m jobs.cli gold --run-id N` after clearing this list
+  # publishes it without recomputing anything.
+  skip_publish: []
+
+spark:
+  master: local[*]
+  app_name: balance-sim-medallion
+  driver_memory: 6g
+  shuffle_partitions: 64
+  # The Postgres JDBC driver. Set to null to let Ivy resolve
+  # org.postgresql:postgresql from Maven Central instead -- but note that a machine
+  # behind an HTTPS-intercepting security suite fails that resolution with a PKIX
+  # error, which is why the jar is vendored under lib/ and pointed at directly.
+  postgres_jar: ./lib/postgresql-42.7.4.jar
+
+derived_skills:
+  # Skills whose contribution the sweep structurally cannot measure, modelled in
+  # silver instead. Every row they produce carries provenance='derived' and the
+  # parameters below, so a derived figure is never mistaken for a measured one.
+  backstab:
+    enabled: true
+    # Assassin PASSIVE_B. Champions/skills/skills: baseDamage + (level-1)*increasePerLevel.
+    # Values are read from grafana_config at run time; these are the fallbacks used
+    # only when the config mirror has no row for the run's realm.
+    fallback_base_damage: 1.5
+    fallback_increase_per_level: 1.0
+    fallback_max_level: 3
+    # Backstab fires only when the attacker and the target face within 60 degrees
+    # of each other -- i.e. from behind. The sweep's duels are head-on, so it never
+    # triggered. 1.0 models perfect uptime, which is the upper bound the request
+    # asked for; it is recorded on every derived row so a reader can discount it.
+    uptime: 1.0
+    role: ASSASSIN
+
+quality:
+  # Expectations are evaluated between layers and written to sim_gold_data_quality.
+  # A failed expectation aborts the layer rather than publishing a mart that is
+  # quietly wrong.
+  fail_on_error: true
+  # Tolerance for the internal-consistency check
+  # dmg_per_hit * hits_to_kill / ttk_s == dps_sustained.
+  dps_identity_epsilon: 0.01

@@ -5,6 +5,7 @@ import com.google.inject.Singleton;
 import lombok.CustomLog;
 import me.mykindos.betterpvp.balancesim.SimulationGate;
 import me.mykindos.betterpvp.balancesim.catalog.SimEquipment.WeaponOption;
+import me.mykindos.betterpvp.balancesim.engine.SimConfigDigest;
 import me.mykindos.betterpvp.champions.Champions;
 import me.mykindos.betterpvp.champions.champions.builds.RoleBuild;
 import me.mykindos.betterpvp.champions.champions.skills.ChampionsSkillManager;
@@ -21,6 +22,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.EnumMap;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -60,12 +62,28 @@ public class BalanceCatalog {
 
     private final SimEquipment equipment;
     private final SimulationGate gate;
+    private final SimConfigDigest configDigest;
     private final ChampionsSkillManager skillManager;
 
+    /**
+     * Every value each axis offered this enumeration, before {@link SimSelection} narrowed it.
+     *
+     * <p>Accumulated during the walk rather than derived afterwards, because "what was available"
+     * differs by scope -- {@code MELEE} offers one weapon and {@code EQUIPMENT} offers every distinct
+     * profile -- and a selector that names a real weapon the chosen tier does not sweep should be
+     * refused with that tier's list, not with the registry's.
+     */
+    private final Set<String> seenWeapons = new LinkedHashSet<>();
+    private final Set<String> seenSkills = new LinkedHashSet<>();
+    private final Set<String> seenRunes = new LinkedHashSet<>();
+    /** Filled by {@link #enumerateTargets} rather than the build walk -- armour is a defender axis. */
+    private final Set<String> seenArmor = new LinkedHashSet<>();
+
     @Inject
-    public BalanceCatalog(SimEquipment equipment, SimulationGate gate) {
+    public BalanceCatalog(SimEquipment equipment, SimulationGate gate, SimConfigDigest configDigest) {
         this.equipment = equipment;
         this.gate = gate;
+        this.configDigest = configDigest;
         // Pulled from Champions' injector rather than injected, for the same reason SimClientFactory
         // does it: this plugin's injector is a sibling of Champions' under Core, and asking Guice
         // for a Champions-scoped singleton here would construct a second Champions.
@@ -82,25 +100,69 @@ public class BalanceCatalog {
      * @throws IllegalStateException if the scope exceeds {@code maxBuilds}
      */
     public List<SimBuildSpec> enumerateBuilds(SimScope scope, int maxBuilds) {
+        return enumerateBuilds(scope, maxBuilds, SimSelection.ALL);
+    }
+
+    /**
+     * Enumerates every attacker build in scope that {@code selection} admits.
+     *
+     * <p>The selection is applied <em>during</em> the walk rather than as a filter over its result,
+     * which matters for the same reason the budget prune is generated rather than filtered: the
+     * unrestricted product is millions of builds and exhausts the heap while being enumerated, so a
+     * filter that only runs afterwards never gets to run at all. Narrowing the rune list before the
+     * combinations are generated is the sharpest case -- see
+     * {@link SimEquipment#weaponRuneSets(String, SimSelection)}.
+     *
+     * @param selection which values of each axis to sweep; {@link SimSelection#ALL} for all of them
+     * @throws IllegalStateException if the scope exceeds {@code maxBuilds}, or if any selector matched
+     *                               nothing the scope offered
+     */
+    public List<SimBuildSpec> enumerateBuilds(SimScope scope, int maxBuilds, SimSelection selection) {
+        seenWeapons.clear();
+        seenSkills.clear();
+        seenRunes.clear();
+
         final List<SimBuildSpec> builds = new ArrayList<>();
         int excluded = 0;
         for (Role role : Role.values()) {
+            if (!selection.admitsRole(role)) {
+                continue;
+            }
             excluded += switch (scope.getSkillAxis()) {
                 case NONE -> {
-                    enumerateSkilless(role, scope, builds);
+                    enumerateSkilless(role, scope, selection, builds);
                     yield 0;
                 }
-                case ONE_AT_A_TIME -> enumerateSingleSkill(role, scope, builds, maxBuilds);
-                case BUDGET_VECTORS -> enumerateBudgetVectors(role, scope, builds, maxBuilds);
+                case ONE_AT_A_TIME -> enumerateSingleSkill(role, scope, selection, builds, maxBuilds);
+                case BUDGET_VECTORS -> enumerateBudgetVectors(role, scope, selection, builds, maxBuilds);
             };
             checkCap(builds.size(), maxBuilds, scope);
         }
+
+        // After the walk, so the message can list what this scope actually offered. Before the count
+        // is logged, so a refused sweep never reports a build total that would read as a real one.
+        SimSelection.verify("--weapons", selection.weapons(), seenWeapons);
+        SimSelection.verify("--skills", selection.skills(), seenSkills);
+        SimSelection.verify("--runes", selection.runes(), seenRunes);
+
         // The exclusion count is logged even when it is zero: "0 skills excluded" is the only thing
         // that distinguishes a genuinely exhaustive sweep from one the filter narrowed, and that
         // distinction is not recoverable from the rows afterwards.
         log.info("Catalog scope {} enumerated {} builds under skill filter {} ({} enabled skills"
-                        + " excluded as unexercisable by this engine)",
-                scope, builds.size(), SimSkillFilter.parse(gate.getSkillFilter()), excluded).submit();
+                        + " excluded as unexercisable by this engine){}",
+                scope, builds.size(), SimSkillFilter.parse(gate.getSkillFilter()), excluded,
+                selection.isAll() ? "" : ", narrowed by selection " + selection.canonical()).submit();
+        if (builds.isEmpty()) {
+            // Every selector matched something, and the product is still empty -- which happens when
+            // selectors are individually valid but jointly impossible, a rune that only applies to
+            // axes together with --weapons naming a sword. Refused for verify()'s reason: an empty
+            // sweep completes in seconds and reports COMPLETED.
+            throw new IllegalStateException("Scope " + scope + " enumerated no builds at all"
+                    + (selection.isAll() ? "." : " under selection " + selection.canonical()
+                    + ". Each selector matched something on its own axis, so this is a combination"
+                    + " that cannot exist -- a rune no selected weapon accepts, or a skill no"
+                    + " selected role has."));
+        }
         return interleaveByRole(builds);
     }
 
@@ -158,14 +220,46 @@ public class BalanceCatalog {
      * the live entity's max health -- so the column and the entity cannot disagree.
      */
     public List<SimTargetSpec> enumerateTargets(SimScope scope, SimScenario scenario) {
+        return enumerateTargets(scope, scenario, SimSelection.ALL);
+    }
+
+    /**
+     * Enumerates every defender configuration in scope that {@code selection} admits.
+     *
+     * <p>The defender axis has its own selector because narrowing it is a different question from
+     * narrowing the attacker: a sweep of one changed weapon still wants every target, while a sweep
+     * re-checking one suspicious matchup wants exactly one. Collapsing runs after the narrowing, so a
+     * selected role that would have been folded onto another is measured in its own right rather than
+     * silently dropped along with its representative.
+     */
+    public List<SimTargetSpec> enumerateTargets(SimScope scope, SimScenario scenario, SimSelection selection) {
         final List<SimTargetSpec> targets = new ArrayList<>();
+        seenArmor.clear();
         for (Role role : Role.values()) {
-            targets.add(target(role, SimEquipment.NO_ARMOR));
+            if (!selection.admitsTargetRole(role.name())) {
+                continue;
+            }
+            // Tier 0. Bare is a tier of the ladder rather than the absence of one -- it is the
+            // baseline every higher tier's combat time is compared against.
+            if (selection.admitsArmor(SimEquipment.NO_ARMOR)) {
+                targets.add(target(role, SimEquipment.NO_ARMOR));
+            }
             if (scope.isArmorSets()) {
-                for (SimStatRoll roll : scope.getArmorRollAxis().rolls()) {
-                    targets.add(target(role, SimEquipment.armorSetId(roll)));
+                for (String setId : equipment.armorSetIds(role)) {
+                    seenArmor.add(setId);
+                    if (!selection.admitsArmor(setId)) {
+                        continue;
+                    }
+                    for (SimStatRoll roll : scope.getArmorRollAxis().rolls()) {
+                        targets.add(target(role, SimEquipment.armorSetId(setId, roll)));
+                    }
                 }
             }
+        }
+        SimSelection.verify("--armor", selection.armor(), armorSelectors());
+        if (targets.isEmpty()) {
+            throw new IllegalStateException("--targets admitted no defender at all, so there is"
+                    + " nothing to measure against.");
         }
         return scope.isCollapseTargets()
                 ? collapseByDurability(targets, scenario)
@@ -232,7 +326,8 @@ public class BalanceCatalog {
         final List<SimTargetSpec> collapsed = new ArrayList<>(byDurability.size() + kept.size());
         byDurability.forEach((hp, target) -> collapsed.add(new SimTargetSpec(target.role(),
                 target.armorSetId(), target.hp(), target.skills(), target.pointsSpent(),
-                List.copyOf(aliases.get(hp)))));
+                List.copyOf(aliases.get(hp)), target.armorSet(), target.armorTier(),
+                target.configScopeHash())));
         collapsed.addAll(kept);
 
         final int folded = targets.size() - collapsed.size();
@@ -244,7 +339,53 @@ public class BalanceCatalog {
     }
 
     private SimTargetSpec target(Role role, String armorSetId) {
-        return new SimTargetSpec(role.name(), armorSetId, equipment.durability(role, armorSetId), List.of(), 0);
+        return new SimTargetSpec(role.name(), armorSetId, equipment.durability(role, armorSetId),
+                List.of(), 0, SimEquipment.setOf(armorSetId),
+                equipment.armorTier(role, armorSetId), targetScopeHash(role, armorSetId));
+    }
+
+    /**
+     * What {@code --armor} could have matched: every registered set plus tier 0.
+     *
+     * <p>Tier 0 is included because it is selectable -- {@code --armor=none} is the way to ask for
+     * the bare baseline on its own -- and a refusal that did not list it would be telling the user
+     * their correct selector was wrong.
+     */
+    private List<String> armorSelectors() {
+        final List<String> available = new ArrayList<>(seenArmor.size() + 1);
+        available.add(SimEquipment.NO_ARMOR);
+        available.addAll(seenArmor);
+        return available;
+    }
+
+    /**
+     * The config a target's durability actually depends on: its role's base health, and its armour
+     * pieces when it is wearing any.
+     *
+     * <p>The armour <em>roll</em> is hashed only when it is not the base one, which is the same rule
+     * {@code buildScopeHash} applies to the weapon roll and for the same reason. It was left out
+     * entirely while it merely named a corner of a band the pieces' own leaves already described --
+     * over-invalidating, never under-invalidating, the safe direction. Then it turned out the roll
+     * was not being applied at all: run 4's {@code role_set_max} targets have byte-identical HP to
+     * its {@code role_set} ones. Fixing that changed what a {@code _max} target is, so those rows
+     * have to be re-measured, while the base ones are unchanged and can still be carried.
+     */
+    private String targetScopeHash(Role role, String armorSetId) {
+        final List<String> parts = new ArrayList<>();
+        parts.add("role=" + configDigest.roleDigest(role));
+        if (SimEquipment.rollOf(armorSetId) != SimStatRoll.DEFAULT) {
+            parts.add("roll=" + SimEquipment.rollOf(armorSetId).id());
+        }
+        if (!SimEquipment.NO_ARMOR.equals(armorSetId)) {
+            // This set's own pieces, not the role's. A tier-2 piece whose health moves must not
+            // invalidate tier 1 -- that is the whole reason a delta sweep is cheaper than a full one,
+            // and hashing the role's every piece into every tier would undo it.
+            for (String piece : equipment.armorSetKeys(role, armorSetId)) {
+                parts.add("armor=" + piece + '=' + configDigest.itemDigest(piece));
+            }
+            parts.add("armorSet=" + armorSetId);
+        }
+        return SimConfigDigest.compose(parts);
     }
 
     // -------------------------------------------------------------------------
@@ -252,8 +393,8 @@ public class BalanceCatalog {
     // -------------------------------------------------------------------------
 
     /** A bare role on each weapon of the axis, at each roll, with each rune set of the axis. */
-    private void enumerateSkilless(Role role, SimScope scope, List<SimBuildSpec> out) {
-        emitLoadouts(role, scope, null, List.of(), out);
+    private void enumerateSkilless(Role role, SimScope scope, SimSelection selection, List<SimBuildSpec> out) {
+        emitLoadouts(role, scope, selection, null, List.of(), out);
     }
 
     /**
@@ -273,12 +414,24 @@ public class BalanceCatalog {
      */
     private void emitLoadouts(Role role,
                               SimScope scope,
+                              SimSelection selection,
                               @Nullable SkillType slot,
                               List<SimSkillAllocation> allocation,
                               List<SimBuildSpec> out) {
         for (WeaponOption weapon : weaponsFor(scope, slot)) {
+            // Recorded before the selection is consulted, so a refusal can list every weapon this
+            // scope offered rather than the ones that survived.
+            seenWeapons.add(weapon.key());
+            final List<String> aliases = equipment.weaponAliases(weapon.key());
+            seenWeapons.addAll(aliases);
+            if (!selection.admitsWeapon(weapon.key(), aliases)) {
+                continue;
+            }
+            for (SimEquipment.RuneOption rune : equipment.weaponRunes(weapon.key())) {
+                seenRunes.add(rune.key());
+            }
             for (SimStatRoll roll : scope.getWeaponRollAxis().rolls()) {
-                for (List<String> runes : runesFor(scope, weapon)) {
+                for (List<String> runes : runesFor(scope, selection, weapon)) {
                     out.add(build(role, weapon, roll, runes, allocation));
                 }
             }
@@ -293,9 +446,13 @@ public class BalanceCatalog {
      * afterwards, so isolating the skill is not a simplification of the full sweep -- it answers a
      * question the full sweep cannot.
      */
-    private int enumerateSingleSkill(Role role, SimScope scope, List<SimBuildSpec> out, int maxBuilds) {
+    private int enumerateSingleSkill(Role role,
+                                     SimScope scope,
+                                     SimSelection selection,
+                                     List<SimBuildSpec> out,
+                                     int maxBuilds) {
         final int budget = buildPoints();
-        final SkillPool pool = skillsByType(role);
+        final SkillPool pool = skillsByType(role, selection);
         // The bare build on each weapon of the axis, so every single-skill row has a row of the same
         // sweep to be read against. Without it the tier's own stated purpose -- a readable per-skill
         // strength curve -- has no zero point, and the relevance audit has nothing to subtract: a
@@ -303,12 +460,13 @@ public class BalanceCatalog {
         // different weapon axis, which is exactly the comparison the patch-diff dashboard refuses to
         // make. It is the same set enumerateSkilless emits, so a skill-less build is identical here to
         // the one a WEAPONS sweep would measure.
-        enumerateSkilless(role, scope, out);
+        enumerateSkilless(role, scope, selection, out);
         for (Map.Entry<SkillType, List<Skill>> entry : pool.byType().entrySet()) {
             for (Skill skill : entry.getValue()) {
                 final int maxLevel = Math.min(skill.getMaxLevel(), budget);
                 for (int level = 1; level <= maxLevel; level++) {
-                    emitLoadouts(role, scope, entry.getKey(), List.of(allocation(skill, level)), out);
+                    emitLoadouts(role, scope, selection, entry.getKey(),
+                            List.of(allocation(skill, level)), out);
                 }
                 checkCap(out.size(), maxBuilds, scope);
             }
@@ -324,15 +482,21 @@ public class BalanceCatalog {
      * is what makes partial builds -- the common case for a real player, who rarely spends all
      * twelve points on the maximum number of slots -- part of the space.
      */
-    private int enumerateBudgetVectors(Role role, SimScope scope, List<SimBuildSpec> out, int maxBuilds) {
+    private int enumerateBudgetVectors(Role role,
+                                       SimScope scope,
+                                       SimSelection selection,
+                                       List<SimBuildSpec> out,
+                                       int maxBuilds) {
         final List<SkillType> slots = List.of(SkillType.values());
-        final SkillPool pool = skillsByType(role);
-        fillSlots(role, scope, pool.byType(), slots, 0, buildPoints(), new ArrayList<>(), out, maxBuilds);
+        final SkillPool pool = skillsByType(role, selection);
+        fillSlots(role, scope, selection, pool.byType(), slots, 0, buildPoints(),
+                new ArrayList<>(), out, maxBuilds);
         return pool.excluded();
     }
 
     private void fillSlots(Role role,
                            SimScope scope,
+                           SimSelection selection,
                            Map<SkillType, List<Skill>> byType,
                            List<SkillType> slots,
                            int slotIndex,
@@ -344,7 +508,7 @@ public class BalanceCatalog {
             // The empty build is emitted by the skill-less tier and would be duplicated here once
             // per role, so only allocations that actually spend a point become a row.
             if (!chosen.isEmpty()) {
-                emitLoadouts(role, scope, boostableSlot(chosen), List.copyOf(chosen), out);
+                emitLoadouts(role, scope, selection, boostableSlot(chosen), List.copyOf(chosen), out);
                 checkCap(out.size(), maxBuilds, scope);
             }
             return;
@@ -352,13 +516,14 @@ public class BalanceCatalog {
 
         final SkillType slot = slots.get(slotIndex);
         // Leaving the slot empty.
-        fillSlots(role, scope, byType, slots, slotIndex + 1, remainingPoints, chosen, out, maxBuilds);
+        fillSlots(role, scope, selection, byType, slots, slotIndex + 1, remainingPoints,
+                chosen, out, maxBuilds);
 
         for (Skill skill : byType.getOrDefault(slot, List.of())) {
             final int maxLevel = Math.min(skill.getMaxLevel(), remainingPoints);
             for (int level = 1; level <= maxLevel; level++) {
                 chosen.add(allocation(skill, level));
-                fillSlots(role, scope, byType, slots, slotIndex + 1, remainingPoints - level,
+                fillSlots(role, scope, selection, byType, slots, slotIndex + 1, remainingPoints - level,
                         chosen, out, maxBuilds);
                 chosen.remove(chosen.size() - 1);
             }
@@ -398,7 +563,7 @@ public class BalanceCatalog {
      * much of the skill pool the sweep did not cover. A sweep quietly covering an eighth of the
      * skills would otherwise read as exhaustive.
      */
-    private SkillPool skillsByType(Role role) {
+    private SkillPool skillsByType(Role role, SimSelection selection) {
         final SimSkillFilter filter = SimSkillFilter.parse(gate.getSkillFilter());
         final Set<String> relevant = SimSkillFilter.parseRelevantSkills(gate.getRelevantSkills());
         // Refused here rather than allowed to produce a skill-less sweep. See requiresRelevantSkills:
@@ -418,6 +583,13 @@ public class BalanceCatalog {
             }
             if (!filter.admits(skill, relevant)) {
                 excluded++;
+                continue;
+            }
+            // Recorded after the configured filter and before the selection, so a refusal lists the
+            // skills this sweep could have swept -- naming a skill the filter already excluded should
+            // say "not available", not offer it as a suggestion.
+            seenSkills.add(skill.getName());
+            if (!selection.admitsSkill(skill.getName())) {
                 continue;
             }
             byType.computeIfAbsent(skill.getType(), ignored -> new ArrayList<>()).add(skill);
@@ -497,21 +669,26 @@ public class BalanceCatalog {
      * {@code RUNES} sweep of a role whose default weapon has no compatible runes is a small sweep rather
      * than an error.
      */
-    private List<List<String>> runesFor(SimScope scope, WeaponOption weapon) {
+    private List<List<String>> runesFor(SimScope scope, SimSelection selection, WeaponOption weapon) {
         switch (scope.getRuneAxis()) {
             case NONE -> {
                 return NO_RUNES;
             }
             // Every set the weapon can hold, cached per weapon in SimEquipment because the
-            // enumeration asks for it once per skill allocation and the sets do not change.
+            // enumeration asks for it once per skill allocation and the sets do not change. The
+            // selection narrows the rune list before the combinations are built, not the sets after.
             case ALL_COMBINATIONS -> {
-                return equipment.weaponRuneSets(weapon.key());
+                return equipment.weaponRuneSets(weapon.key(), selection);
             }
             case ONE_AT_A_TIME -> {
                 final List<List<String>> sets = new ArrayList<>();
+                // The bare set survives any selection: it is the baseline a rune's contribution is
+                // read against, and this tier exists to produce that subtraction.
                 sets.add(List.of());
                 for (SimEquipment.RuneOption rune : equipment.weaponRunes(weapon.key())) {
-                    sets.add(List.of(rune.key()));
+                    if (selection.admitsRune(rune.key())) {
+                        sets.add(List.of(rune.key()));
+                    }
                 }
                 return List.copyOf(sets);
             }
@@ -552,7 +729,59 @@ public class BalanceCatalog {
                 weapon.booster(),
                 fingerprint(role, weapon, weaponRoll, runeKeys, skills),
                 equipment.profileOf(weapon.key()),
-                equipment.weaponAliases(weapon.key()));
+                equipment.weaponAliases(weapon.key()),
+                buildScopeHash(role, weapon, weaponRoll, runeKeys, skills));
+    }
+
+    /**
+     * The config this build's damage actually depends on, and nothing else.
+     *
+     * <p>Composed from memoised component digests rather than hashed from the config directly, because
+     * this is called once per build and a catalog runs to hundreds of thousands of them; see
+     * {@code SimConfigDigest}.
+     *
+     * <p>What is deliberately absent is as load-bearing as what is present. The weapon <em>roll</em>
+     * is not a term: it names a corner of a band the weapon's own leaves already cover, so a change to
+     * {@code damage.max} moves this hash for all three rolls, including the two that do not read it.
+     * Nor is the allocated level: a skill's level scales values the skill's own subtree holds, so a
+     * change to any of them invalidates every level of it. Both err towards re-measuring, which is the
+     * only safe direction -- carrying forward a row that should have moved is a wrong number in a
+     * dashboard, and re-measuring one that need not have moved is a handful of duels.
+     */
+    private String buildScopeHash(Role role,
+                                  WeaponOption weapon,
+                                  SimStatRoll weaponRoll,
+                                  List<String> runeKeys,
+                                  List<SimSkillAllocation> skills) {
+        final List<String> parts = new ArrayList<>(runeKeys.size() + skills.size() + 3);
+        parts.add("role=" + configDigest.roleDigest(role));
+        parts.add("weapon=" + weapon.key() + '=' + configDigest.itemDigest(weapon.key()));
+        // The roll, once it started doing anything.
+        //
+        // It was deliberately left out while it was a pure function of the weapon's own
+        // leaves -- a corner of a band the item digest already covered, so hashing it only
+        // over-invalidated. That reasoning held right up until the roll turned out not to
+        // be applied at all: SimStatRoll wrote its values into the container's base stats,
+        // which an ItemStack does not carry, so every MIN and MAX row in runs 1-4 is a
+        // duplicate of its BASE row. Fixing that changed what a MIN row *means*, and a
+        // stored one has to be re-measured rather than carried forward.
+        //
+        // Omitted for BASE, exactly as `fingerprint` omits it, and for the same reason:
+        // BASE is byte-identical before and after the fix -- SimStatRoll.apply returns the
+        // container untouched -- so those rows are still valid measurements and a delta
+        // sweep should keep them. That is the difference between re-measuring two thirds of
+        // the weapon axis and bumping ENGINE_VERSION to re-measure all of it.
+        if (weaponRoll != SimStatRoll.DEFAULT) {
+            parts.add("roll=" + weaponRoll.id());
+        }
+        for (String rune : runeKeys) {
+            parts.add("rune=" + rune + '=' + configDigest.itemDigest(rune));
+        }
+        for (SimSkillAllocation allocation : skills) {
+            parts.add("skill=" + allocation.skillName() + '='
+                    + configDigest.skillDigest(role, allocation.skillName()));
+        }
+        return SimConfigDigest.compose(parts);
     }
 
     /**

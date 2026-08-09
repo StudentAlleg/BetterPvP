@@ -5,6 +5,7 @@ package me.mykindos.betterpvp.balancesim.database.jooq;
 
 
 import me.mykindos.betterpvp.balancesim.database.jooq.tables.SimBuild;
+import me.mykindos.betterpvp.balancesim.database.jooq.tables.SimDeltaPlan;
 import me.mykindos.betterpvp.balancesim.database.jooq.tables.SimDuelDiagnostic;
 import me.mykindos.betterpvp.balancesim.database.jooq.tables.SimResult;
 import me.mykindos.betterpvp.balancesim.database.jooq.tables.SimRun;
@@ -28,13 +29,18 @@ public class Indexes {
     public static final Index IDX_SIM_BUILD_FINGERPRINT = Internal.createIndex(DSL.name("idx_sim_build_fingerprint"), SimBuild.SIM_BUILD, new OrderField[] { SimBuild.SIM_BUILD.FINGERPRINT }, false);
     public static final Index IDX_SIM_BUILD_RUN = Internal.createIndex(DSL.name("idx_sim_build_run"), SimBuild.SIM_BUILD, new OrderField[] { SimBuild.SIM_BUILD.RUN_ID }, false);
     public static final Index IDX_SIM_BUILD_RUN_FINGERPRINT = Internal.createIndex(DSL.name("idx_sim_build_run_fingerprint"), SimBuild.SIM_BUILD, new OrderField[] { SimBuild.SIM_BUILD.RUN_ID, SimBuild.SIM_BUILD.FINGERPRINT }, true);
+    public static final Index IDX_SIM_BUILD_RUN_SCOPE = Internal.createIndex(DSL.name("idx_sim_build_run_scope"), SimBuild.SIM_BUILD, new OrderField[] { SimBuild.SIM_BUILD.RUN_ID, SimBuild.SIM_BUILD.CONFIG_SCOPE_HASH }, false);
     public static final Index IDX_SIM_BUILD_WEAPON_DAMAGE = Internal.createIndex(DSL.name("idx_sim_build_weapon_damage"), SimBuild.SIM_BUILD, new OrderField[] { SimBuild.SIM_BUILD.RUN_ID, SimBuild.SIM_BUILD.WEAPON_DAMAGE_BASE }, false);
     public static final Index IDX_SIM_BUILD_WEAPON_ROLL = Internal.createIndex(DSL.name("idx_sim_build_weapon_roll"), SimBuild.SIM_BUILD, new OrderField[] { SimBuild.SIM_BUILD.RUN_ID, SimBuild.SIM_BUILD.WEAPON_ROLL, SimBuild.SIM_BUILD.WEAPON_DAMAGE_BASE }, false);
+    public static final Index IDX_SIM_DELTA_PLAN_RUN = Internal.createIndex(DSL.name("idx_sim_delta_plan_run"), SimDeltaPlan.SIM_DELTA_PLAN, new OrderField[] { SimDeltaPlan.SIM_DELTA_PLAN.RUN_ID, SimDeltaPlan.SIM_DELTA_PLAN.FINGERPRINT, SimDeltaPlan.SIM_DELTA_PLAN.TARGET_ROLE, SimDeltaPlan.SIM_DELTA_PLAN.TARGET_ARMOR }, false);
     public static final Index IDX_SIM_DUEL_DIAG_RUN_ARENA = Internal.createIndex(DSL.name("idx_sim_duel_diag_run_arena"), SimDuelDiagnostic.SIM_DUEL_DIAGNOSTIC, new OrderField[] { SimDuelDiagnostic.SIM_DUEL_DIAGNOSTIC.RUN_ID, SimDuelDiagnostic.SIM_DUEL_DIAGNOSTIC.ARENA_INDEX, SimDuelDiagnostic.SIM_DUEL_DIAGNOSTIC.ATTACKER_DUELS_FOUGHT }, false);
     public static final Index IDX_SIM_DUEL_DIAG_RUN_BUILD = Internal.createIndex(DSL.name("idx_sim_duel_diag_run_build"), SimDuelDiagnostic.SIM_DUEL_DIAGNOSTIC, new OrderField[] { SimDuelDiagnostic.SIM_DUEL_DIAGNOSTIC.RUN_ID, SimDuelDiagnostic.SIM_DUEL_DIAGNOSTIC.BUILD_ID }, false);
     public static final Index IDX_SIM_DUEL_DIAG_RUN_OUTCOME = Internal.createIndex(DSL.name("idx_sim_duel_diag_run_outcome"), SimDuelDiagnostic.SIM_DUEL_DIAGNOSTIC, new OrderField[] { SimDuelDiagnostic.SIM_DUEL_DIAGNOSTIC.RUN_ID, SimDuelDiagnostic.SIM_DUEL_DIAGNOSTIC.OUTCOME }, false);
     public static final Index IDX_SIM_RESULT_BUILD = Internal.createIndex(DSL.name("idx_sim_result_build"), SimResult.SIM_RESULT, new OrderField[] { SimResult.SIM_RESULT.BUILD_ID }, false);
+    public static final Index IDX_SIM_RESULT_MEASURED_RUN = Internal.createIndex(DSL.name("idx_sim_result_measured_run"), SimResult.SIM_RESULT, new OrderField[] { SimResult.SIM_RESULT.RUN_ID, SimResult.SIM_RESULT.MEASURED_RUN_ID }, false);
     public static final Index IDX_SIM_RESULT_RUN = Internal.createIndex(DSL.name("idx_sim_result_run"), SimResult.SIM_RESULT, new OrderField[] { SimResult.SIM_RESULT.RUN_ID }, false);
+    public static final Index IDX_SIM_RESULT_RUN_SCOPE = Internal.createIndex(DSL.name("idx_sim_result_run_scope"), SimResult.SIM_RESULT, new OrderField[] { SimResult.SIM_RESULT.RUN_ID, SimResult.SIM_RESULT.CONFIG_SCOPE_HASH }, false);
+    public static final Index IDX_SIM_RESULT_RUN_TIER = Internal.createIndex(DSL.name("idx_sim_result_run_tier"), SimResult.SIM_RESULT, new OrderField[] { SimResult.SIM_RESULT.RUN_ID, SimResult.SIM_RESULT.TARGET_ROLE, SimResult.SIM_RESULT.TARGET_ARMOR_TIER }, false);
     public static final Index IDX_SIM_RUN_CONFIG_HASH = Internal.createIndex(DSL.name("idx_sim_run_config_hash"), SimRun.SIM_RUN, new OrderField[] { SimRun.SIM_RUN.CONFIG_HASH }, false);
     public static final Index IDX_SIM_RUN_REALM_STARTED = Internal.createIndex(DSL.name("idx_sim_run_realm_started"), SimRun.SIM_RUN, new OrderField[] { SimRun.SIM_RUN.REALM, SimRun.SIM_RUN.STARTED_AT.desc() }, false);
     public static final Index IDX_SIM_TRACE_DUEL = Internal.createIndex(DSL.name("idx_sim_trace_duel"), SimTrace.SIM_TRACE, new OrderField[] { SimTrace.SIM_TRACE.RUN_ID, SimTrace.SIM_TRACE.BUILD_ID, SimTrace.SIM_TRACE.TARGET_ROLE, SimTrace.SIM_TRACE.TARGET_ARMOR, SimTrace.SIM_TRACE.ITERATION, SimTrace.SIM_TRACE.TICK, SimTrace.SIM_TRACE.SEQ }, false);

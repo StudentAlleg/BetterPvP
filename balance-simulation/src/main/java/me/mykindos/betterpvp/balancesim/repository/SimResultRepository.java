@@ -28,6 +28,7 @@ import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 
 import static me.mykindos.betterpvp.balancesim.database.jooq.Tables.SIM_BUILD;
+import static me.mykindos.betterpvp.balancesim.database.jooq.Tables.SIM_DELTA_PLAN;
 import static me.mykindos.betterpvp.balancesim.database.jooq.Tables.SIM_RESULT;
 import static me.mykindos.betterpvp.balancesim.database.jooq.Tables.SIM_RUN;
 
@@ -194,6 +195,185 @@ public class SimResultRepository {
         return fingerprint + ' ' + targetRole + ' ' + targetArmor;
     }
 
+    // -------------------------------------------------------------------------
+    // Delta sweeps
+    // -------------------------------------------------------------------------
+
+    /**
+     * The newest finished run a delta sweep could carry rows forward from, or null if there is none.
+     *
+     * <p>Candidacy is realm, scope and scenario -- deliberately <em>not</em> {@code config_hash},
+     * which is the whole point. A baseline is useful precisely when the balance config has moved
+     * since; requiring the hash to match would only ever find a run measured under identical config,
+     * which has nothing to carry that a resume would not already have found. What guards correctness
+     * instead is {@code sim_result.config_scope_hash}, compared per matchup: a row is carried only
+     * when the config <em>it</em> depended on is unchanged, whatever else in the game moved.
+     *
+     * <p>{@code COMPLETED} is preferred over {@code CANCELLED} rather than required. A stopped sweep's
+     * rows are real measurements and carrying them is sound; there are simply fewer of them, so a
+     * finished run is the better baseline where both exist. Ordering says that rather than a filter,
+     * because "no baseline" and "a thin baseline" both work and the thin one is better than nothing.
+     *
+     * @param scope    the tier name as written to {@code sim_run.scenario}
+     * @param scenario the scenario name as written to {@code sim_run.scenario}
+     */
+    public CompletableFuture<@Nullable Long> findBaselineRun(int realm, String scope, String scenario) {
+        return database.getAsyncDslContext().executeAsync(ctx -> ctx
+                .select(SIM_RUN.ID)
+                .from(SIM_RUN)
+                .where(SIM_RUN.REALM.eq(realm))
+                .and(SIM_RUN.STATUS.in("COMPLETED", "CANCELLED"))
+                // The scenario column is JSONB; ->> reads a text member out of it. Matched on both
+                // scope and scenario because a MELEE baseline has nothing an EQUIPMENT sweep wants and
+                // a ONE_WAY row is not a MUTUAL measurement.
+                .and(DSL.field("scenario ->> 'scope'", String.class).eq(scope))
+                .and(DSL.field("scenario ->> 'scenario'", String.class).eq(scenario))
+                .orderBy(DSL.field("status = 'COMPLETED'").desc(), SIM_RUN.STARTED_AT.desc(), SIM_RUN.ID.desc())
+                .limit(1)
+                .fetchOne(SIM_RUN.ID));
+    }
+
+    /**
+     * One matchup a delta sweep intends to cover, and what it currently depends on.
+     *
+     * @param fingerprint      the attacker build
+     * @param targetRole       the defender's role
+     * @param targetArmor      the defender's armour set id
+     * @param configScopeHash  the digest of the config this matchup depends on, as it is now
+     */
+    public record DeltaPlanRow(String fingerprint, String targetRole, String targetArmor, String configScopeHash) {
+    }
+
+    /**
+     * Stages the matchups a delta sweep intends to cover.
+     *
+     * <p>Written to the database rather than diffed in memory because the baseline is the large side:
+     * see {@code sim_delta_plan}'s own comment for why a HashMap of run 1 does not fit next to a
+     * running sweep. Any rows a previous attempt left for this run are cleared first, so re-planning
+     * is idempotent.
+     */
+    public CompletableFuture<Void> stageDeltaPlan(long runId, List<DeltaPlanRow> rows) {
+        return database.getAsyncDslContext().executeAsyncVoid(ctx -> ctx.transaction(configuration -> {
+            final DSLContext trx = DSL.using(configuration);
+            trx.deleteFrom(SIM_DELTA_PLAN).where(SIM_DELTA_PLAN.RUN_ID.eq(runId)).execute();
+            for (int start = 0; start < rows.size(); start += BUILD_INSERT_CHUNK) {
+                final List<DeltaPlanRow> chunk =
+                        rows.subList(start, Math.min(rows.size(), start + BUILD_INSERT_CHUNK));
+                var insert = trx.insertInto(SIM_DELTA_PLAN, SIM_DELTA_PLAN.RUN_ID,
+                        SIM_DELTA_PLAN.FINGERPRINT, SIM_DELTA_PLAN.TARGET_ROLE,
+                        SIM_DELTA_PLAN.TARGET_ARMOR, SIM_DELTA_PLAN.CONFIG_SCOPE_HASH);
+                for (DeltaPlanRow row : chunk) {
+                    insert = insert.values(runId, row.fingerprint(), row.targetRole(),
+                            row.targetArmor(), row.configScopeHash());
+                }
+                insert.execute();
+            }
+        }));
+    }
+
+    /**
+     * Copies every planned matchup the baseline already measured under an unchanged config scope into
+     * this run, and returns how many rows moved.
+     *
+     * <p>A delta run is a <em>whole</em> run, and this is what makes it one. The alternative -- a run
+     * holding only the matchups that changed -- would break every dashboard and every gold mart at
+     * once: "latest run" would find a run covering a fraction of the space, with nothing on it saying
+     * so, and every aggregate over it would be a biased sample of the sweep it claims to be. Copying
+     * the unchanged rows in costs a bulk server-side insert and buys a run that needs no special case
+     * anywhere downstream.
+     *
+     * <p>What keeps that honest is {@code measured_run_id}, which follows the measurement rather than
+     * the row: a row carried twice across three runs still names the run whose duels produced it, via
+     * {@code COALESCE} on the source row's own value. So "when was this actually measured" survives
+     * any number of carries, and a carried row can never be read as a fresh one.
+     *
+     * <p>One statement rather than a fetch-and-reinsert, because the row count is the whole table: run
+     * 1 would be 4.3 million rows over the wire and back for a copy Postgres can do without them
+     * leaving the server.
+     *
+     * @param runId      the delta run, which must already have its {@code sim_build} rows and its plan
+     * @param baselineId the run being carried from
+     */
+    public CompletableFuture<Integer> carryForwardResults(long runId, long baselineId) {
+        return database.getAsyncDslContext().executeAsync(ctx -> ctx.transactionResult(configuration -> {
+            final DSLContext trx = DSL.using(configuration);
+            return trx.execute("""
+                    INSERT INTO sim_result (run_id, build_id, target_role, target_armor, target_hp,
+                                            target_armor_set, target_armor_tier,
+                                            target_skills, target_points, target_role_aliases,
+                                            dmg_per_hit, dps_sustained, dps_burst, ttk_s, hits_to_kill,
+                                            energy_limited, extras, config_scope_hash, measured_run_id)
+                    SELECT ?, nb.id, r.target_role, r.target_armor, r.target_hp,
+                           r.target_armor_set, r.target_armor_tier,
+                           r.target_skills, r.target_points, r.target_role_aliases,
+                           r.dmg_per_hit, r.dps_sustained, r.dps_burst, r.ttk_s, r.hits_to_kill,
+                           r.energy_limited, r.extras, r.config_scope_hash,
+                           COALESCE(r.measured_run_id, r.run_id)
+                    FROM sim_delta_plan p
+                    JOIN sim_build ob ON ob.run_id = ? AND ob.fingerprint = p.fingerprint
+                    JOIN sim_result r ON r.run_id = ?
+                                     AND r.build_id = ob.id
+                                     AND r.target_role = p.target_role
+                                     AND r.target_armor = p.target_armor
+                                     AND r.config_scope_hash = p.config_scope_hash
+                    JOIN sim_build nb ON nb.run_id = ? AND nb.fingerprint = p.fingerprint
+                    WHERE p.run_id = ?
+                    """, baselineId, baselineId, baselineId, runId, runId);
+        }));
+    }
+
+    /**
+     * The planned matchups that were <em>not</em> carried forward, and so still need duels.
+     *
+     * <p>Read back in this direction rather than as "what was carried" because of which side is
+     * small. A delta sweep exists to measure the few permutations a change touched, so the pending
+     * set is the short list and the carried set is nearly the whole catalog -- and the carried set is
+     * the one that would not fit in memory. This is also why the orchestrator drives a delta from an
+     * allow-list while a resume drives from a skip-list: the two are the same decision read from
+     * whichever end is cheaper to hold.
+     */
+    public CompletableFuture<Set<String>> findPendingMatchups(long runId, long baselineId) {
+        return database.getAsyncDslContext().executeAsync(ctx -> {
+            final Set<String> pending = new HashSet<>();
+            ctx.select(SIM_DELTA_PLAN.FINGERPRINT, SIM_DELTA_PLAN.TARGET_ROLE, SIM_DELTA_PLAN.TARGET_ARMOR)
+                    .from(SIM_DELTA_PLAN)
+                    .where(SIM_DELTA_PLAN.RUN_ID.eq(runId))
+                    // Asked of the baseline rather than of what the carry landed, so the answer is the
+                    // same whether or not this run is copying the unchanged rows in. "Did the baseline
+                    // measure this matchup under a config scope that has not moved" is the actual
+                    // question; whether we then chose to keep a copy of the answer is a separate one.
+                    .andNotExists(DSL.selectOne()
+                            .from(SIM_RESULT)
+                            .join(SIM_BUILD).on(SIM_BUILD.ID.eq(SIM_RESULT.BUILD_ID))
+                            .where(SIM_RESULT.RUN_ID.eq(baselineId))
+                            .and(SIM_BUILD.RUN_ID.eq(baselineId))
+                            .and(SIM_BUILD.FINGERPRINT.eq(SIM_DELTA_PLAN.FINGERPRINT))
+                            .and(SIM_RESULT.TARGET_ROLE.eq(SIM_DELTA_PLAN.TARGET_ROLE))
+                            .and(SIM_RESULT.TARGET_ARMOR.eq(SIM_DELTA_PLAN.TARGET_ARMOR))
+                            .and(SIM_RESULT.CONFIG_SCOPE_HASH.eq(SIM_DELTA_PLAN.CONFIG_SCOPE_HASH)))
+                    .fetch()
+                    .forEach(record -> pending.add(matchupKey(
+                            record.get(SIM_DELTA_PLAN.FINGERPRINT),
+                            record.get(SIM_DELTA_PLAN.TARGET_ROLE),
+                            record.get(SIM_DELTA_PLAN.TARGET_ARMOR))));
+            return pending;
+        });
+    }
+
+    /**
+     * Drops a run's staged plan.
+     *
+     * <p>Called once the sweep has its queue. The table is scratch and the rows are worthless after
+     * planning, but they are also numerous -- one per matchup -- so leaving them would grow an
+     * unlogged table by the size of the catalog on every delta run.
+     */
+    public CompletableFuture<Void> clearDeltaPlan(long runId) {
+        return database.getAsyncDslContext().executeAsyncVoid(ctx -> ctx
+                .deleteFrom(SIM_DELTA_PLAN)
+                .where(SIM_DELTA_PLAN.RUN_ID.eq(runId))
+                .execute());
+    }
+
     /**
      * Stamps {@code finished_at} and the terminal status on a run.
      *
@@ -238,7 +418,7 @@ public class SimResultRepository {
                         SIM_BUILD.WEAPON_DAMAGE_BASE, SIM_BUILD.WEAPON_DAMAGE_MIN, SIM_BUILD.WEAPON_DAMAGE_MAX,
                         SIM_BUILD.WEAPON_ATTACK_SPEED_BASE, SIM_BUILD.WEAPON_ATTACK_SPEED_MIN,
                         SIM_BUILD.WEAPON_ATTACK_SPEED_MAX, SIM_BUILD.WEAPON_SLOT, SIM_BUILD.WEAPON_ALIASES,
-                        SIM_BUILD.WEAPON_ROLL);
+                        SIM_BUILD.WEAPON_ROLL, SIM_BUILD.CONFIG_SCOPE_HASH);
                 for (SimBuildSpec build : chunk) {
                     final SimWeaponProfile weapon = build.weapon();
                     insert = insert.values(runId,
@@ -268,7 +448,11 @@ public class SimResultRepository {
                             // "swept under an equivalent key", which are opposite conclusions.
                             jsonb(stringsToJson(build.weaponAliases()), "[]"),
                             // Which of the three damage figures above the duel was fought at.
-                            build.weaponRoll().id());
+                            build.weaponRoll().id(),
+                            // Exactly the config this build's damage depends on, so a later delta
+                            // sweep can decide per build rather than per run. Null when the digest
+                            // was unavailable, which matches nothing and therefore re-measures.
+                            build.configScopeHash().isEmpty() ? null : build.configScopeHash());
                 }
 
                 insert.returning(SIM_BUILD.ID, SIM_BUILD.FINGERPRINT)
@@ -317,6 +501,12 @@ public class SimResultRepository {
                 record.setBuildId(row.buildId());
                 record.setTargetRole(row.target().role());
                 record.setTargetArmor(row.target().armorSetId());
+                // The set and its rung on the durability ladder, beside the discriminator that folds
+                // set and roll together. Written by the sweep rather than parsed out of target_armor
+                // downstream, because the tier is an ordering over the pieces' live HEALTH stats and
+                // nothing reading the string alone can recompute it.
+                record.setTargetArmorSet(row.target().armorSet());
+                record.setTargetArmorTier(row.target().armorTier());
                 record.setTargetHp(BigDecimal.valueOf(row.target().hp()));
                 // The defender's build affects the outcome via its DefensiveSkill passives and
                 // resistance effects, so it is stored alongside the measurement.
@@ -335,6 +525,13 @@ public class SimResultRepository {
                 record.setHitsToKill(decimal(row.hitsToKill()));
                 record.setEnergyLimited(row.energyLimited());
                 record.setExtras(jsonb(row.extrasJson()));
+                // What this matchup depended on, so a later delta sweep can decide whether the row
+                // is still true without re-running it.
+                record.setConfigScopeHash(row.configScopeHash().isEmpty() ? null : row.configScopeHash());
+                // This run measured it. Rows carried forward from a baseline are written by
+                // carryForwardResults instead and keep the id of whichever run actually ran the duels,
+                // so the column always names the measurement rather than the row.
+                record.setMeasuredRunId(runId);
                 records.add(record);
             }
 

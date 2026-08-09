@@ -153,6 +153,11 @@ public class SimBuild extends TableImpl<SimBuildRecord> {
      */
     public final TableField<SimBuildRecord, String> WEAPON_ROLL = createField(DSL.name("weapon_roll"), SQLDataType.CLOB.nullable(false).defaultValue(DSL.field(DSL.raw("'base'::text"), SQLDataType.CLOB)), this, "");
 
+    /**
+     * The column <code>public.sim_build.config_scope_hash</code>.
+     */
+    public final TableField<SimBuildRecord, String> CONFIG_SCOPE_HASH = createField(DSL.name("config_scope_hash"), SQLDataType.CLOB, this, "");
+
     private SimBuild(Name alias, Table<SimBuildRecord> aliased) {
         this(alias, aliased, (Field<?>[]) null, null);
     }
@@ -222,7 +227,7 @@ public class SimBuild extends TableImpl<SimBuildRecord> {
 
     @Override
     public List<Index> getIndexes() {
-        return Arrays.asList(Indexes.IDX_SIM_BUILD_FINGERPRINT, Indexes.IDX_SIM_BUILD_RUN, Indexes.IDX_SIM_BUILD_RUN_FINGERPRINT, Indexes.IDX_SIM_BUILD_WEAPON_DAMAGE, Indexes.IDX_SIM_BUILD_WEAPON_ROLL);
+        return Arrays.asList(Indexes.IDX_SIM_BUILD_FINGERPRINT, Indexes.IDX_SIM_BUILD_RUN, Indexes.IDX_SIM_BUILD_RUN_FINGERPRINT, Indexes.IDX_SIM_BUILD_RUN_SCOPE, Indexes.IDX_SIM_BUILD_WEAPON_DAMAGE, Indexes.IDX_SIM_BUILD_WEAPON_ROLL);
     }
 
     @Override

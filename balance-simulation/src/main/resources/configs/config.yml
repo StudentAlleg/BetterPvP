@@ -97,6 +97,40 @@ champions:
     # A running sweep can be stopped with "/simulate stop", which drains the duels in
     # flight and writes everything measured so far under status CANCELLED.
     #
+    # A sweep can also be narrowed, two independent ways. See docs/balance-simulation/
+    # DELTA-SWEEPS.md.
+    #
+    #   --weapons=  --skills=  --runes=  --roles=  --targets=  --armor=
+    #     Comma-separated, and lenient about form: champions:wind_blade, wind_blade,
+    #     windblade and "Wind Blade" are one name, and a trailing * is a prefix. Narrows
+    #     WHICH PERMUTATIONS EXIST, applied during enumeration rather than after -- so
+    #     "/simulate EQUIPMENT --weapons=thornfang" is a full EQUIPMENT sweep of one
+    #     weapon (every roll, every rune set it accepts) and costs minutes, not a day.
+    #     A selector that matches nothing REFUSES the sweep and lists what was available:
+    #     an empty sweep completes in seconds and reports COMPLETED, so a typo would
+    #     otherwise look exactly like a healthy run. Part of config_hash, so a narrowed
+    #     run is never resumed into or diffed against a full one.
+    #
+    #     --armor takes SET IDS rather than tier numbers -- "none", "reinforced" -- and
+    #     covers every roll of the set it names. Set ids because the tier is an ordering
+    #     by durability that the sweep computes from the pieces' live HEALTH stats, so
+    #     registering a flimsier set renumbers every tier above it, and a selector typed
+    #     against the old numbering would silently start selecting a different set.
+    #
+    #   --changed  /  --changed=<runId>
+    #     Narrows WHICH OF THEM STILL NEED DUELS. Every build carries a config_scope_hash
+    #     over just the config it depends on -- its weapon, its runes, its skills, its
+    #     armour, its role's base health -- so a sweep can compare its catalog against a
+    #     baseline run matchup by matchup and re-measure only what actually moved. Note
+    #     this is the OPPOSITE of --resume: a resume finishes a sweep interrupted at an
+    #     unchanged config, and finds no candidate the moment a balance value moves, which
+    #     is exactly when --changed becomes useful.
+    #
+    #     A delta run is still a WHOLE run: the unchanged rows are copied in from the
+    #     baseline rather than left out, so every dashboard and every gold mart keeps
+    #     working with no union step. sim_result.measured_run_id says which run's duels
+    #     produced each row. --no-carry opts out and gives an explicitly partial run.
+    #
     # A stopped or crashed sweep can be picked up with "/simulate <SCOPE> --resume". It
     # continues the newest interrupted run at the same config_hash -- same sim_run row, same
     # sim_build rows, skipping every matchup already reduced to a sim_result row -- so a long
@@ -200,12 +234,46 @@ champions:
     #
     # Deliberately not part of config_hash: observing a duel must not make it a different
     # duel, so a diagnostic run stays diffable against the run it is explaining.
-    duelDiagnostics: false
+    #
+    # On by default as of the 2026-08-08 baseline. The sweep is bound by wall clock, not by
+    # storage: run 1 spent 35 hours to produce 19 GB, and the volume Postgres sits on has
+    # ~920 GB free. Capture that records what the duels are already doing therefore costs
+    # almost nothing that matters, and not having it is what made runs 164 and 168 take
+    # weeks to explain. Measured on 147,634 real rows: 1,620 bytes each, so a full
+    # 4.34M-duel EQUIPMENT sweep is about 6.7 GB.
+    duelDiagnostics: true
     # Ceiling on diagnostic rows per run. A stop rather than a sample -- the rows that exist
     # are a contiguous prefix of the sweep, which matters because the leading hypothesis is
     # about how a duel's position in the sweep affects its outcome, and a sampled table
     # cannot answer a question about ordering.
-    duelDiagnosticsMaxRows: 50000
+    #
+    # 6,000,000 covers a full EQUIPMENT sweep (4.34M duels at one iteration) with room for
+    # the iteration count to rise, and costs ~9.7 GB at the measured row size.
+    duelDiagnosticsMaxRows: 6000000
+
+    # Write a sim_trace row for every landed hit.
+    #
+    # These two existed only as @Config annotation defaults in SimulationGate and were not
+    # documented here at all, which is why the cap sat at 2,000,000 -- about 4% of a full
+    # sweep -- with nothing saying so.
+    #
+    # This is the table that answers "what is the full range of damage", as opposed to the
+    # mean over a matchup that sim_result carries. A distribution needs the individual hits,
+    # and once a duel has been fought and thrown away the only way to get them back is to
+    # fight it again. It is also the only table that can locate the sweep's known
+    # non-reproducibility (2.3% of MUTUAL matchups, 5.2% of ONE_WAY ones diverge between
+    # repeat iterations): two iterations of one matchup can be diffed straight down their
+    # tick axis until the first row that disagrees.
+    #
+    # Cost, measured by inserting 500,000 representative rows: 565 bytes each, most of it
+    # the (run_id, build_id, target_role, target_armor, iteration, tick, seq) index rather
+    # than the row. Run 1 averaged 12.17 hits per duel over 4.34M ONE_WAY duels, so a full
+    # sweep is ~52.8M rows and ~28 GB.
+    hitTrace: true
+    # Ceiling on trace rows per run, same contiguous-prefix semantics as the diagnostics cap.
+    # 80,000,000 leaves headroom for MUTUAL, which writes both sides' hits rather than one.
+    # At the measured row size that is ~45 GB in the worst case.
+    hitTraceMaxRows: 80000000
 
 command:
   simulate:

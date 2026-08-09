@@ -1,0 +1,21 @@
+# Transform + orchestration dependencies.
+#
+# pyspark brings its own Scala/JVM assembly, so the only other runtime requirement is
+# the Postgres JDBC driver, which spark-submit resolves from Maven Central at startup
+# (see jobs/common/spark.py, or pin spark.postgres_jar for an offline machine).
+#
+# Spark 4 rather than 3.5 because 3.5's Python support stops at 3.11 and this repo's
+# toolchain is Python 3.12. It needs Java 17+, which the project already requires.
+pyspark==4.0.0
+PyYAML>=6.0
+
+# Airflow is only needed on the machine that schedules; the jobs themselves import
+# nothing from it. Install with the constraint file for your Python version:
+#   pip install "apache-airflow==2.10.3" \
+#     -c "https://raw.githubusercontent.com/apache/airflow/constraints-2.10.3/constraints-3.11.txt"
+# Left commented so `pip install -r requirements.txt` does not drag ~90 packages
+# into a machine that only wants to run a transform.
+# apache-airflow==2.10.3
+# apache-airflow-providers-apache-spark==4.11.1
+
+pytest>=8.0

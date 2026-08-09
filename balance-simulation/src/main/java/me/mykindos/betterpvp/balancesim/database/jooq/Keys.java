@@ -5,11 +5,13 @@ package me.mykindos.betterpvp.balancesim.database.jooq;
 
 
 import me.mykindos.betterpvp.balancesim.database.jooq.tables.SimBuild;
+import me.mykindos.betterpvp.balancesim.database.jooq.tables.SimDeltaPlan;
 import me.mykindos.betterpvp.balancesim.database.jooq.tables.SimDuelDiagnostic;
 import me.mykindos.betterpvp.balancesim.database.jooq.tables.SimResult;
 import me.mykindos.betterpvp.balancesim.database.jooq.tables.SimRun;
 import me.mykindos.betterpvp.balancesim.database.jooq.tables.SimTrace;
 import me.mykindos.betterpvp.balancesim.database.jooq.tables.records.SimBuildRecord;
+import me.mykindos.betterpvp.balancesim.database.jooq.tables.records.SimDeltaPlanRecord;
 import me.mykindos.betterpvp.balancesim.database.jooq.tables.records.SimDuelDiagnosticRecord;
 import me.mykindos.betterpvp.balancesim.database.jooq.tables.records.SimResultRecord;
 import me.mykindos.betterpvp.balancesim.database.jooq.tables.records.SimRunRecord;
@@ -43,9 +45,11 @@ public class Keys {
     // -------------------------------------------------------------------------
 
     public static final ForeignKey<SimBuildRecord, SimRunRecord> SIM_BUILD__SIM_BUILD_RUN_ID_FKEY = Internal.createForeignKey(SimBuild.SIM_BUILD, DSL.name("sim_build_run_id_fkey"), new TableField[] { SimBuild.SIM_BUILD.RUN_ID }, Keys.SIM_RUN_PKEY, new TableField[] { SimRun.SIM_RUN.ID }, true);
+    public static final ForeignKey<SimDeltaPlanRecord, SimRunRecord> SIM_DELTA_PLAN__SIM_DELTA_PLAN_RUN_ID_FKEY = Internal.createForeignKey(SimDeltaPlan.SIM_DELTA_PLAN, DSL.name("sim_delta_plan_run_id_fkey"), new TableField[] { SimDeltaPlan.SIM_DELTA_PLAN.RUN_ID }, Keys.SIM_RUN_PKEY, new TableField[] { SimRun.SIM_RUN.ID }, true);
     public static final ForeignKey<SimDuelDiagnosticRecord, SimBuildRecord> SIM_DUEL_DIAGNOSTIC__SIM_DUEL_DIAGNOSTIC_BUILD_ID_FKEY = Internal.createForeignKey(SimDuelDiagnostic.SIM_DUEL_DIAGNOSTIC, DSL.name("sim_duel_diagnostic_build_id_fkey"), new TableField[] { SimDuelDiagnostic.SIM_DUEL_DIAGNOSTIC.BUILD_ID }, Keys.SIM_BUILD_PKEY, new TableField[] { SimBuild.SIM_BUILD.ID }, true);
     public static final ForeignKey<SimDuelDiagnosticRecord, SimRunRecord> SIM_DUEL_DIAGNOSTIC__SIM_DUEL_DIAGNOSTIC_RUN_ID_FKEY = Internal.createForeignKey(SimDuelDiagnostic.SIM_DUEL_DIAGNOSTIC, DSL.name("sim_duel_diagnostic_run_id_fkey"), new TableField[] { SimDuelDiagnostic.SIM_DUEL_DIAGNOSTIC.RUN_ID }, Keys.SIM_RUN_PKEY, new TableField[] { SimRun.SIM_RUN.ID }, true);
     public static final ForeignKey<SimResultRecord, SimBuildRecord> SIM_RESULT__SIM_RESULT_BUILD_ID_FKEY = Internal.createForeignKey(SimResult.SIM_RESULT, DSL.name("sim_result_build_id_fkey"), new TableField[] { SimResult.SIM_RESULT.BUILD_ID }, Keys.SIM_BUILD_PKEY, new TableField[] { SimBuild.SIM_BUILD.ID }, true);
+    public static final ForeignKey<SimResultRecord, SimRunRecord> SIM_RESULT__SIM_RESULT_MEASURED_RUN_ID_FKEY = Internal.createForeignKey(SimResult.SIM_RESULT, DSL.name("sim_result_measured_run_id_fkey"), new TableField[] { SimResult.SIM_RESULT.MEASURED_RUN_ID }, Keys.SIM_RUN_PKEY, new TableField[] { SimRun.SIM_RUN.ID }, true);
     public static final ForeignKey<SimResultRecord, SimRunRecord> SIM_RESULT__SIM_RESULT_RUN_ID_FKEY = Internal.createForeignKey(SimResult.SIM_RESULT, DSL.name("sim_result_run_id_fkey"), new TableField[] { SimResult.SIM_RESULT.RUN_ID }, Keys.SIM_RUN_PKEY, new TableField[] { SimRun.SIM_RUN.ID }, true);
     public static final ForeignKey<SimTraceRecord, SimBuildRecord> SIM_TRACE__SIM_TRACE_BUILD_ID_FKEY = Internal.createForeignKey(SimTrace.SIM_TRACE, DSL.name("sim_trace_build_id_fkey"), new TableField[] { SimTrace.SIM_TRACE.BUILD_ID }, Keys.SIM_BUILD_PKEY, new TableField[] { SimBuild.SIM_BUILD.ID }, true);
     public static final ForeignKey<SimTraceRecord, SimRunRecord> SIM_TRACE__SIM_TRACE_RUN_ID_FKEY = Internal.createForeignKey(SimTrace.SIM_TRACE, DSL.name("sim_trace_run_id_fkey"), new TableField[] { SimTrace.SIM_TRACE.RUN_ID }, Keys.SIM_RUN_PKEY, new TableField[] { SimRun.SIM_RUN.ID }, true);

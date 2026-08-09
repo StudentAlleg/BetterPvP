@@ -1,0 +1,12 @@
+# The lake. Derived from Postgres and rebuildable; bronze alone is ~2GB for a full
+# EQUIPMENT sweep.
+data/
+
+# Vendored JDBC driver. Not committed -- it is a build artifact of another project and
+# every machine that needs it already has one in its Gradle cache. See README.
+lib/*.jar
+
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/

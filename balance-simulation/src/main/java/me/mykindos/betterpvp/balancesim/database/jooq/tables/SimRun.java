@@ -8,6 +8,7 @@ import me.mykindos.betterpvp.balancesim.database.jooq.Indexes;
 import me.mykindos.betterpvp.balancesim.database.jooq.Keys;
 import me.mykindos.betterpvp.balancesim.database.jooq.Public;
 import me.mykindos.betterpvp.balancesim.database.jooq.tables.SimBuild.SimBuildPath;
+import me.mykindos.betterpvp.balancesim.database.jooq.tables.SimDeltaPlan.SimDeltaPlanPath;
 import me.mykindos.betterpvp.balancesim.database.jooq.tables.SimDuelDiagnostic.SimDuelDiagnosticPath;
 import me.mykindos.betterpvp.balancesim.database.jooq.tables.SimResult.SimResultPath;
 import me.mykindos.betterpvp.balancesim.database.jooq.tables.SimTrace.SimTracePath;
@@ -203,6 +204,19 @@ public class SimRun extends TableImpl<SimRunRecord> {
         return _simBuild;
     }
 
+    private transient SimDeltaPlanPath _simDeltaPlan;
+
+    /**
+     * Get the implicit to-many join path to the
+     * <code>public.sim_delta_plan</code> table
+     */
+    public SimDeltaPlanPath simDeltaPlan() {
+        if (_simDeltaPlan == null)
+            _simDeltaPlan = new SimDeltaPlanPath(this, null, Keys.SIM_DELTA_PLAN__SIM_DELTA_PLAN_RUN_ID_FKEY.getInverseKey());
+
+        return _simDeltaPlan;
+    }
+
     private transient SimDuelDiagnosticPath _simDuelDiagnostic;
 
     /**
@@ -216,17 +230,30 @@ public class SimRun extends TableImpl<SimRunRecord> {
         return _simDuelDiagnostic;
     }
 
-    private transient SimResultPath _simResult;
+    private transient SimResultPath _simResultMeasuredRunIdFkey;
 
     /**
      * Get the implicit to-many join path to the <code>public.sim_result</code>
-     * table
+     * table, via the <code>sim_result_measured_run_id_fkey</code> key
      */
-    public SimResultPath simResult() {
-        if (_simResult == null)
-            _simResult = new SimResultPath(this, null, Keys.SIM_RESULT__SIM_RESULT_RUN_ID_FKEY.getInverseKey());
+    public SimResultPath simResultMeasuredRunIdFkey() {
+        if (_simResultMeasuredRunIdFkey == null)
+            _simResultMeasuredRunIdFkey = new SimResultPath(this, null, Keys.SIM_RESULT__SIM_RESULT_MEASURED_RUN_ID_FKEY.getInverseKey());
 
-        return _simResult;
+        return _simResultMeasuredRunIdFkey;
+    }
+
+    private transient SimResultPath _simResultRunIdFkey;
+
+    /**
+     * Get the implicit to-many join path to the <code>public.sim_result</code>
+     * table, via the <code>sim_result_run_id_fkey</code> key
+     */
+    public SimResultPath simResultRunIdFkey() {
+        if (_simResultRunIdFkey == null)
+            _simResultRunIdFkey = new SimResultPath(this, null, Keys.SIM_RESULT__SIM_RESULT_RUN_ID_FKEY.getInverseKey());
+
+        return _simResultRunIdFkey;
     }
 
     private transient SimTracePath _simTrace;
