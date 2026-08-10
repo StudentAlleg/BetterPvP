@@ -55,11 +55,22 @@ live server does not fail, does not warn, and quietly achieves nothing.
 
 Scope
 -----
-By default only the **balance surface**: `items/**` and `skills/**`, which is what
-`SimConfigDigest` walks and therefore what a sweep's numbers depend on. `config.yml` is
-excluded on purpose -- the dev server's has 61 values and 52 keys that differ from the
-repo's defaults (command ranks, activity thresholds), all of them deliberate, and none of
-them anything a duel measures. `--all` includes it and should be used with care.
+By default the **balance surface**, defined per plugin in `BALANCE_SURFACE`: Core's and
+Champions' `items/`, Champions' `skills/`, and the whole of `BalanceSimulation/`. The first
+three are what `SimConfigDigest` hashes, and therefore what a sweep's numbers depend on.
+
+`Core/config.yml` stays out on purpose -- the dev server's has 61 values and 52 keys that
+differ from the repo's defaults (command ranks, activity thresholds), all deliberate, and
+none of them anything a duel measures. `--all` includes it and should be used with care.
+
+That exclusion is worth stating precisely, because the first version of this file got it
+wrong in a way that cost a run. It scoped by *directory name* -- `items/` and `skills/`
+anywhere -- reasoning that this kept `--regenerate` away from `Core/config.yml`. It did, and
+it also excluded every other `config.yml`, including `BalanceSimulation/`'s, which is where
+`hitTrace` and `duelDiagnosticsMaxRows` live. A regeneration reported "33 files" and left the
+sim's own capture settings untouched, so a 20-hour sweep started with hit tracing off and a
+1.2% diagnostic sample. The scope is keyed by plugin now, and the rule is: if a value can
+change what a sweep measures **or what it records**, it belongs here.
 """
 from __future__ import annotations
 
@@ -94,8 +105,25 @@ MODULES = {
     "balance-simulation": "BalanceSimulation",
 }
 
-# What a duel's numbers actually come from. See the module docstring.
-BALANCE_SURFACE = ("items", "skills")
+# What a sweep depends on, per plugin. `None` means the whole plugin.
+#
+# Keyed by plugin rather than by directory name, because "every items/ directory" is both too
+# wide and too narrow. Too wide: Clans and Progression ship items/ trees the sim never reads.
+# Too narrow, and this is the one that cost a run: it silently excludes every config.yml,
+# including BalanceSimulation's, which is where the capture settings live.
+#
+# The first two entries mirror `SimConfigDigest.leaves()` exactly -- it collects ITEM_CONFIGS
+# from Core *and* Champions, then Champions' skills. Keep them in step; if the digest grows a
+# config, this map has to grow with it or a sweep can drift in a place nothing checks.
+BALANCE_SURFACE = {
+    "Core": ("items",),
+    "Champions": ("items", "skills"),
+    # Not part of the digest -- the sim's own settings are the scenario, not the measurement,
+    # and they are recorded on sim_run instead. In scope anyway, because "is this sweep set up
+    # to record what I need" is the same question as "is this sweep measuring the right thing",
+    # and answering only half of it is what let a 20-hour run start with hit tracing off.
+    "BalanceSimulation": None,
+}
 
 
 def flatten(tree, prefix=""):
@@ -161,9 +189,12 @@ def scan(server_root: Path, only: set[str] | None, everything: bool) -> list[Fin
         packaged = REPO / module / "src" / "main" / "resources" / "configs"
         if not packaged.is_dir():
             continue
+        if not everything and plugin not in BALANCE_SURFACE:
+            continue
+        allowed = None if everything else BALANCE_SURFACE[plugin]
         for repo_file in sorted(packaged.rglob("*.yml")):
             rel = repo_file.relative_to(packaged)
-            if not everything and rel.parts[0] not in BALANCE_SURFACE:
+            if allowed is not None and rel.parts[0] not in allowed:
                 continue
             findings.append(Finding(plugin, rel, repo_file, server_root / plugin / rel))
     return findings
@@ -222,7 +253,10 @@ def main() -> int:
 
     interesting = [f for f in findings if not f.clean]
     print(f"server : {args.server}")
-    print(f"scope  : {'every packaged config' if args.all else 'items/ and skills/ (the balance surface)'}")
+    scope = "every packaged config" if args.all else ", ".join(
+        plugin if paths is None else f"{plugin}/{{{','.join(paths)}}}"
+        for plugin, paths in BALANCE_SURFACE.items())
+    print(f"scope  : {scope}")
     print(f"{len(findings) - len(interesting)} identical, {len(interesting)} to look at"
           f"  (of {len(findings)} files)\n")
 

@@ -139,6 +139,27 @@ After steps 1-2 the delta re-measures:
 - **every build touching a config value the regeneration changed** — automatic, via the
   per-item and per-skill digests.
 
+**Check what is actually carryable before assuming `--changed` saves anything.** Baseline
+candidacy is realm + scope + scenario and deliberately *not* `config_hash` — see
+`findBaselineRun` — so a config regeneration does not disqualify a baseline. Correctness is
+guarded per matchup by `sim_result.config_scope_hash`, which is the right granularity: a row
+is carried only when the config *it* depended on is unchanged.
+
+The trap is that renaming an axis invalidates rows without changing what they measured.
+`targetScopeHash` hashes `armorSet=<id>`, so when the armour tier axis replaced the
+single-set-per-role id `role_set` with real set ids, every armoured row in run 1 stopped
+matching — 3,474,576 of 4,343,220, **80% of the baseline** — even though `role_set` and
+`reinforced` are the same physical armour. Only the 868,644 `none` rows remain reachable,
+because tier 0 contributes no `armorSet=` part at all.
+
+That cost is real but one-time, and it is the price of the axis rather than a defect. Do not
+try to recover it by rewriting `target_armor` or `config_scope_hash` on the baseline: the
+column rename alone does not help (the stored hash still disagrees), and editing the hash
+fabricates the provenance the whole delta mechanism rests on.
+
+Expect a delta immediately after an axis change to be close to a full sweep. Use `--changed`
+anyway — it costs nothing and records `measured_run_id` — but budget the full wall clock.
+
 To re-check one thing rather than everything, narrow it:
 
 ```

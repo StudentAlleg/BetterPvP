@@ -42,6 +42,7 @@ import java.util.ArrayList;
 import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -113,6 +114,18 @@ public class DuelOrchestrator {
 
     /** Results are flushed in chunks so a long sweep is durable as it goes, not only at the end. */
     private static final int RESULT_FLUSH_CHUNK = 500;
+
+    /**
+     * How many times one matchup may be re-measured for tick load before its result is kept anyway.
+     *
+     * <p>A bound rather than a principle. Rejecting is only worth doing if the server recovers, and
+     * on one that cannot hold the budget at all every duel would be re-queued forever: the sweep
+     * would run indefinitely while its progress line advanced and receded. Three attempts is enough
+     * to ride out an excursion the governor is already cutting concurrency to end, and giving up
+     * after them keeps the measurement -- a row taken over budget is worse than one taken under it,
+     * and far better than a sweep that never terminates.
+     */
+    private static final int MAX_REMEASURE_ATTEMPTS = 3;
 
     /**
      * How many duel diagnostics buffer before they go up.
@@ -1188,12 +1201,13 @@ public class DuelOrchestrator {
                                  boolean duelDiagnostics,
                                  int duelDiagnosticsMaxRows,
                                  boolean hitTrace,
-                                 int hitTraceMaxRows) {
+                                 int hitTraceMaxRows,
+                                 double rejectAboveMsptMillis) {
 
         /** Stands in before the first run, so the field is never null for a reader that beats it. */
         private static final SweepSettings NONE =
                 new SweepSettings(1, 0, 0, false, 45, 1, 0, 1, 15, 1, SimSkillFilter.OFFENSIVE, Set.of(),
-                        false, 0, false, 0);
+                        false, 0, false, 0, 0);
 
         private static SweepSettings from(SimulationGate gate) {
             final int ceiling = gate.getMaxConcurrentDuels();
@@ -1214,7 +1228,8 @@ public class DuelOrchestrator {
                     gate.isDuelDiagnostics(),
                     Math.max(0, gate.getDuelDiagnosticsMaxRows()),
                     gate.isHitTrace(),
-                    Math.max(0, gate.getHitTraceMaxRows()));
+                    Math.max(0, gate.getHitTraceMaxRows()),
+                    Math.max(0, gate.getRejectAboveMsptMillis()));
         }
 
         /**
@@ -1284,7 +1299,11 @@ public class DuelOrchestrator {
         /** Whether the row cap has been announced, so it is said once rather than every duel. */
         private boolean diagnosticsCapAnnounced;
 
-        private final long plannedDuels;
+        /**
+         * Duels this sitting intends to run. Not final: a duel rejected for load is re-queued, and
+         * the plan grows by exactly the one it will run again.
+         */
+        private long plannedDuels;
         private final int plannedMatchups;
         private final long startedAtMillis = System.currentTimeMillis();
 
@@ -1317,6 +1336,29 @@ public class DuelOrchestrator {
          */
         private final Set<Long> effectiveLevelsWritten = new HashSet<>();
 
+        /** Duels thrown away and re-queued because the server was over budget when they finished. */
+        private long rejectedForLoad;
+
+        /**
+         * Duels kept despite being over budget, having already been re-measured
+         * {@link #MAX_REMEASURE_ATTEMPTS} times.
+         *
+         * <p>Counted and reported rather than retried forever. A machine that cannot get under the
+         * ceiling would otherwise re-queue the same duel indefinitely and the sweep would never
+         * finish, with the progress line advancing and receding and no row saying why.
+         */
+        private long keptOverBudget;
+
+        /**
+         * How many times each matchup has been rejected, by identity.
+         *
+         * <p>Identity rather than value: the same {@code Matchup} instance is queued once per
+         * iteration and re-queued on rejection, so identity counts attempts against the thing that
+         * is actually being retried. Entries are removed once the matchup completes, so the map
+         * holds only what is in flight rather than the whole catalogue.
+         */
+        private final Map<Matchup, Integer> rejectionsByMatchup = new IdentityHashMap<>();
+
         private BukkitTask task;
         private long tick;
         /** Names combatants. Distinct from the arena index, which is recycled between duels. */
@@ -1335,13 +1377,16 @@ public class DuelOrchestrator {
             this.plannedMatchups = plannedMatchups;
             this.done = done;
             this.listener = listener;
-            // Started at the configured concurrency rather than at the floor, so a run that needs no
-            // governing behaves exactly as it did before the knob existed and an adaptive one only
-            // has to find its way down if the machine cannot hold the tick budget.
+            // Started at the floor and climbed, not dropped from the ceiling. Starting at the ceiling
+            // guarantees the sweep spends its opening minutes over budget by construction -- run 5
+            // opened at 600 duels and a 104.8ms median against a 50ms target, and took four cuts
+            // (600 -> 510 -> 434 -> 369 -> 314) to get under it. Every duel measured during that
+            // descent was measured on an overloaded server. Climbing costs a slower start and reaches
+            // the same equilibrium, because the controller's evidence is the tick time either way.
             this.governor = settings.adaptiveConcurrency()
                     ? ConcurrencyGovernor.adaptive(settings.minConcurrentDuels(),
                             settings.maxConcurrentDuels(), settings.targetMsptMillis(),
-                            settings.maxConcurrentDuels())
+                            settings.minConcurrentDuels())
                     : ConcurrencyGovernor.fixed(settings.maxConcurrentDuels());
         }
 
@@ -1519,7 +1564,41 @@ public class DuelOrchestrator {
          * <p>Next to the summary rather than inside it, because neither is a count of work done. Each
          * half is silent at zero, so a healthy run gains no noise.
          */
+        /**
+         * What the tick-load gate cost and, more importantly, what it failed to catch.
+         *
+         * <p>The rejection count is throughput: those duels ran and were thrown away, so it is the
+         * price of the gate and nothing worse. {@code keptOverBudget} is the opposite -- rows that
+         * were measured over budget and kept because re-measuring them kept failing -- and it is a
+         * warning, because those are exactly the rows the setting exists to exclude. A run with a
+         * non-zero count here has measurements in it taken on a server that could not hold its tick
+         * budget three times running, and nothing on the row itself says so.
+         */
+        private void logTickLoadRejections() {
+            if (rejectedForLoad == 0 && keptOverBudget == 0) {
+                return;
+            }
+            log.info("Simulation run {} [{}]: {} duels re-measured because the server was at or above"
+                            + " {}ms median tick when they finished ({}% of completed). That is wall"
+                            + " clock spent, not measurements lost.",
+                    runId, scope, rejectedForLoad,
+                    String.format(Locale.ROOT, "%.0f", settings.rejectAboveMsptMillis()),
+                    String.format(Locale.ROOT, "%.1f",
+                            completedDuels == 0 ? 0.0 : 100.0 * rejectedForLoad / completedDuels)).submit();
+            if (keptOverBudget > 0) {
+                log.warn("Simulation run {} [{}]: {} duels were kept despite finishing over the {}ms"
+                                + " budget, having already been re-measured {} times each. Those rows"
+                                + " were taken on a server that could not recover, and nothing on the"
+                                + " row records it. Treat their matchups as the least trustworthy in"
+                                + " the run, and consider lowering maxConcurrentDuels before the next.",
+                        runId, scope, keptOverBudget,
+                        String.format(Locale.ROOT, "%.0f", settings.rejectAboveMsptMillis()),
+                        MAX_REMEASURE_ATTEMPTS).submit();
+            }
+        }
+
         private void logTimeouts() {
+            logTickLoadRejections();
             if (barrenTimeouts > 0) {
                 log.warn("Simulation run {} [{}]: {} of {} completed duels ({}%) timed out without the"
                                 + " attacker landing a hit. Those rows carry NULL damage and TTK and measure"
@@ -1600,6 +1679,7 @@ public class DuelOrchestrator {
             log.info("Simulation run {} [{}]: {}/{} duels ({}%), {} in flight (limit {}, median tick"
                             + " {}ms), {} combatants resident,"
                             + " {} packets queued, {} timeouts ({}% of completed, {} barren),"
+                            + " {} rejected over budget ({} kept anyway),"
                             + " {}/{} matchups measured."
                             + " Elapsed {}, remaining {}, ETA {}.",
                     runId, scope, completedDuels, plannedDuels,
@@ -1608,7 +1688,8 @@ public class DuelOrchestrator {
                     combatantPool.residentCount(), combatantPool.queuedPacketBacklog(),
                     nonLethalTimeouts + barrenTimeouts,
                     String.format(Locale.ROOT, "%.1f", timeoutSharePercent()),
-                    barrenTimeouts, completedMatchups, plannedMatchups,
+                    barrenTimeouts, rejectedForLoad, keptOverBudget,
+                    completedMatchups, plannedMatchups,
                     progress.elapsedFormatted(), progress.etaFormatted(),
                     progress.estimatedFinish()).submit();
 
@@ -1692,10 +1773,49 @@ public class DuelOrchestrator {
         }
 
         /**
+         * Whether this duel's measurement is being thrown away because the server was over budget
+         * when it finished, in which case it has been re-queued to be measured again.
+         *
+         * <p>The median is the server's over its last 100 ticks, not this duel's own: Paper keeps
+         * one ring of tick times and nothing attributes a tick to the duels that were in flight
+         * during it. Over a five-second window and duels lasting seconds that is a fair proxy, and
+         * it is the same number the governor steers on, so a rejection and a concurrency cut always
+         * agree about what the server was doing.
+         *
+         * <p>Re-queued at the tail rather than the head. The head would re-run it immediately, into
+         * the same overloaded server that just failed it, burning attempts at the one moment they
+         * are least likely to succeed; the tail gives the governor time to cut concurrency first.
+         */
+        private boolean rejectedForLoad(Matchup matchup) {
+            if (settings.rejectAboveMsptMillis() <= 0) {
+                return false;
+            }
+            final double median = governor.medianTickMillis();
+            // Negative means the tick ring is not readable yet -- the first seconds of a run, and
+            // exactly when arena warm-up makes it worst. Treated as acceptable rather than as a
+            // rejection, because "unknown" must not become "reject everything and never start".
+            if (median < 0 || median < settings.rejectAboveMsptMillis()) {
+                return false;
+            }
+            final int attempts = rejectionsByMatchup.merge(matchup, 1, Integer::sum);
+            if (attempts > MAX_REMEASURE_ATTEMPTS) {
+                keptOverBudget++;
+                return false;
+            }
+            rejectedForLoad++;
+            pending.addLast(matchup);
+            // The denominator moves with it, so the percentage stays honest rather than stalling
+            // while the sweep silently grows the work it has left.
+            plannedDuels++;
+            return true;
+        }
+
+        /**
          * Reduces a matchup whose last iteration has landed, and hands the row on.
          */
         private void complete(Matchup matchup) {
             completedMatchups++;
+            rejectionsByMatchup.remove(matchup);
             final SimMeasurement.Aggregate aggregate = matchup.measurement().aggregate();
             // Fed the reduced matchup rather than the row, because the audit needs the build spec and
             // the typed ledgers, none of which survive into SimResultRow. Reading the same aggregate
@@ -2078,6 +2198,15 @@ public class DuelOrchestrator {
         /** Reduces the recording into one iteration's sample and files it against the matchup. */
         private void record(long endTick, SweepLoop loop) {
             recorder.endDuel(recording);
+
+            // Before anything is counted or written. A rejected duel must leave no trace at all --
+            // not a sample, not a diagnostic row, not a hit trace, and not a barren-timeout tally --
+            // or the run would carry evidence from a measurement it decided not to trust. The caller
+            // still tears the duel down and counts it as completed, which is right: it did run.
+            if (loop.rejectedForLoad(matchup)) {
+                return;
+            }
+
             final List<SimRecorder.HitRecord> hits =
                     recording.hitsFrom(attacker.getUuid(), defender.getUuid());
 

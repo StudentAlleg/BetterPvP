@@ -83,6 +83,28 @@ public class SimulationGate {
     @Config(path = "champions.simulation.minConcurrentDuels", defaultValue = "16")
     private int minConcurrentDuels;
 
+    /**
+     * Median tick time at or above which a finished duel is thrown away and measured again.
+     *
+     * <p>The governor holds the median near {@link #targetMsptMillis} but cannot hold it there
+     * every tick, and a duel that completed during an excursion is not a slow measurement -- it is
+     * a wrong one, for the reason on {@code targetMsptMillis}: the ~130 files timing game logic on
+     * {@code System.currentTimeMillis} elapse their cooldowns against wall clock while the duel
+     * advances on ticks, so a lagging server silently gives the attacker more cooldowns per tick
+     * than the game does. The row that comes out is not noisy, it is measuring a different game.
+     *
+     * <p>60 ms against a 45 ms target: far enough above that ordinary controller wobble does not
+     * trip it, close enough that a real excursion does. Rejection re-queues the duel rather than
+     * dropping the matchup, so the sweep's shape is unchanged and only its cost moves.
+     *
+     * <p>Set to 0 to disable, which restores the previous behaviour of keeping every measurement
+     * whatever the tick rate. Worth doing on a machine that cannot hold the budget at all, where
+     * every duel would be rejected and the sweep would never finish.
+     */
+    @Inject
+    @Config(path = "champions.simulation.rejectAboveMsptMillis", defaultValue = "60.0")
+    private double rejectAboveMsptMillis;
+
     @Inject
     @Config(path = "champions.simulation.duelTimeoutSeconds", defaultValue = "30.0")
     private double duelTimeoutSeconds;

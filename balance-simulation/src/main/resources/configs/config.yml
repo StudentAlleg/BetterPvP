@@ -20,7 +20,7 @@ champions:
     # Also the number of arenas built during warm-up, and they stay pinned for the whole run
     # whether or not a duel is using them -- so this is a fixed per-tick cost (chunk sweeps)
     # as well as a concurrency limit. Set it near what you intend to run, not far above.
-    maxConcurrentDuels: 128
+    maxConcurrentDuels: 700
     # Vary concurrency during the run to hold targetMsptMillis, instead of pinning it at
     # maxConcurrentDuels. The ceiling above still bounds it, and still costs its arenas.
     #
@@ -45,7 +45,7 @@ champions:
     # resume: a sweep stopped, retuned and restarted was refused as a candidate over a knob
     # that changes nothing. All of it is recorded on sim_run.scenario instead, and what the run
     # actually sustained is logged when it closes.
-    adaptiveConcurrency: false
+    adaptiveConcurrency: true
     # Median tick PROCESSING time (ms) the governor holds under -- MSPT, read from the
     # server's own tick times, not the interval between ticks. The distinction matters: a
     # healthy server sleeps out the rest of its budget, so the interval is pinned at 50ms
@@ -55,10 +55,31 @@ champions:
     # 50.0 is the whole budget (20 TPS); 45 leaves the controller room to settle rather than
     # sitting on the boundary. Growth needs the median 8% under this, so at 45 the sweep grows
     # while MSPT is below ~41ms. Raise the target to trade tick headroom for throughput.
-    targetMsptMillis: 45.0
+    targetMsptMillis: 50.0
     # Fewest duels the governor will cut to. A floor rather than zero, so a sweep that cannot
     # hold its budget keeps measuring slowly instead of silently ceasing to advance.
-    minConcurrentDuels: 16
+    #
+    # Also where an adaptive run STARTS. Opening at the ceiling instead guarantees the first
+    # minutes are over budget by construction: run 5 opened at 600 duels and a 104.8ms median
+    # against a 50ms target, and needed four cuts (600 -> 510 -> 434 -> 369 -> 314) to get
+    # under it, measuring every duel of that descent on an overloaded server. Climbing from
+    # here reaches the same equilibrium -- the controller steers on tick time either way.
+    minConcurrentDuels: 64
+    # Median tick (ms) at or above which a FINISHED duel is thrown away and measured again.
+    #
+    # Not a throughput guard; a correctness one, and the same reason targetMsptMillis exists.
+    # Roughly 130 files across champions and core time their game logic on
+    # System.currentTimeMillis while a duel advances on ticks, so on a lagging server every
+    # wall-clock cooldown elapses in fewer ticks than the game intends and the attacker gets
+    # more of them. The row that comes out is not noisy, it is a different game.
+    #
+    # 60 against a 50 target: above ordinary controller wobble, below a real excursion. A
+    # rejected duel is re-queued at the tail, so the sweep's shape never changes -- only its
+    # wall clock. After 3 rejections a matchup is kept anyway and WARNED about, because a
+    # machine that cannot recover would otherwise re-queue forever and never finish.
+    #
+    # 0 disables it, keeping every measurement whatever the tick rate.
+    rejectAboveMsptMillis: 60.0
     # Hard stop for a single duel, so a matchup that can never kill does not stall a run.
     #
     # Also the run's main throughput term once the sweep reaches builds that cannot kill: a duel
@@ -66,7 +87,7 @@ champions:
     # it for all of this. The progress line reports how many completed duels ran the clock out and
     # what share of the run that is, and the closing line prices it in slot-time -- read those
     # before lowering this, and before assuming a receding ETA means the server is struggling.
-    duelTimeoutSeconds: 30.0
+    duelTimeoutSeconds: 45.0
     # Which slice of the permutation space /simulate sweeps when given no argument.
     #   MELEE   - role x default weapon. The phase 1 baseline; cheapest.
     #   WEAPONS - role x every melee weapon, no skills to confound the weapon axis.
@@ -180,7 +201,7 @@ champions:
     #                        OffensiveSkill marker is still swept if a sweep saw it work.
     # Recorded in config_hash: two runs at one scope with different filters are not
     # comparable, and nothing else on the row would say so.
-    skillFilter: OFFENSIVE
+    skillFilter: RELEVANT
     # The reviewed output of a skill relevance audit: comma-separated skill names that a
     # RELEVANT sweep is allowed to build permutations from.
     #
@@ -200,7 +221,55 @@ champions:
     # a sweep with no skills in it completes normally and looks perfectly healthy.
     # Hashed into config_hash (sorted), so two runs of different lists are never diffed as
     # though they swept the same space, while reordering it during review is not a change.
-    relevantSkills: ""
+    relevantSkills:
+      - Combo Attack
+      - Energy Pool
+      - Sever
+      - Slash
+      - Block Toss
+      - Flesh Hook
+      - Fortify
+      - Overwhelm
+      - Whirlwind Sword
+      - Defensive Stance
+      - Hilt Smash
+      - Sacrifice
+      - Swordsmanship
+      - Vanguards Might
+      - Arctic Armour
+      - Blizzard
+      - Immolate
+      - Inferno
+      - Null Blade
+      - Pestilence
+      - Void
+      - Wind Dagger
+      - Blood Sphere
+      - Frailty
+      - Grasp
+      - Leech
+      - Soul Bonds
+      - Tormented Soil
+      - Wolfs Fury
+      - Blood Barrier
+      - Lightning Orb
+      - Agility
+      - Rupture
+      - Defensive Aura
+      - Vengeance
+      - Magnetic Axe
+      - Hold Position
+      - Fortitude
+      - Deflection
+      - Threatening Shout
+      - Viper Strikes
+      - Level Field
+      - Resilience
+      - Smoke Bomb
+      - Concussion
+      - Evade
+      - Wreath
+      - Takedown
     # How long the rotation holds right click for a channel or charge skill, in ticks.
     # This is the engine's one policy choice rather than an observation -- a channel deals
     # damage for as long as it is held -- so it is written into sim_run.scenario, and two
@@ -213,7 +282,7 @@ champions:
     # Duels started per tick. Spawning two ServerPlayers and equipping them is tens of
     # milliseconds of main-thread work, so filling the whole concurrency budget in one
     # tick stalls the server and staggers when duels actually engage.
-    duelSetupsPerTick: 8
+    duelSetupsPerTick: 20
     # How often a running sweep reports duels done / matchups measured / ETA, to the
     # console and to whoever ran /simulate. Floored at 1 second.
     progressIntervalSeconds: 15.0
@@ -249,7 +318,7 @@ champions:
     #
     # 6,000,000 covers a full EQUIPMENT sweep (4.34M duels at one iteration) with room for
     # the iteration count to rise, and costs ~9.7 GB at the measured row size.
-    duelDiagnosticsMaxRows: 6000000
+    duelDiagnosticsMaxRows: 10000000
 
     # Write a sim_trace row for every landed hit.
     #

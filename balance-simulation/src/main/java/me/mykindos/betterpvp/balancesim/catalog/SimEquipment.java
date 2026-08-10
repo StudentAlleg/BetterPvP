@@ -40,6 +40,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.TreeMap;
 
 /**
@@ -74,6 +75,24 @@ public class SimEquipment {
      * be any particular item, so it follows whatever is registered as the iron sword fallback.
      */
     private static final Material DEFAULT_WEAPON_MATERIAL = Material.IRON_SWORD;
+
+    /**
+     * Weapon tiers the sweep does not measure.
+     *
+     * <p>Wooden ({@code rustic_*}) and stone ({@code crude_*}) are the bottom two rungs, and a sweep
+     * of them answers a question nobody asks: they are starter gear, not a balance point, and every
+     * build carrying one is a row that costs the same duel as a real one. Run 1 spent 14,292 builds
+     * per weapon, so dropping a tier is worth its share of the wall clock outright.
+     *
+     * <p>Keyed on the <em>material</em> and not on the registry key, deliberately. The names do not
+     * survive inspection -- "crude" is the stone tier and "rustic" the wooden one, which is not
+     * guessable in either direction, and {@code champions:} ships its own {@code crude_axe} beside
+     * {@code core:}'s. A material list also excludes a low-tier weapon added later without anyone
+     * remembering this list exists, which a name list would silently sweep.
+     */
+    private static final Set<Material> EXCLUDED_WEAPON_MATERIALS = Set.of(
+            Material.WOODEN_SWORD, Material.WOODEN_AXE,
+            Material.STONE_SWORD, Material.STONE_AXE);
 
     /**
      * The slots an armour set occupies, in the order a set is built and stripped.
@@ -190,6 +209,18 @@ public class SimEquipment {
     }
 
     /**
+     * Whether a weapon of this material is below the tier the sweep measures.
+     *
+     * <p>Visible for testing, because the mapping from tier to registry name is not guessable and
+     * getting it backwards would silently sweep the wrong two weapons: {@code crude_*} is the stone
+     * tier and {@code rustic_*} the wooden one, so "basic" and "rustic" name the opposite materials
+     * to the ones a reader expects.
+     */
+    static boolean isExcludedTier(Material material) {
+        return EXCLUDED_WEAPON_MATERIALS.contains(material);
+    }
+
+    /**
      * Every registered melee weapon, ordered by key so a sweep enumerates the same space twice.
      *
      * <p>{@code Group.MELEE} is the filter rather than the item's class, because that is what
@@ -207,6 +238,9 @@ public class SimEquipment {
                 continue;
             }
             if (!weapon.getGroups().contains(WeaponItem.Group.MELEE)) {
+                continue;
+            }
+            if (isExcludedTier(weapon.getModel().getType())) {
                 continue;
             }
             weapons.add(new WeaponOption(entry.getKey().toString(),
