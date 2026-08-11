@@ -131,6 +131,30 @@ def _publish(cfg: Config, produced: dict[str, DataFrame], run_id: int) -> None:
         table = f"{prefix}{name}"
         LOG.info("publishing %s", table)
         _replace_slice(cfg, df, table, f"run_id = {run_id}")
+    _refresh_views(cfg)
+
+
+# Serving-layer roll-ups over the marts just written. They are the one thing in the
+# warehouse this pipeline does not produce as a DataFrame -- they are defined in
+# sql/gold_ddl.sql, because they exist to give a dashboard an access path rather than to
+# state a new fact -- so publishing has to poke them or they silently describe the
+# previous run. A stale materialised view is the worst failure mode available here: the
+# panel renders, fast, with numbers that are simply old.
+_MATERIALIZED_VIEWS = ("sim_gold_tier_grid",)
+
+
+def _refresh_views(cfg: Config) -> None:
+    for view in _MATERIALIZED_VIEWS:
+        LOG.info("refreshing %s", view)
+        # CONCURRENTLY keeps the view readable while it rebuilds, so a dashboard open
+        # during a publish sees the old rows rather than an exclusive lock. It needs the
+        # unique index gold_ddl.sql creates; without it, fall back to a plain refresh
+        # rather than leaving the view stale.
+        try:
+            _execute(cfg, f"REFRESH MATERIALIZED VIEW CONCURRENTLY {view}")
+        except Exception:
+            LOG.warning("concurrent refresh of %s failed; falling back to a locking one", view)
+            _execute(cfg, f"REFRESH MATERIALIZED VIEW {view}", ignore_missing=True)
 
 
 def _replace_slice(cfg: Config, df: DataFrame, table: str, predicate: str) -> None:

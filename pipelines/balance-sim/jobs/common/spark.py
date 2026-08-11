@@ -48,6 +48,12 @@ def session(cfg: Config, app_suffix: str | None = None) -> SparkSession:
         .config("spark.sql.session.timeZone", "UTC")
     )
 
+    # Escape hatch for whatever the next fat column needs. Anything under `spark.options`
+    # in pipeline.yml is passed straight through, so tuning a write does not mean editing
+    # this file -- and the reason for each value lives next to the value, in the yaml.
+    for key, value in (spark_cfg.get("options") or {}).items():
+        builder = builder.config(key, value)
+
     jar = spark_cfg.get("postgres_jar")
     if jar:
         # Resolved against the project root rather than the working directory: the

@@ -72,10 +72,25 @@ warehouse:
   skip_publish: []
 
 spark:
-  master: local[*]
+  # local[4], not local[*]. In local mode every task runs in the driver's own heap, so the
+  # core count is a memory multiplier: each concurrent parquet write task buffers a row
+  # group before it flushes. Run 7's sim_duel_diagnostic carries a `detail` jsonb holding a
+  # per-duel timeline -- 3.6M rows over 5.4 GB -- and 12 of those row groups at once put a
+  # 6 GB heap into OutOfMemoryError partway through the bronze write. This machine has
+  # 15.9 GB total with WSL2 already resident, so the fix is fewer concurrent buffers rather
+  # than a bigger heap; there is no bigger heap available.
+  master: local[4]
   app_name: balance-sim-medallion
   driver_memory: 6g
   shuffle_partitions: 64
+  options:
+    # Roll a new file every 250k rows. Caps how much a single write task can accumulate
+    # before it must flush, which is the other half of the OOM above -- without it a task
+    # holding one very wide partition still buffers without bound.
+    spark.sql.files.maxRecordsPerFile: 250000
+    # 32 MB row groups instead of the 128 MB default. Four concurrent writers at 128 MB is
+    # half a gigabyte of buffer before any of the actual data is counted.
+    spark.hadoop.parquet.block.size: 33554432
   # The Postgres JDBC driver. Set to null to let Ivy resolve
   # org.postgresql:postgresql from Maven Central instead -- but note that a machine
   # behind an HTTPS-intercepting security suite fails that resolution with a PKIX

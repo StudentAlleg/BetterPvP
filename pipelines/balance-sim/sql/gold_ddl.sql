@@ -444,3 +444,90 @@ CREATE INDEX IF NOT EXISTS idx_gold_effect_interaction_run
 -- The panel's own access path: reliable verdicts first, strongest interaction first.
 CREATE INDEX IF NOT EXISTS idx_gold_effect_interaction_verdict
     ON sim_gold_effect_interaction (run_id, correlation_reliable, interaction);
+
+
+-- ---------------------------------------------------------------------------
+-- Tier grid. A materialised roll-up of sim_gold_matchup at the grain the gear-ladder
+-- panels compare on, and the only object in this file the pipeline does not write.
+--
+-- Why it exists: the tiers dashboard's scatter is one point per comparison cell, and it
+-- was computing that cell from the raw fact -- eight percentile_cont sorts over 3.6M
+-- rows. A single one of those takes ~40s, so the panel exceeded Grafana's SQL timeout
+-- every load and rendered as empty axes with no error text. The grid is 45k rows across
+-- every run; reading it is a few milliseconds.
+--
+-- Grain is (run, attacker role, weapon, roll, rune count, target role, target armour).
+-- Attacker role is IN the grain deliberately: a median cannot be re-derived from other
+-- medians, so any panel that wants to collapse a dimension has to do it on a mean. The
+-- mean columns are here for exactly that, and `duels` is the weight -- weighted mean
+-- over this view reproduces AVG over the fact exactly.
+--
+-- Only `provenance = 'measured'` rows. Duels the attacker never won are kept rather than
+-- filtered: a null ttk_s drops out of the TTK percentiles on its own, but its DPS is real
+-- and throwing it away biases the DPS axis upward. `no_kill_rows` counts them per cell,
+-- so a cell whose medians describe a subset says so instead of looking complete.
+--
+-- Refreshed by the gold pipeline after every publish. By hand:
+--   REFRESH MATERIALIZED VIEW CONCURRENTLY sim_gold_tier_grid;
+-- (CONCURRENTLY needs the unique index below, and it exists for that reason.)
+-- ---------------------------------------------------------------------------
+DROP MATERIALIZED VIEW IF EXISTS sim_gold_tier_grid;
+CREATE MATERIALIZED VIEW sim_gold_tier_grid AS
+SELECT run_id,
+       role,
+       weapon_key,
+       weapon_slot,
+       weapon_roll,
+       rune_count,
+       target_role,
+       target_armor,
+       target_armor_set,
+       target_armor_tier,
+       -- Run 1 named the armoured targets role_set / role_set_max and left
+       -- target_armor_set and target_armor_tier null; run 7 renamed them reinforced /
+       -- reinforced_max and populates both. Classifying by shape rather than by the
+       -- literal name reads either, and survives the next rename.
+       CASE
+           WHEN target_armor = 'none' THEN 'none'
+           WHEN right(target_armor, 4) = '_max' THEN 'tier1_max'
+           ELSE 'tier1'
+           END                                                                AS armor_class,
+       COUNT(*)                                                               AS duels,
+       COUNT(DISTINCT build_id)                                               AS builds,
+       AVG(target_hp)                                                         AS target_hp,
+       AVG(dmg_per_hit)                                                       AS dmg_per_hit_mean,
+       percentile_cont(0.5) WITHIN GROUP (ORDER BY dmg_per_hit)               AS dmg_per_hit,
+       AVG(dps_sustained)                                                     AS dps_mean,
+       percentile_cont(0.1) WITHIN GROUP (ORDER BY dps_sustained)             AS dps_p10,
+       percentile_cont(0.5) WITHIN GROUP (ORDER BY dps_sustained)             AS dps,
+       percentile_cont(0.9) WITHIN GROUP (ORDER BY dps_sustained)             AS dps_p90,
+       AVG(dps_burst)                                                         AS dps_burst_mean,
+       AVG(ttk_s)                                                             AS ttk_mean,
+       percentile_cont(0.1) WITHIN GROUP (ORDER BY ttk_s)                     AS ttk_p10,
+       percentile_cont(0.5) WITHIN GROUP (ORDER BY ttk_s)                     AS ttk,
+       percentile_cont(0.9) WITHIN GROUP (ORDER BY ttk_s)                     AS ttk_p90,
+       AVG(hits_to_kill)                                                      AS hits_to_kill_mean,
+       percentile_cont(0.5) WITHIN GROUP (ORDER BY hits_to_kill)              AS hits_to_kill,
+       AVG(swing_interval_ticks)                                              AS swing_ticks_mean,
+       percentile_cont(0.5) WITHIN GROUP (ORDER BY swing_interval_ticks)      AS swing_ticks,
+       AVG(overkill_fraction)                                                 AS overkill_frac_mean,
+       percentile_cont(0.5) WITHIN GROUP (ORDER BY overkill_fraction)         AS overkill_frac,
+       AVG(kill_rate)                                                         AS kill_rate,
+       -- Duels excluded from every figure above because the attacker never killed.
+       -- Non-zero here means the cell's medians describe a subset of what was swept.
+       COUNT(*) FILTER (WHERE ttk_s IS NULL)                                  AS no_kill_rows
+FROM sim_gold_matchup
+WHERE provenance = 'measured'
+GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9, 10;
+
+-- Unique over the full grain, which is both the correctness statement and what
+-- REFRESH MATERIALIZED VIEW CONCURRENTLY requires.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_gold_tier_grid_key
+    ON sim_gold_tier_grid (run_id, role, weapon_key, weapon_roll, rune_count,
+                           target_role, target_armor);
+-- The scatter's access path: one run, filtered by roll / target / rune count.
+CREATE INDEX IF NOT EXISTS idx_gold_tier_grid_scan
+    ON sim_gold_tier_grid (run_id, weapon_roll, target_role, rune_count);
+-- The ladder scan the Q2 and Q3 tables walk: one weapon, one rung.
+CREATE INDEX IF NOT EXISTS idx_gold_tier_grid_ladder
+    ON sim_gold_tier_grid (run_id, weapon_key, armor_class, weapon_roll, rune_count);
