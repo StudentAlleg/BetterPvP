@@ -47,8 +47,11 @@ public record SimHitModifier(String source,
      * Snapshots a modifier the pipeline applied.
      *
      * <p>{@code reductive} reproduces {@code ModifierResult.isReductive} rather than calling it,
-     * because obtaining a {@code ModifierResult} means invoking {@code apply} again. The rule is one
-     * line and is asserted against the real one in the simulator's tests.
+     * because obtaining a {@code ModifierResult} means invoking {@code apply} again. That makes it
+     * a duplicated rule with nothing holding the two copies together: there is no test asserting
+     * this switch against the real one, so a change to {@code ModifierResult.isReductive} will not
+     * fail anything here, it will just start writing rows that disagree with the pipeline. Worth a
+     * test before the column is trusted for anything beyond exploration.
      */
     public static SimHitModifier of(DamageModifier modifier) {
         final double operand = modifier.getDamageOperand();
