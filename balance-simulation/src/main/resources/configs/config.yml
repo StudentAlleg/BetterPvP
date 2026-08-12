@@ -92,9 +92,15 @@ champions:
     #   MELEE   - role x default weapon. The phase 1 baseline; cheapest.
     #   WEAPONS - role x every melee weapon, no skills to confound the weapon axis.
     #   RUNES   - role x default weapon x one socketed rune at a time, plus a bare baseline.
-    #   SKILLS  - one skill at a time over its level range, on plain and booster weapons.
-    #             The only tier --audit works on: it is the one that measures a skill-less
-    #             baseline to subtract.
+    #   SKILLS  - one skill at a time over its level range, on plain and booster weapons,
+    #             at min/base/max weapon damage. The only tier --audit works on: it is the
+    #             one that measures a skill-less baseline to subtract. The three damage
+    #             rolls are what separate a flat skill from a percentage one -- contribution
+    #             is a + b*weaponDamage, so two points fix both coefficients and the third
+    #             checks the form. Boosters are NOT a usable second point: a booster raises
+    #             a SWORD/AXE/BOW skill's effective level by one, so it moves damage and
+    #             level together. Once b is known the skill x weapon x rune cross is
+    #             arithmetic over an EQUIPMENT run rather than duels.
     #   LOADOUT - distinct weapon profiles x every rune each accepts, no skills. Neither
     #             WEAPONS nor RUNES crosses those two axes, so until this tier a rune had
     #             only ever been measured on the default weapon.
@@ -202,8 +208,12 @@ champions:
     # Recorded in config_hash: two runs at one scope with different filters are not
     # comparable, and nothing else on the row would say so.
     skillFilter: RELEVANT
-    # The reviewed output of a skill relevance audit: comma-separated skill names that a
-    # RELEVANT sweep is allowed to build permutations from.
+    # The reviewed output of a skill relevance audit: the skill names a RELEVANT sweep is
+    # allowed to build permutations from.
+    #
+    # Written as a YAML list. A comma-separated string on one line is also accepted and means
+    # exactly the same thing, so an older config keeps working -- but the list is the form to
+    # use, because it is what the audit artifact emits and it stays readable at fifty entries.
     #
     # Populate it by hand, from an audit you have read:
     #   1. /simulate SKILLS ONE_WAY --audit
@@ -221,7 +231,7 @@ champions:
     # a sweep with no skills in it completes normally and looks perfectly healthy.
     # Hashed into config_hash (sorted), so two runs of different lists are never diffed as
     # though they swept the same space, while reordering it during review is not a change.
-    relevantSkills:
+    relevantSkills: []
       - Combo Attack
       - Energy Pool
       - Sever

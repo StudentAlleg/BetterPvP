@@ -640,6 +640,11 @@ public class SimResultRepository {
                 record.setEvent(row.event());
                 record.setRawAmount(decimal(row.rawAmount()));
                 record.setAmount(decimal(row.amount()));
+                // Null rather than '[]' when the list is absent: an empty array is the measurement
+                // "this hit had no modifiers", and a row that never captured them must not claim it.
+                record.setModifiers(row.modifiers() == null
+                        ? null
+                        : jsonb(modifiersToJson(row.modifiers()), "[]"));
                 records.add(record);
             }
 
@@ -716,6 +721,35 @@ public class SimResultRepository {
                     .append("\",\"slot\":\"").append(escape(skill.slot()))
                     .append("\",\"allocated_level\":").append(skill.allocatedLevel())
                     .append(",\"effective_level\":").append(skill.effectiveLevel())
+                    .append('}');
+        }
+        return json.append(']').toString();
+    }
+
+    /**
+     * Serialises an applied modifier stack for {@code sim_trace.modifiers}.
+     *
+     * <p>Hand-written for the reason {@link #skillsToJson} is: the values are primitives and short
+     * identifiers, and a JSON binder would be a dependency carried for one loop. The operand keeps
+     * full double precision deliberately -- it is the measurement, and a rounded operand would make
+     * a percentage skill's factor unrecoverable.
+     */
+    public static String modifiersToJson(List<SimHitModifier> modifiers) {
+        if (modifiers == null || modifiers.isEmpty()) {
+            return "[]";
+        }
+        final StringBuilder json = new StringBuilder("[");
+        for (int i = 0; i < modifiers.size(); i++) {
+            final SimHitModifier modifier = modifiers.get(i);
+            if (i > 0) {
+                json.append(',');
+            }
+            json.append("{\"source\":\"").append(escape(modifier.source()))
+                    .append("\",\"operator\":\"").append(escape(modifier.operator()))
+                    .append("\",\"operand\":").append(modifier.operand())
+                    .append(",\"priority\":").append(modifier.priority())
+                    .append(",\"type\":\"").append(escape(modifier.type()))
+                    .append("\",\"reductive\":").append(modifier.reductive())
                     .append('}');
         }
         return json.append(']').toString();

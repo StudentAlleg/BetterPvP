@@ -5,10 +5,12 @@ import com.google.inject.Injector;
 import com.google.inject.Singleton;
 import lombok.CustomLog;
 import lombok.Getter;
+import me.mykindos.betterpvp.balancesim.repository.SimHitModifier;
 import me.mykindos.betterpvp.balancesim.world.SimWorldManager;
 import me.mykindos.betterpvp.champions.champions.skills.types.EnergySkill;
 import me.mykindos.betterpvp.core.Core;
 import me.mykindos.betterpvp.core.combat.events.DamageEvent;
+import me.mykindos.betterpvp.core.combat.modifiers.DamageModifier;
 import me.mykindos.betterpvp.core.components.champions.events.PlayerUseSkillEvent;
 import me.mykindos.betterpvp.core.cooldowns.CooldownManager;
 import me.mykindos.betterpvp.core.effects.Effect;
@@ -175,6 +177,25 @@ public class SimRecorder implements Listener {
     }
 
     /**
+     * The applied modifier stack as storable rows, empty when nothing applied.
+     *
+     * <p>An empty list and a null column mean different things downstream: empty is "measured, and
+     * there were none", null is "this row predates modifier capture". Only the first is produced
+     * here.
+     */
+    private static List<SimHitModifier> snapshot(DamageEvent event) {
+        final List<DamageModifier> applied = event.getAppliedModifiers();
+        if (applied.isEmpty()) {
+            return List.of();
+        }
+        final List<SimHitModifier> out = new ArrayList<>(applied.size());
+        for (DamageModifier modifier : applied) {
+            out.add(SimHitModifier.of(modifier));
+        }
+        return List.copyOf(out);
+    }
+
+    /**
      * Stops recording a duel and detaches it from the live lookup. The returned {@link Recording}
      * still holds every hit for the orchestrator to reduce.
      */
@@ -209,7 +230,14 @@ public class SimRecorder implements Listener {
                 Bukkit.getCurrentTick() - recording.startTick,
                 event.getDamage(),
                 event.getModifiedDamage(),
-                List.of(event.getReasons())));
+                List.of(event.getReasons()),
+                // Taken at MONITOR, so this is the stack as the pipeline finished with it.
+                // getAppliedModifiers re-evaluates canApply, which for a modifier keyed on mutable
+                // state could in principle answer differently than it did mid-chain; that is the
+                // cost of reading the set the game itself considers applied rather than
+                // reconstructing one here, and reconstructing one here is exactly the modelling
+                // this column exists to stop doing.
+                snapshot(event)));
 
         // Same arithmetic DamageEventFinalizer.applyFinalDamage is about to do, run one step ahead of
         // it so the kill is timestamped at the blow that caused it rather than at whichever sweep tick
@@ -370,8 +398,15 @@ public class SimRecorder implements Listener {
      * @param finalDamage  post-modifier damage applied
      * @param reasons      the pipeline's reason/modifier labels for this hit
      */
+    /**
+     * @param modifiers what the damage pipeline actually applied to this hit. The only record of
+     *                  WHY the amount is what it is -- and the only way a ramping skill like Combo
+     *                  Attack is visible at all, since its operand climbs hit by hit and any
+     *                  per-duel average erases it.
+     */
     public record HitRecord(UUID damager, UUID damagee, int elapsedTicks,
-                            double rawDamage, double finalDamage, List<String> reasons) {
+                            double rawDamage, double finalDamage, List<String> reasons,
+                            List<SimHitModifier> modifiers) {
     }
 
     /**

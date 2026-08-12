@@ -85,8 +85,43 @@ public enum SimScope {
     EQUIPMENT(WeaponAxis.DISTINCT_MELEE, SkillAxis.NONE, RuneAxis.ALL_COMBINATIONS, true, true,
             StatRollAxis.MIN_BASE_MAX, StatRollAxis.BASE_AND_MAX),
 
-    /** Role x one skill at a time x level, on the default and booster weapons, vs armoured targets. */
-    SKILLS(WeaponAxis.DEFAULT_AND_BOOSTER, SkillAxis.ONE_AT_A_TIME, RuneAxis.NONE, true, false),
+    /**
+     * Role x one skill at a time x level, on the default and booster weapons at every damage roll,
+     * vs armoured targets.
+     *
+     * <p>The weapon roll axis is here to separate <em>flat</em> skills from <em>percentage</em> ones,
+     * which is not a distinction any amount of config parsing can make reliably. A skill's
+     * contribution is {@code a + b * weaponDamage}: a flat skill has {@code b = 0}, a percentage skill
+     * has {@code a = 0}. Two damage points determine both coefficients exactly and a third checks that
+     * the form is right at all -- so {@link StatRollAxis#MIN_BASE_MAX} turns this tier into a
+     * regression rather than a point measurement, at three times its duel count.
+     *
+     * <p>The roll axis rather than the weapon axis, deliberately. The booster weapons this tier
+     * already carries are a second damage point, but a confounded one:
+     * {@code SkillListener.getLevel} raises a SWORD/AXE/BOW skill's effective level by one on a
+     * booster, so a booster row differs from a default row in weapon damage <em>and</em> in skill
+     * level at once, and the two cannot be separated after the fact. Min/base/max of the same weapon
+     * move damage alone, which is what makes the fit clean.
+     *
+     * <p>Once {@code b} is known per skill, the whole skill x weapon x rune cross is arithmetic over
+     * the equipment sweep rather than duels: {@link #FULL} is not a long run, it is an unreachable
+     * one (see its own note), and this is what stands in for it.
+     *
+     * <p>Runes are {@link RuneAxis#ONE_AT_A_TIME} rather than absent, which is the one axis here that
+     * is <em>not</em> reconstructable from an {@link #EQUIPMENT} run. A rune that only moves damage or
+     * swing speed needs no duel with a skill -- the projection already covers it, because the skill's
+     * coefficients are fitted against weapon damage and a rune simply moves that input. What the
+     * projection cannot cover is a rune that interacts with skill machinery directly, and that gap is
+     * named in {@link #BASELINE}'s own note as the thing falling between {@link #LOADOUT} and it.
+     * One rune at a time is what makes such an interaction attributable: a build carrying four runes
+     * yields one number and no way to say which rune did it.
+     *
+     * <p>The cost is real and roughly an order of magnitude -- a weapon's applicable rune list plus the
+     * bare baseline, on top of the three damage rolls. Narrow it with {@code --runes=} when the
+     * question is about a specific rune rather than about finding an unknown interaction.
+     */
+    SKILLS(WeaponAxis.DEFAULT_AND_BOOSTER, SkillAxis.ONE_AT_A_TIME, RuneAxis.ONE_AT_A_TIME, true, false,
+            StatRollAxis.MIN_BASE_MAX, StatRollAxis.BASE_ONLY),
 
     /**
      * Every distinct weapon x every rune it accepts, no skills, reduced targets.

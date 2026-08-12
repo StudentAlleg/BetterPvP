@@ -5,6 +5,7 @@ package me.mykindos.betterpvp.balancesim.database.jooq.tables.records;
 
 
 import me.mykindos.betterpvp.balancesim.database.jooq.tables.SimTrace;
+import org.jooq.JSONB;
 import org.jooq.Record1;
 import org.jooq.impl.UpdatableRecordImpl;
 
@@ -244,6 +245,27 @@ public class SimTraceRecord extends UpdatableRecordImpl<SimTraceRecord> {
         return (Integer) get(14);
     }
 
+    /**
+     * Setter for <code>public.sim_trace.modifiers</code>. Applied damage
+     * modifiers for this hit, one object per modifier: source, operator
+     * (FLAT|MULTIPLIER), operand, priority, type, reductive. NULL means not
+     * captured; [] means captured and empty.
+     */
+    public SimTraceRecord setModifiers(JSONB value) {
+        set(15, value);
+        return this;
+    }
+
+    /**
+     * Getter for <code>public.sim_trace.modifiers</code>. Applied damage
+     * modifiers for this hit, one object per modifier: source, operator
+     * (FLAT|MULTIPLIER), operand, priority, type, reductive. NULL means not
+     * captured; [] means captured and empty.
+     */
+    public JSONB getModifiers() {
+        return (JSONB) get(15);
+    }
+
     // -------------------------------------------------------------------------
     // Primary key information
     // -------------------------------------------------------------------------
@@ -267,7 +289,7 @@ public class SimTraceRecord extends UpdatableRecordImpl<SimTraceRecord> {
     /**
      * Create a detached, initialised SimTraceRecord
      */
-    public SimTraceRecord(Long id, Long runId, Long buildId, Long tMs, String event, BigDecimal amount, String targetRole, String targetArmor, Integer iteration, Integer arenaIndex, Integer tick, Integer seq, String actor, BigDecimal rawAmount, Integer anchorTick) {
+    public SimTraceRecord(Long id, Long runId, Long buildId, Long tMs, String event, BigDecimal amount, String targetRole, String targetArmor, Integer iteration, Integer arenaIndex, Integer tick, Integer seq, String actor, BigDecimal rawAmount, Integer anchorTick, JSONB modifiers) {
         super(SimTrace.SIM_TRACE);
 
         setId(id);
@@ -285,6 +307,7 @@ public class SimTraceRecord extends UpdatableRecordImpl<SimTraceRecord> {
         setActor(actor);
         setRawAmount(rawAmount);
         setAnchorTick(anchorTick);
+        setModifiers(modifiers);
         resetChangedOnNotNull();
     }
 }

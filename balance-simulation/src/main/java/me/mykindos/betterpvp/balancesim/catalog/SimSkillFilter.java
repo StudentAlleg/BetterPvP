@@ -7,7 +7,9 @@ import me.mykindos.betterpvp.champions.champions.skills.types.PassiveSkill;
 
 import java.util.Arrays;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Locale;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 
@@ -137,19 +139,27 @@ public enum SimSkillFilter {
     }
 
     /**
-     * Parses the committed relevant-skill list: comma-separated skill names, as they appear in the
-     * audit artifact's {@code relevantSkills} block.
+     * Parses the committed relevant-skill list, as it appears in the audit artifact's
+     * {@code relevantSkills} block.
+     *
+     * <p>Takes a list because that is the shape the config is declared in and the shape the audit
+     * emits. Entries are still split on commas, so a single entry holding
+     * {@code "Backstab, Riposte"} means the same two skills as two entries -- the config loader
+     * accepts a YAML sequence or a comma-separated scalar interchangeably, and this must not be the
+     * place where those two stop meaning the same thing.
      *
      * <p>Order is preserved and duplicates dropped, so the set reads back in the order it was
      * reviewed in. Names are kept verbatim rather than case-folded, because they are matched against
      * {@code Skill.getName} -- a fuzzy match here would admit a skill nobody put on the list.
      */
-    public static Set<String> parseRelevantSkills(String raw) {
-        if (raw == null || raw.isBlank()) {
+    public static Set<String> parseRelevantSkills(List<String> raw) {
+        if (raw == null || raw.isEmpty()) {
             return Set.of();
         }
         final Set<String> names = new LinkedHashSet<>();
-        Arrays.stream(raw.split(","))
+        raw.stream()
+                .filter(Objects::nonNull)
+                .flatMap(entry -> Arrays.stream(entry.split(",")))
                 .map(String::trim)
                 .filter(name -> !name.isEmpty())
                 .forEach(names::add);

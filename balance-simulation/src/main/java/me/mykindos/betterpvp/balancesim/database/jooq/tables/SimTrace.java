@@ -16,6 +16,7 @@ import org.jooq.ForeignKey;
 import org.jooq.Identity;
 import org.jooq.Index;
 import org.jooq.InverseForeignKey;
+import org.jooq.JSONB;
 import org.jooq.Name;
 import org.jooq.Path;
 import org.jooq.PlainSQL;
@@ -135,6 +136,14 @@ public class SimTrace extends TableImpl<SimTraceRecord> {
      */
     public final TableField<SimTraceRecord, Integer> ANCHOR_TICK = createField(DSL.name("anchor_tick"), SQLDataType.INTEGER.nullable(false), this, "");
 
+    /**
+     * The column <code>public.sim_trace.modifiers</code>. Applied damage
+     * modifiers for this hit, one object per modifier: source, operator
+     * (FLAT|MULTIPLIER), operand, priority, type, reductive. NULL means not
+     * captured; [] means captured and empty.
+     */
+    public final TableField<SimTraceRecord, JSONB> MODIFIERS = createField(DSL.name("modifiers"), SQLDataType.JSONB, this, "Applied damage modifiers for this hit, one object per modifier: source, operator (FLAT|MULTIPLIER), operand, priority, type, reductive. NULL means not captured; [] means captured and empty.");
+
     private SimTrace(Name alias, Table<SimTraceRecord> aliased) {
         this(alias, aliased, (Field<?>[]) null, null);
     }
@@ -204,7 +213,7 @@ public class SimTrace extends TableImpl<SimTraceRecord> {
 
     @Override
     public List<Index> getIndexes() {
-        return Arrays.asList(Indexes.IDX_SIM_TRACE_DUEL, Indexes.IDX_SIM_TRACE_RUN_BUILD);
+        return Arrays.asList(Indexes.IDX_SIM_TRACE_DUEL, Indexes.IDX_SIM_TRACE_MODIFIERS, Indexes.IDX_SIM_TRACE_RUN_BUILD);
     }
 
     @Override

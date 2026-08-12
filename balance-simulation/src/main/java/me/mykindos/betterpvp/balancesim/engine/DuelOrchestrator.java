@@ -1955,7 +1955,8 @@ public class DuelOrchestrator {
                             attackerId.equals(hit.damager()) ? SimTraceRow.ATTACKER : SimTraceRow.DEFENDER,
                             SimTraceRow.HIT,
                             hit.rawDamage(),
-                            hit.finalDamage()));
+                            hit.finalDamage(),
+                            hit.modifiers()));
                     tracesRecorded++;
                 }
             } catch (Exception e) {

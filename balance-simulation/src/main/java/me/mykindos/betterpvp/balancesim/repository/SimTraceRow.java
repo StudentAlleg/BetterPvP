@@ -42,6 +42,9 @@ package me.mykindos.betterpvp.balancesim.repository;
  * @param event       what happened; {@code hit} today, so the table can carry more later
  * @param rawAmount   pre-mitigation damage, or null where the event carries none
  * @param amount      post-mitigation damage, or null where the event carries none
+ * @param modifiers   what the damage pipeline applied to produce {@code amount}. Empty means
+ *                    measured-and-none; the column is null only for rows written before capture
+ *                    existed, which is a different claim and must stay distinguishable
  */
 public record SimTraceRow(long buildId,
                           String targetRole,
@@ -54,7 +57,8 @@ public record SimTraceRow(long buildId,
                           String actor,
                           String event,
                           Double rawAmount,
-                          Double amount) {
+                          Double amount,
+                          java.util.List<SimHitModifier> modifiers) {
 
     /** The {@code actor} value for the build under measurement. */
     public static final String ATTACKER = "attacker";

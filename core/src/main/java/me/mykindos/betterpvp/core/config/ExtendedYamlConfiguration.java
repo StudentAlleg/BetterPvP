@@ -10,8 +10,8 @@ import org.jetbrains.annotations.Nullable;
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.List;
-import java.util.Objects;
 
 @CustomLog
 public class ExtendedYamlConfiguration extends YamlConfiguration {
@@ -82,7 +82,33 @@ public class ExtendedYamlConfiguration extends YamlConfiguration {
         }
 
         if (type == List.class) {
-            return (T) Objects.requireNonNull(getList(path));
+            // A list config accepts BOTH a YAML sequence and a comma-separated scalar, and means
+            // the same thing by either. The sequence is the natural form for a long list and is
+            // what tooling emits; the scalar is what every @Config(defaultValue = "A,B,C") on a
+            // List field writes when the key is absent, so without this branch a defaulted list
+            // config reads back null and requireNonNull throws.
+            //
+            // It also fixes a silent failure that is much worse than a crash. Bukkit's getString
+            // returns null for a sequence, so a String-typed field pointed at a YAML list resolves
+            // to null rather than to the list -- and a caller that treats null as "unset" then runs
+            // as though the operator had configured nothing at all.
+            final List<?> list = getList(path);
+            if (list != null) {
+                return (T) list;
+            }
+            final String scalar = getString(path);
+            final String raw = scalar != null ? scalar : String.valueOf(defaultValue);
+            if (raw.isBlank()) {
+                return (T) new ArrayList<String>();
+            }
+            final List<String> split = new ArrayList<>();
+            for (String part : raw.split(",")) {
+                final String trimmed = part.trim();
+                if (!trimmed.isEmpty()) {
+                    split.add(trimmed);
+                }
+            }
+            return (T) split;
         }
 
         if (type == Double.class) {

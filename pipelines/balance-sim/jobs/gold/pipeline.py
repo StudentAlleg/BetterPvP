@@ -140,7 +140,13 @@ def _publish(cfg: Config, produced: dict[str, DataFrame], run_id: int) -> None:
 # state a new fact -- so publishing has to poke them or they silently describe the
 # previous run. A stale materialised view is the worst failure mode available here: the
 # panel renders, fast, with numbers that are simply old.
-_MATERIALIZED_VIEWS = ("sim_gold_tier_grid",)
+# Order matters: sim_gold_skill_damage reads sim_gold_weapon_damage, and gold_skill_damage
+# reads grafana_config rather than the warehouse -- it is refreshed here because a config
+# change and a sweep publish are the two things that can invalidate it, and only one of them
+# has a hook.
+_MATERIALIZED_VIEWS = ("sim_gold_tier_grid", "sim_gold_tier_extreme",
+                       "sim_gold_weapon_damage", "gold_skill_damage",
+                       "sim_gold_skill_damage", "gold_skill_coverage")
 
 
 def _refresh_views(cfg: Config) -> None:

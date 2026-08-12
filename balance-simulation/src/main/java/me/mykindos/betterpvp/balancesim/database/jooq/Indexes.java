@@ -44,5 +44,6 @@ public class Indexes {
     public static final Index IDX_SIM_RUN_CONFIG_HASH = Internal.createIndex(DSL.name("idx_sim_run_config_hash"), SimRun.SIM_RUN, new OrderField[] { SimRun.SIM_RUN.CONFIG_HASH }, false);
     public static final Index IDX_SIM_RUN_REALM_STARTED = Internal.createIndex(DSL.name("idx_sim_run_realm_started"), SimRun.SIM_RUN, new OrderField[] { SimRun.SIM_RUN.REALM, SimRun.SIM_RUN.STARTED_AT.desc() }, false);
     public static final Index IDX_SIM_TRACE_DUEL = Internal.createIndex(DSL.name("idx_sim_trace_duel"), SimTrace.SIM_TRACE, new OrderField[] { SimTrace.SIM_TRACE.RUN_ID, SimTrace.SIM_TRACE.BUILD_ID, SimTrace.SIM_TRACE.TARGET_ROLE, SimTrace.SIM_TRACE.TARGET_ARMOR, SimTrace.SIM_TRACE.ITERATION, SimTrace.SIM_TRACE.TICK, SimTrace.SIM_TRACE.SEQ }, false);
+    public static final Index IDX_SIM_TRACE_MODIFIERS = Internal.createIndex(DSL.name("idx_sim_trace_modifiers"), SimTrace.SIM_TRACE, new OrderField[] { SimTrace.SIM_TRACE.MODIFIERS }, false);
     public static final Index IDX_SIM_TRACE_RUN_BUILD = Internal.createIndex(DSL.name("idx_sim_trace_run_build"), SimTrace.SIM_TRACE, new OrderField[] { SimTrace.SIM_TRACE.RUN_ID, SimTrace.SIM_TRACE.BUILD_ID, SimTrace.SIM_TRACE.T_MS }, false);
 }

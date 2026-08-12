@@ -5,6 +5,8 @@ import com.google.inject.Singleton;
 import lombok.Getter;
 import me.mykindos.betterpvp.core.config.Config;
 
+import java.util.List;
+
 /**
  * Hard gate on every simulation entry point, plus the knobs a run is parameterised by.
  *
@@ -210,7 +212,7 @@ public class SimulationGate {
      */
     @Inject
     @Config(path = "champions.simulation.relevantSkills", defaultValue = "")
-    private String relevantSkills;
+    private List<String> relevantSkills;
 
     /**
      * How many duels may be set up in a single tick.
