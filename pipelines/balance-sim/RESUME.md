@@ -22,6 +22,28 @@ export PATH="$HADOOP_HOME/bin:$PATH"
 cd pipelines/balance-sim
 ```
 
+## 0. Was anything still running when you stopped?
+
+A chain was in flight at wrap-up: runs 1, 7 and 13 processed (7 failed, see below), then
+`diff --run-a 1 --run-b 7`, then `diff --run-a 12 --run-b 13`. The diffs may or may not have
+finished.
+
+Both diff writes go through `_replace_slice` — `DELETE FROM sim_gold_run_diff WHERE diff_key =
+'A-B'` followed by an append — so an interrupted diff leaves that **one key** short of rows and
+touches nothing else. It is idempotent: re-running the same diff deletes the partial slice and
+rewrites it. Nothing needs repairing by hand.
+
+Check what actually landed:
+
+```sql
+SELECT diff_key, overlap, count(*) FROM sim_gold_run_diff GROUP BY 1, 2 ORDER BY 1, 2;
+```
+
+* `1-7` at 10,827,093 rows with 4,312,263 null-descriptor `only_b` rows is the **pre-fix**
+  version — re-run it.
+* `12-13` present at all is new. Expect near-total overlap, since runs 12 and 13 share a build
+  space; a large `only_a`/`only_b` there would mean something is wrong.
+
 ## 1. Re-run run 7 — the one thing that is unfinished
 
 Run 7 failed with a driver OOM ingesting `sim_duel_diagnostic` (3,619,230 rows, 4,071 MB of
@@ -116,8 +138,14 @@ rebuild.
 |---|---|---|---|
 | 1 | EQUIPMENT | one_way | reprocessed, published. **Bugged run** — exists only to diff against 7 |
 | 7 | EQUIPMENT | one_way | **needs re-run** (OOM, cause fixed). Weapon/rune breadth lives here |
-| 12 | SKILLS | one_way | reprocessed, published |
-| 13 | SKILLS | mutual | reprocessed, published. Same 20,910 builds as 12 |
+| 12 | SKILLS | one_way | reprocessed, published — 61 checks, 0 errors |
+| 13 | SKILLS | mutual | reprocessed, published — 61 checks, 0 errors. Same 20,910 builds as 12 |
+
+Careful reading `sim_gold_run_health` for run 7: it says `published = true`, and that is
+correct but misleading — those are the 2026-08-10 marts. The re-run OOM'd before publishing, so
+run 7's rows and its gold parquet still have no `skill_set_key`. The view reports *whether* a
+run published, not *when*, and there is currently nothing that would tell you a published run is
+stale.
 
 12 and 13 share an identical build space and differ only in scenario, so 12-vs-13 is a
 controlled comparison — unlike 1-vs-7, which overlapped only 10% (1,078,290 `both` against
