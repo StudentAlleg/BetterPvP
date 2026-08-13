@@ -35,6 +35,23 @@ source:
   read_partitions_by_table:
     sim_duel_diagnostic: 256
     sim_trace: 128
+  # Run-scoped tables NOT to land in bronze.
+  #
+  # sim_duel_diagnostic is a dead end: bronze -> silver_duel_diagnostic -> nothing. No gold
+  # mart, no view in gold_ddl.sql and no panel reads it, so the whole 5.4 GB is ingested for
+  # a table nobody queries. It is also the only thing that has ever failed this pipeline on
+  # memory -- run 7's 3,619,230 rows carry 4,071 MB of `detail` JSON, and the bronze WRITE
+  # ran a 6 GB heap out of pages twice: once at 32 read partitions and again at 256, because
+  # the pressure is on the parquet/sort buffers of the 4 concurrent local tasks rather than
+  # on the read. This machine has 15.9 GB with WSL2 and Docker resident; there is no bigger
+  # heap to give it.
+  #
+  # Skipping is a supported path, not a workaround: silver already reads it through
+  # `bronze.read_optional` and logs "no duel diagnostics for run N" when absent, because
+  # duelDiagnostics is off by default in the plugin. Nothing is destroyed either -- the rows
+  # stay in Postgres, and clearing this list re-ingests them.
+  skip_ingest:
+    - sim_duel_diagnostic
 
 lake:
   # Bronze/silver/gold parquet. Relative paths resolve against the project root.

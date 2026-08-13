@@ -64,7 +64,14 @@ def ingest(
     _write(run, cfg, "sim_run", partition_by=None)
     counts["sim_run"] = auditor.record_dataset(BRONZE, "sim_run", run, "jdbc:sim_run")
 
+    skip_ingest = set(cfg.source.get("skip_ingest") or ())
     for table, key in RUN_SCOPED.items():
+        if table in skip_ingest:
+            # Recorded as a skip rather than as zero rows: "nobody asked for this table" and
+            # "this run produced none" are different facts, and a 0 in the audit log would
+            # read as the second one.
+            LOG.info("skipping %s (listed in source.skip_ingest)", table)
+            continue
         df = jdbc.read(spark, cfg, table, key=key, where=f"run_id = {run_id}")
         df = _stamp(df, auditor.pipeline_run_id, table)
         _write(df, cfg, table, partition_by="run_id")
