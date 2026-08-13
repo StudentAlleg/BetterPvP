@@ -27,10 +27,21 @@ from pyspark.sql import Column, DataFrame
 from pyspark.sql import functions as F
 from pyspark.sql.window import Window
 
-# What makes two rows comparable. Everything except the rune set and the skill: a
-# rune's contribution is only meaningful against a row that differs from it in the
-# rune alone, and the derived-skill columns are here so a Backstab row is compared
-# against the Backstab-at-the-same-level baseline rather than against a bare one.
+# What makes two rows comparable. Everything except the rune set: a rune's contribution
+# is only meaningful against a row that differs from it in the rune alone, and the
+# derived-skill columns are here so a Backstab row is compared against the
+# Backstab-at-the-same-level baseline rather than against a bare one.
+#
+# `skill_set_key` is here for the same reason `booster` is part of `weapon_profile_key`,
+# and it was added after the same expectation caught the same class of bug. On run 12 --
+# the first SKILLS sweep -- the bare builds differ ONLY by the skill they carry, so
+# without it 1,584 bare builds collapsed onto 28 distinct keys instead of 528, and
+# `baseline_uniqueness` failed with 24,861 bare rows over 1,332 keys. The join it guards
+# would have fanned out ~19x AND matched each rune against a different skill's baseline.
+#
+# Note this is the MEASURED loadout, which `derived_skill` is not: derived_skill names the
+# skill a row was *modelled* for and is null on every measured row. They are different
+# facts and both are needed.
 BASELINE_KEY = [
     "run_id",
     "role",
@@ -39,8 +50,20 @@ BASELINE_KEY = [
     "target_role",
     "target_armor",
     "provenance",
+    "skill_set_key",
     "derived_skill",
     "derived_skill_level",
+]
+
+# BASELINE_KEY minus the columns that identify what a row is being compared FOR rather
+# than what makes it comparable. A skill's contribution is measured against a build with
+# no skill, so the skill columns cannot be in the join or the baseline never matches --
+# with `skill_set_key` in it, a skilled row ('frailty:3') would look for a baseline row
+# carrying 'frailty:3' and no skills, which does not exist, and the mart would come out
+# empty rather than wrong. Same argument the derived_* columns were already excluded on.
+CONTRAST_KEY = [
+    key for key in BASELINE_KEY
+    if key not in {"provenance", "skill_set_key", "derived_skill", "derived_skill_level"}
 ]
 
 
@@ -86,6 +109,7 @@ def matchup(results: DataFrame, builds: DataFrame, run: DataFrame) -> DataFrame:
         "rune_set_key",
         "weapon_alias_keys",
         "skill_count",
+        "skill_set_key",
     )
     run_cols = run.select(
         "run_id", "realm", "scope", "scenario", "config_hash", "engine_version", "status", "is_complete"
@@ -119,6 +143,9 @@ def matchup(results: DataFrame, builds: DataFrame, run: DataFrame) -> DataFrame:
             "booster",
             "points_spent",
             "skill_count",
+            # The measured loadout, and part of BASELINE_KEY. On an EQUIPMENT sweep this is
+            # empty on every row and the key behaves exactly as it did before it existed.
+            "skill_set_key",
             "rune_count",
             "rune_set_key",
             F.array_join("rune_keys", ", ").alias("runes"),
@@ -372,8 +399,7 @@ def skill_contribution(fact: DataFrame) -> DataFrame:
             *BASELINE_KEY, "rune_set_key", F.lit(None).cast("double").alias("dps_delta")
         ).limit(0)
 
-    base_key = [k for k in BASELINE_KEY if k not in {"provenance", "derived_skill", "derived_skill_level"}]
-    join_key = base_key + ["rune_set_key"]
+    join_key = CONTRAST_KEY + ["rune_set_key"]
 
     baseline = fact.where(
         (F.col("provenance") == "measured") & (F.col("skill_count") == 0)
@@ -581,12 +607,17 @@ def run_diff(fact_a: DataFrame, fact_b: DataFrame) -> DataFrame:
     which is exactly the caveat an inner join deletes.
     """
     key = ["fingerprint", "target_role", "target_armor", "provenance", "derived_skill", "derived_skill_level"]
+    # What the row IS, as opposed to what it measured. Carried from both sides and
+    # coalesced below, because this is a FULL OUTER join: taking them from the left alone
+    # left every `only_b` row with a null role, weapon and rune set -- 4,312,263 of them on
+    # the 1-vs-7 diff, every one an unidentifiable "run B added something". The overlap
+    # classes are the point of this mart, so the class that exists only on one side has to
+    # be the one that still describes itself.
+    descriptors = ["role", "weapon_key", "rune_set_key", "skill_set_key"]
     left = fact_a.select(
         *key,
+        *descriptors,
         F.col("run_id").alias("run_a"),
-        F.col("role"),
-        F.col("weapon_key"),
-        F.col("rune_set_key"),
         F.col("dps_sustained").alias("dps_a"),
         F.col("ttk_s").alias("ttk_a"),
         F.col("dmg_per_hit").alias("dmg_a"),
@@ -594,6 +625,7 @@ def run_diff(fact_a: DataFrame, fact_b: DataFrame) -> DataFrame:
     )
     right = fact_b.select(
         *key,
+        *descriptors,
         F.col("run_id").alias("run_b"),
         F.col("dps_sustained").alias("dps_b"),
         F.col("ttk_s").alias("ttk_b"),
@@ -607,9 +639,7 @@ def run_diff(fact_a: DataFrame, fact_b: DataFrame) -> DataFrame:
             *[F.coalesce(left[k], right[k]).alias(k) for k in key],
             left["run_a"],
             right["run_b"],
-            left["role"],
-            left["weapon_key"],
-            left["rune_set_key"],
+            *[F.coalesce(left[k], right[k]).alias(k) for k in descriptors],
             left["dps_a"],
             right["dps_b"],
             left["ttk_a"],

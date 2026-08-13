@@ -144,9 +144,15 @@ def _publish(cfg: Config, produced: dict[str, DataFrame], run_id: int) -> None:
 # reads grafana_config rather than the warehouse -- it is refreshed here because a config
 # change and a sweep publish are the two things that can invalidate it, and only one of them
 # has a hook.
+# sim_gold_skill_modifier is last and is the odd one out: it reads sim_trace and sim_build
+# directly rather than a published mart, because the hit trace has no path through
+# bronze/silver/gold at all -- it lands in bronze and stops. Refreshing it here is what gives
+# that table its only consumer, and the view guards its own cost by restricting the scan to
+# runs whose builds actually carried a skill.
 _MATERIALIZED_VIEWS = ("sim_gold_tier_grid", "sim_gold_tier_extreme",
                        "sim_gold_weapon_damage", "gold_skill_damage",
-                       "sim_gold_skill_damage", "gold_skill_coverage")
+                       "sim_gold_skill_damage", "gold_skill_coverage",
+                       "sim_gold_skill_modifier")
 
 
 def _refresh_views(cfg: Config) -> None:

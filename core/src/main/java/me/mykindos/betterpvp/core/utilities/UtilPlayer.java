@@ -126,7 +126,20 @@ public class UtilPlayer {
                     if (!(worldPlayer instanceof Player target)) return false;
                     return !target.getGameMode().isInvulnerable();
                 })
-                .forEach(ent -> players.add(new KeyValue<>((Player) ent, entityProperty)));
+                // Hostile until a listener says otherwise. The pre-stamp used to be the property the
+                // CALLER asked for, which meant an unclassified player came back as whatever the
+                // question assumed: getNearbyAllies saw everyone as friendly and getNearbyEnemies saw
+                // the same players as hostile, from one world state, with no error. That is the exact
+                // inverse of what every real classifier does -- ClansSkillListener sets ENEMY then
+                // promotes allies, TeamDamageListener sets FRIENDLY for same-team and ENEMY for the
+                // rest -- so the fallback contradicted the rule it was standing in for.
+                //
+                // Defaulting to ENEMY makes a missing listener fail CLOSED: ally-targeted buffs reach
+                // nobody rather than reaching opponents. Anything that must be friendly has a listener
+                // to say so, and where one runs it overwrites every pair, so this changes nothing in a
+                // classified context. It matters exactly where nothing classifies -- a non-team game,
+                // or the balance simulation, which loads neither Clans nor game.
+                .forEach(ent -> players.add(new KeyValue<>((Player) ent, EntityProperty.ENEMY)));
 
         FetchNearbyEntityEvent<Player> fetchNearbyEntityEvent = new FetchNearbyEntityEvent<>(player, location, players, entityProperty);
         UtilServer.callEvent(fetchNearbyEntityEvent);

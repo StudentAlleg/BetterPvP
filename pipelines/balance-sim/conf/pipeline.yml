@@ -16,6 +16,25 @@ source:
   # connection into a single Spark task.
   read_partitions: 32
   fetch_size: 20000
+  # Partitioning by ROW COUNT alone is wrong for a wide table, and run 7 is the proof:
+  # sim_duel_diagnostic carries 3,619,230 rows whose `detail` JSON alone is 4,071 MB --
+  # roughly 1.1 kB a row against sim_result's narrow ones. The default plan gave it 32
+  # partitions of ~113k rows, so each of the 4 concurrent local tasks tried to buffer
+  # ~124 MB of JSON, and the read died with `PSQLException: Ran out of memory retrieving
+  # query results` inside a 6 GB driver heap. Run 1 survived the same code path only
+  # because its diagnostics are 173 MB.
+  #
+  # So the budget is per table, in rows, sized by how wide that table's rows are, and the
+  # partition cap is lifted for the tables that need it. More partitions is not more
+  # concurrency here -- local[4] still runs 4 at a time -- it is a smaller working set per
+  # task, which is the thing that was overflowing.
+  rows_per_partition: 50000
+  rows_per_partition_by_table:
+    sim_duel_diagnostic: 10000
+    sim_trace: 25000
+  read_partitions_by_table:
+    sim_duel_diagnostic: 256
+    sim_trace: 128
 
 lake:
   # Bronze/silver/gold parquet. Relative paths resolve against the project root.

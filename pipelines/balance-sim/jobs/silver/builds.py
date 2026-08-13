@@ -73,6 +73,29 @@ def build(spark: SparkSession, cfg: Config, auditor: Auditor, run_id: int) -> Da
             F.size("alias_keys").alias("weapon_alias_count"),
             F.col("skill_slots"),
             F.size("skill_slots").alias("skill_count"),
+            # A stable identity for a skill *loadout*, order-independent, the same shape
+            # `rune_set_key` has and for the same reason: it is what makes two rows
+            # comparable. Empty rather than null on a skill-less build, because that is the
+            # row skill deltas are measured against and it has to join like a value.
+            #
+            # The level is part of the identity. A SKILLS sweep varies the same skill across
+            # levels 1..5, and those are five different builds -- collapsing them would
+            # reintroduce, one level down, exactly the fan-out this key exists to stop.
+            #
+            # `allocated_level` rather than `effective_level`: allocation is the axis the
+            # sweep varies, and the difference between the two is the booster, which is
+            # already part of `weapon_profile_key`. Keying on effective would fold the
+            # booster into two independent columns and make a build that differs only by
+            # booster look like a build that differs by skill level.
+            F.array_join(
+                F.array_sort(
+                    F.transform(
+                        F.col("skill_slots"),
+                        lambda s: F.concat_ws(":", s["skill"], s["allocated_level"].cast("string")),
+                    )
+                ),
+                "+",
+            ).alias("skill_set_key"),
             F.col("_pipeline_run_id"),
         )
         # A build's stat identity, independent of which registry key stood in for it.

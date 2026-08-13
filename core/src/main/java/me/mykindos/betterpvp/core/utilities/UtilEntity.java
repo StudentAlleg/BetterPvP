@@ -246,7 +246,13 @@ public class UtilEntity {
                     }
                     return !(livingEntity instanceof ArmorStand);
                 })
-                .forEach(ent -> livingEntities.add(new KeyValue<>(ent, entityProperty)));
+                // Hostile until a listener says otherwise -- see the note on
+                // UtilPlayer.getNearbyPlayers. Same defect, same fix: the pre-stamp was the caller's
+                // requested property, so an unclassified entity answered "yes" to whichever question
+                // was asked of it. Mobs that should read as friendly have classifiers of their own
+                // (FactionRelationListener, PetListener), so defaulting to ENEMY loses nothing and
+                // makes a missing one fail closed.
+                .forEach(ent -> livingEntities.add(new KeyValue<>(ent, EntityProperty.ENEMY)));
 
         FetchNearbyEntityEvent<LivingEntity> fetchNearbyEntityEvent = new FetchNearbyEntityEvent<>(source, location, livingEntities, entityProperty);
         UtilServer.callEvent(fetchNearbyEntityEvent);

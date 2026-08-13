@@ -77,6 +77,11 @@ CREATE TABLE IF NOT EXISTS sim_gold_matchup
     booster                     BOOLEAN,
     points_spent                INTEGER,
     skill_count                 INTEGER,
+    -- The MEASURED skill loadout, 'skill:level' pairs sorted and joined by '+', empty on a
+    -- skill-less build. Part of the baseline key: on a SKILLS sweep the bare builds differ
+    -- only by this, so without it they all collapse onto one baseline and every delta join
+    -- fans out. Distinct from derived_skill, which names the skill a row was MODELLED for.
+    skill_set_key               TEXT,
     rune_count                  INTEGER,
     rune_set_key                TEXT,
     runes                       TEXT,
@@ -209,6 +214,9 @@ CREATE TABLE IF NOT EXISTS sim_gold_rune_contribution
     target_role           TEXT,
     target_armor          TEXT,
     provenance            TEXT,
+    -- Part of the baseline key: this rune's delta was measured against the bare row
+    -- carrying the SAME skill loadout, not against a bare row carrying any loadout.
+    skill_set_key         TEXT,
     derived_skill         TEXT,
     derived_skill_level   INTEGER,
     weapon_key            TEXT,
@@ -264,6 +272,8 @@ CREATE TABLE IF NOT EXISTS sim_gold_rune_set_synergy
     target_role              TEXT,
     target_armor             TEXT,
     provenance               TEXT,
+    -- Part of the baseline key; see sim_gold_rune_contribution.
+    skill_set_key            TEXT,
     derived_skill            TEXT,
     derived_skill_level      INTEGER,
     weapon_key               TEXT,
@@ -345,9 +355,12 @@ CREATE TABLE IF NOT EXISTS sim_gold_run_diff
     derived_skill_level   INTEGER,
     run_a                 BIGINT,
     run_b                 BIGINT,
+    -- What the row IS, coalesced across both sides of the full outer join. Taking these
+    -- from run A alone left every only_b row unidentifiable.
     role                  TEXT,
     weapon_key            TEXT,
     rune_set_key          TEXT,
+    skill_set_key         TEXT,
     dps_a                 DOUBLE PRECISION,
     dps_b                 DOUBLE PRECISION,
     ttk_a                 DOUBLE PRECISION,
@@ -902,8 +915,16 @@ CREATE INDEX IF NOT EXISTS idx_gold_skill_damage_x_scan
 DROP MATERIALIZED VIEW IF EXISTS gold_skill_coverage;
 CREATE MATERIALIZED VIEW gold_skill_coverage AS
 WITH measured AS (SELECT b.role,
-                         a ->> 'skill'                            AS skill,
+                         -- NORMALISED to the config key's namespace, and this is the whole
+                         -- reason the view reported "never measured" for every skill of run
+                         -- 12: sim_build stores a skill's DISPLAY name ('Block Toss') and
+                         -- grafana_config stores its squashed key ('blocktoss'), so the join
+                         -- below could never match and the view could only ever say no.
+                         -- Undetectable until a run finally measured a skill.
+                         lower(regexp_replace(a ->> 'skill', '[^a-zA-Z0-9]', '', 'g')) AS skill,
                          (a ->> 'allocated_level')::int           AS skill_level,
+                         -- After the grouped columns: GROUP BY below is positional.
+                         MIN(a ->> 'skill')                       AS skill_display,
                          COUNT(DISTINCT b.run_id)                 AS runs,
                          COUNT(*)                                 AS builds,
                          MAX((a ->> 'effective_level')::int)      AS effective_level_max
@@ -913,6 +934,7 @@ WITH measured AS (SELECT b.role,
      -- Rolled up to the skill so the per-level rows above can be counted rather
      -- than joined twice.
      measured_skill AS (SELECT role, skill,
+                               MIN(skill_display) AS skill_display,
                                COUNT(*)          AS levels_measured,
                                SUM(runs)         AS run_rows,
                                SUM(builds)       AS builds,
@@ -980,24 +1002,31 @@ WITH measured AS (SELECT b.role,
                   WHERE NOT EXISTS (SELECT 1 FROM flat f
                                     WHERE f.realm = p.realm AND f.role = p.role
                                       AND f.skill = p.skill))
-SELECT d.realm,
-       d.role,
-       d.skill,
-       d.delivery,
-       d.scaling,
+SELECT COALESCE(d.realm, (SELECT MIN(realm) FROM grafana_config))     AS realm,
+       COALESCE(d.role, m.role)                                      AS role,
+       COALESCE(m.skill_display, d.skill)                            AS skill,
+       COALESCE(d.delivery, 'measured only')                         AS delivery,
+       COALESCE(d.scaling, 'no config damage key')                   AS scaling,
        d.damage_min,
        d.damage_max,
-       d.levels_declared,
+       COALESCE(d.levels_declared, 0)                                AS levels_declared,
        COALESCE(m.levels_measured, 0)                                       AS levels_measured,
        COALESCE(m.builds, 0)                                                AS builds,
        m.level_min,
        m.level_max,
-       ROUND(100.0 * COALESCE(m.levels_measured, 0) / d.levels_declared, 1) AS coverage_pct,
+       CASE WHEN COALESCE(d.levels_declared, 0) = 0 THEN NULL
+            ELSE ROUND(100.0 * COALESCE(m.levels_measured, 0) / d.levels_declared, 1)
+            END                                                              AS coverage_pct,
        -- A percentage skill with no measurement is a harder gap than a flat one with no
        -- measurement: the flat skill at least has a config number the dashboard can model,
        -- while this one has nothing at all behind it. Given its own status so the two do not
        -- read as the same backlog item.
-       CASE WHEN COALESCE(m.levels_measured, 0) > 0
+       -- 'measured, undeclared' is its own status rather than folded into 'measured':
+       -- config has no damage key for the skill, so nothing about it can be modelled and the
+       -- measured rows are the ONLY evidence there is. That is a different reading from a
+       -- skill where config and the sweep agree.
+       CASE WHEN d.skill IS NULL                                  THEN 'measured, undeclared'
+            WHEN COALESCE(m.levels_measured, 0) > 0
                  AND m.levels_measured >= d.levels_declared        THEN 'measured'
             WHEN COALESCE(m.levels_measured, 0) > 0                THEN 'partial'
             WHEN d.scaling = 'config-hint: percent'                THEN 'unverified scaling'
@@ -1007,9 +1036,247 @@ SELECT d.realm,
        -- and the first term is the only one this view knows -- the rest is the
        -- multiplier the dashboard's own note supplies. Kept as a level count so
        -- the arithmetic stays visible rather than baked into a wrong constant.
-       d.levels_declared - COALESCE(m.levels_measured, 0)                    AS levels_to_sweep
+       GREATEST(COALESCE(d.levels_declared, 0) - COALESCE(m.levels_measured, 0), 0)
+                                                                            AS levels_to_sweep
 FROM declared d
-         LEFT JOIN measured_skill m ON m.role = d.role AND m.skill = d.skill;
+         FULL JOIN measured_skill m ON m.role = d.role AND m.skill = d.skill;
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_gold_skill_coverage_key
     ON gold_skill_coverage (realm, role, skill);
+
+
+-- ---------------------------------------------------------------------------
+-- sim_gold_skill_modifier -- what a skill actually did to a hit, read rather than inferred.
+--
+-- The view the whole modifier-capture effort exists to serve, and the first consumer
+-- sim_trace has ever had. Every other damage figure in this warehouse is an OUTCOME --
+-- dmg_per_hit, dps, ttk -- and none of them say WHY. This one reads the operand the game
+-- applied, from the stack recorded on the hit itself.
+--
+-- Why it had to be measured. Inferring a skill's scaling from its config keys was tried and
+-- scored: against the eleven skills that really construct a SkillDamageModifier.Multiplier,
+-- config-key inference gets precision 1/5 and recall 1/11. Run 12 shows why it could never
+-- have worked -- Fortify and Blood Barrier are REDUCTIVE multipliers, which no "does the key
+-- look like a percent" rule can see; Overwhelm applies 185 distinct operands over one sweep,
+-- so it is neither flat nor percent; and Combo Attack's operand is a function of how many
+-- times the holder has already hit, not of (skill, level) at all.
+--
+-- Attribution is sound only where the build fills at most one skill slot, which is exactly
+-- what the SKILLS scope enumerates. A build carrying six skills produces six candidate
+-- explanations for the same hit and this view would have to guess between them, so those
+-- builds are excluded rather than approximated.
+--
+-- Scope guard. sim_trace is the largest table in the system -- a full EQUIPMENT sweep is tens
+-- of millions of rows, all of them from builds with no skills at all. `skill_runs` restricts
+-- the scan to runs that actually measured a skill, so this view costs what run 12 costs
+-- rather than what the archive costs.
+DROP MATERIALIZED VIEW IF EXISTS sim_gold_skill_modifier;
+CREATE MATERIALIZED VIEW sim_gold_skill_modifier AS
+WITH skill_runs AS (
+    -- Runs where at least one build carried a skill. Everything else in sim_trace is an
+    -- equipment sweep and has nothing to attribute.
+    SELECT DISTINCT run_id
+    FROM sim_build
+    WHERE jsonb_array_length(skills) > 0
+),
+build_skill AS (
+    -- The one filled slot, or the skill-less baseline. Baselines are kept rather than
+    -- filtered: they are what shows that a rune or an effect applies with no skill present,
+    -- which is the comparison every skill row is read against.
+    SELECT b.id                                        AS build_id,
+           b.run_id,
+           b.role,
+           b.weapon,
+           b.booster,
+           COALESCE(b.skills -> 0 ->> 'skill', '(no skill)')            AS skill_name,
+           COALESCE((b.skills -> 0 ->> 'allocated_level')::int, 0)      AS skill_level,
+           COALESCE((b.skills -> 0 ->> 'effective_level')::int, 0)      AS effective_level
+    FROM sim_build b
+    JOIN skill_runs USING (run_id)
+    WHERE jsonb_array_length(b.skills) <= 1
+),
+applied AS (
+    -- One row per (hit, modifier). Attacker only: under MUTUAL the defender lands hits too,
+    -- and those carry the DEFENDER's modifiers, which have nothing to do with the build being
+    -- measured. Under ONE_WAY the filter is a no-op.
+    SELECT t.run_id,
+           t.build_id,
+           t.target_role,
+           t.target_armor,
+           m ->> 'source'             AS modifier_source,
+           m ->> 'operator'           AS operator,
+           m ->> 'type'               AS modifier_type,
+           (m ->> 'reductive')::bool  AS reductive,
+           (m ->> 'operand')::numeric AS operand
+    FROM sim_trace t
+    JOIN skill_runs USING (run_id)
+    CROSS JOIN LATERAL jsonb_array_elements(t.modifiers) m
+    WHERE t.modifiers IS NOT NULL
+      AND t.actor = 'attacker'
+),
+agg AS (
+    SELECT s.run_id,
+           s.role,
+           s.skill_name,
+           s.skill_level,
+           -- '(none)' rather than NULL: these columns are the view's natural key, and the
+           -- unique index REFRESH CONCURRENTLY needs cannot be built on nullable grain.
+           COALESCE(a.modifier_source, '(none)')  AS modifier_source,
+           COALESCE(a.operator, '(none)')         AS operator,
+           COALESCE(a.modifier_type, '(none)')    AS modifier_type,
+           COALESCE(a.reductive, false)           AS reductive,
+           -- COUNT of the operand, not of the row: a silent skill must report 0 hits, and
+           -- COUNT(*) over a left join would report 1.
+           COUNT(a.operand)                      AS hits,
+           COUNT(DISTINCT s.build_id)            AS builds,
+           COUNT(DISTINCT a.target_role)         AS targets,
+           COUNT(DISTINCT a.operand)             AS operand_values,
+           MIN(a.operand)                        AS operand_min,
+           MAX(a.operand)                        AS operand_max,
+           AVG(a.operand)                        AS operand_avg,
+           -- The typical value, which is what a reader wants for a modifier that is constant
+           -- and is the honest middle for one that is not.
+           percentile_cont(0.5) WITHIN GROUP (ORDER BY a.operand) AS operand_median
+    -- LEFT, so a skill the sweep equipped and that never touched the damage pipeline still
+    -- gets a row. That absence is a finding, not a gap: 42 of run 12's 51 skills produced no
+    -- damage modifier at all, and a view that only listed the nine that did would make the
+    -- other forty-two look unmeasured rather than measured-and-silent.
+    FROM build_skill s
+    LEFT JOIN applied a ON a.build_id = s.build_id
+    GROUP BY 1, 2, 3, 4, 5, 6, 7, 8
+)
+SELECT agg.*,
+       -- The classification config inference could not make.
+       --
+       -- RAMPING first, because it is the one that invalidates the others: a modifier taking
+       -- several operand values at a FIXED level is not a property of (skill, level), so
+       -- calling it flat or percent would be wrong however the operand is distributed.
+       -- Deliberately partitioned WITHOUT `reductive`, so Combo Attack -- which records 0.0 on
+       -- the first hit of a chain and 1..4 afterwards -- classifies as one ramping modifier
+       -- rather than as a flat one and a ramping one.
+       CASE
+           WHEN MAX(agg.operand_values) OVER w > 1 THEN 'ramping'
+           WHEN agg.operator = 'MULTIPLIER'        THEN 'percent'
+           ELSE 'flat'
+           END AS scaling_class,
+       -- Whether allocating another level actually changes the operand. A skill whose bars do
+       -- not move here is one whose levels buy nothing the damage pipeline can see.
+       (MIN(agg.operand_min) OVER w) IS DISTINCT FROM (MAX(agg.operand_max) OVER w)
+           AS scales_with_level,
+       MIN(agg.operand_min) OVER w AS operand_min_all_levels,
+       MAX(agg.operand_max) OVER w AS operand_max_all_levels,
+       -- Whether the modifier is the build's own skill or something else that rode the same
+       -- hit -- a rune, a potion effect, the weapon. Both are worth seeing: a skill row with
+       -- no self-sourced modifier is a skill that never touched the damage.
+       (agg.modifier_source = agg.skill_name) AS is_own_skill
+FROM agg
+WINDOW w AS (PARTITION BY agg.run_id, agg.skill_name, agg.modifier_source,
+                          agg.operator, agg.modifier_type);
+
+-- REFRESH CONCURRENTLY needs this, and the grain is the natural key.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_gold_skill_modifier_key
+    ON sim_gold_skill_modifier (run_id, role, skill_name, skill_level,
+                                modifier_source, operator, modifier_type, reductive);
+CREATE INDEX IF NOT EXISTS idx_gold_skill_modifier_scan
+    ON sim_gold_skill_modifier (run_id, scaling_class, skill_name);
+
+COMMENT ON MATERIALIZED VIEW sim_gold_skill_modifier IS
+    'Measured damage modifiers per skill and level, read from sim_trace.modifiers rather than '
+        'inferred from config. scaling_class is flat | percent | ramping; ramping means the '
+        'operand varies at a fixed level, so it is not a property of (skill, level). '
+        'Attribution is only sound for builds filling at most one skill slot.';
+
+
+-- ---------------------------------------------------------------------------
+-- sim_gold_run_health -- every run the pipeline has ATTEMPTED, and how it went.
+--
+-- Exists because of a blind spot that hid a real failure. Every sim_* dashboard picks its
+-- run from `sim_gold_run`, which is a PUBLISHED mart: a row lands there only if the gold
+-- layer completed. But `publish_audit` runs in a `finally`, so a run whose gold layer was
+-- halted by a failing expectation still writes its data_quality rows -- it just never
+-- becomes selectable. The run picker therefore excludes precisely the runs someone needs
+-- to look at, and the data-quality panel is unreachable for exactly the runs that failed.
+--
+-- Run 12 is the case in point: 48 expectation rows including the `error` that stopped it,
+-- and no entry in `sim_gold_run` at all.
+--
+-- Deliberately a PLAIN view, not materialized. The whole value is that a run which failed
+-- ten seconds ago is visible now; a materialized view would need the refresh that the
+-- failure just prevented from running.
+--
+-- Driven from sim_gold_data_quality rather than sim_run, because the question is "what has
+-- the PIPELINE seen", not "what has the simulator produced". A sweep nobody has processed
+-- has no health to report.
+CREATE OR REPLACE VIEW sim_gold_run_health AS
+WITH latest AS (
+    -- The current result of each individual check, not of each invocation. A retried run
+    -- writes a second set of expectation rows under a new pipeline_run_id, and counting
+    -- both would double every total and let a fixed failure keep showing as a failure.
+    --
+    -- The grain is (layer, dataset, check_name) rather than the whole invocation, because
+    -- not every invocation runs every check. `jobs.cli diff` writes its audit rows under
+    -- run_id = run_b -- layer 'gold', dataset 'run_diff' -- so a diff is the most recent
+    -- invocation touching that run without having re-run anything else. Keying on the
+    -- invocation let those two rows supersede the full pipeline's, and run 7 reported
+    -- "2 checks" when it had run 60.
+    --
+    -- Consequence worth knowing: a check that is deleted from the pipeline keeps its last
+    -- recorded result here until the run is reprocessed. Stale beats absent -- the
+    -- alternative silently drops history.
+    SELECT DISTINCT ON (run_id, layer, dataset, check_name)
+           run_id, realm, layer, dataset, check_name, severity, passed, checked_at
+    FROM sim_gold_data_quality
+    ORDER BY run_id, layer, dataset, check_name, checked_at DESC
+),
+checks AS (
+    SELECT q.run_id,
+           q.realm,
+           MAX(q.checked_at)                                                  AS last_checked_at,
+           COUNT(*)                                                           AS checks_total,
+           COUNT(*) FILTER (WHERE NOT q.passed)                               AS checks_failed,
+           COUNT(*) FILTER (WHERE NOT q.passed AND q.severity = 'error')      AS errors,
+           COUNT(*) FILTER (WHERE NOT q.passed AND q.severity = 'warn')       AS warnings,
+           -- The failing layer is the useful triage field: silver warnings are routine,
+           -- a gold error means nothing published.
+           MIN(q.layer) FILTER (WHERE NOT q.passed AND q.severity = 'error')  AS blocked_at_layer,
+           string_agg(DISTINCT q.check_name, ', ')
+                   FILTER (WHERE NOT q.passed AND q.severity = 'error')       AS blocking_checks,
+           string_agg(DISTINCT q.check_name, ', ')
+                   FILTER (WHERE NOT q.passed AND q.severity = 'warn')        AS warning_checks
+    FROM latest q
+    GROUP BY 1, 2
+)
+SELECT c.run_id,
+       c.realm,
+       r.started_at,
+       r.finished_at,
+       r.status                                    AS sim_status,
+       r.scenario ->> 'scope'                      AS scope,
+       r.scenario ->> 'scenario'                   AS scenario,
+       c.last_checked_at,
+       c.checks_total,
+       c.checks_failed,
+       c.errors,
+       c.warnings,
+       c.blocked_at_layer,
+       c.blocking_checks,
+       c.warning_checks,
+       -- Whether the run made it into the marts every other dashboard reads. This is the
+       -- column that explains an empty panel: `false` here means the panel is not broken,
+       -- the data was never published.
+       (g.run_id IS NOT NULL)                      AS published,
+       CASE
+           WHEN c.errors > 0   THEN 'blocked'
+           WHEN g.run_id IS NULL THEN 'unpublished'
+           WHEN c.warnings > 0 THEN 'warnings'
+           ELSE 'clean'
+           END                                     AS health
+FROM checks c
+         LEFT JOIN sim_run r ON r.id = c.run_id
+         LEFT JOIN sim_gold_run g ON g.run_id = c.run_id;
+
+COMMENT ON VIEW sim_gold_run_health IS
+    'Every run the pipeline has attempted, with its expectation results and whether it '
+        'published. Plain view, not materialized: a run blocked by a failing gold '
+        'expectation must be visible without the refresh that failure prevented. health is '
+        'blocked | unpublished | warnings | clean.';

@@ -46,6 +46,7 @@ FACT_SCHEMA = StructType(
         StructField("rune_count", IntegerType()),
         StructField("rune_set_key", StringType()),
         StructField("skill_count", IntegerType()),
+        StructField("skill_set_key", StringType()),
         StructField("dmg_per_hit", DoubleType()),
         StructField("dps_sustained", DoubleType()),
         StructField("dps_burst", DoubleType()),
@@ -79,6 +80,7 @@ def _fact_row(**overrides):
         rune_count=0,
         rune_set_key="",
         skill_count=0,
+        skill_set_key="",
         dmg_per_hit=7.0,
         dps_sustained=21.875,
         dps_burst=21.0,
@@ -171,6 +173,91 @@ def test_derived_rows_compare_against_the_derived_baseline(frame):
     assert set(by_provenance) == {"measured", "derived"}
     assert by_provenance["derived"]["base_dps"] == pytest.approx(28.333, abs=1e-3)
     assert by_provenance["measured"]["base_dps"] == pytest.approx(21.875)
+
+
+def test_a_rune_is_measured_against_the_baseline_carrying_the_same_skill(frame):
+    """The regression test for the failure that stopped run 12 in gold.
+
+    On a SKILLS sweep the bare builds differ *only* by the skill they carry. Without
+    `skill_set_key` in the baseline key they all collapse onto one baseline, and the
+    join fans out: one rune row matches every skill's bare row, so a single rune is
+    reported once per skill and each delta is measured against the wrong build.
+
+    Two skills, each with a bare row and a one-rune row, and the rune is worth exactly
+    +1 dmg/hit under both. The right answer is two contribution rows, each against its
+    own baseline. The pre-fix behaviour was four rows, two of them nonsense.
+    """
+    frailty_base = _fact_row(
+        result_id=10, build_id=10, skill_count=1, skill_set_key="Frailty:3",
+        dmg_per_hit=9.0, dps_sustained=28.125, ttk_s=1.4, hits_to_kill=4.0,
+    )
+    frailty_rune = _fact_row(
+        result_id=11, build_id=11, skill_count=1, skill_set_key="Frailty:3",
+        rune_count=1, rune_set_key="core:brutality",
+        dmg_per_hit=10.0, dps_sustained=31.25, ttk_s=1.3, hits_to_kill=4.0,
+    )
+    sacrifice_base = _fact_row(
+        result_id=20, build_id=20, skill_count=1, skill_set_key="Sacrifice:3",
+        dmg_per_hit=7.5, dps_sustained=23.4375, ttk_s=1.5, hits_to_kill=5.0,
+    )
+    sacrifice_rune = _fact_row(
+        result_id=21, build_id=21, skill_count=1, skill_set_key="Sacrifice:3",
+        rune_count=1, rune_set_key="core:brutality",
+        dmg_per_hit=8.5, dps_sustained=26.5625, ttk_s=1.4, hits_to_kill=5.0,
+    )
+    fact = frame([frailty_base, frailty_rune, sacrifice_base, sacrifice_rune], FACT_SCHEMA)
+
+    rows = {r["skill_set_key"]: r for r in marts.rune_contribution(fact).collect()}
+    assert len(rows) == 2, "the rune fanned out across skill loadouts"
+    assert rows["Frailty:3"]["base_dps"] == pytest.approx(28.125)
+    assert rows["Sacrifice:3"]["base_dps"] == pytest.approx(23.4375)
+    # Same rune, same marginal value, measured correctly under both skills.
+    for row in rows.values():
+        assert row["dmg_per_hit_delta"] == pytest.approx(1.0)
+
+
+def test_a_skill_is_still_measured_against_a_skill_less_baseline(frame):
+    """The other half of the same change, and the one it could easily have broken.
+
+    `skill_contribution` compares a skilled row to an *unskilled* one, so
+    `skill_set_key` must be excluded from its join key. Had it been left in, a
+    'Frailty:3' row would look for a skill-less baseline that also reads 'Frailty:3',
+    match nothing, and the mart would come out empty rather than wrong.
+    """
+    skilled = _fact_row(
+        result_id=30, build_id=30, skill_count=1, skill_set_key="Frailty:3",
+        dmg_per_hit=9.0, dps_sustained=28.125, ttk_s=1.4, hits_to_kill=4.0,
+    )
+    fact = frame([BASELINE, skilled], FACT_SCHEMA)
+
+    rows = marts.skill_contribution(fact).collect()
+    assert len(rows) == 1
+    assert rows[0]["base_dps"] == pytest.approx(21.875), "did not find the bare baseline"
+    assert rows[0]["dps_delta"] == pytest.approx(28.125 - 21.875, abs=1e-3)
+
+
+def test_run_diff_identifies_rows_present_only_in_run_b(frame):
+    """A full outer join taking the descriptors from the left side alone leaves every
+    only_b row with a null role, weapon and skill set. On the 1-vs-7 diff that was
+    4,312,263 rows saying only that run B added *something*."""
+    from pyspark.sql import functions as F
+
+    only_in_b = _fact_row(
+        result_id=40, build_id=40, run_id=2, skill_count=1, skill_set_key="Frailty:3",
+        rune_count=1, rune_set_key="core:brutality", weapon_key="champions:thornfang",
+    )
+    # fingerprint is not in the narrowed schema; stand it in from the weapon key, as the
+    # overlap test above does. The two rows must not share one, or nothing is only_b.
+    a = frame([BASELINE], FACT_SCHEMA).withColumn("fingerprint", F.col("weapon_key"))
+    b = frame([only_in_b], FACT_SCHEMA).withColumn("fingerprint", F.col("weapon_key"))
+    diff = marts.run_diff(a, b)
+
+    rows = {r["overlap"]: r for r in diff.collect()}
+    assert set(rows) == {"only_a", "only_b"}
+    added = rows["only_b"]
+    assert added["role"] == "ASSASSIN"
+    assert added["weapon_key"] == "champions:thornfang"
+    assert added["skill_set_key"] == "Frailty:3"
 
 
 def test_synergy_counts_each_set_member_exactly_once(frame):
