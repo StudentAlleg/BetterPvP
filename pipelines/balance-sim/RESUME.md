@@ -22,27 +22,42 @@ export PATH="$HADOOP_HOME/bin:$PATH"
 cd pipelines/balance-sim
 ```
 
-## 0. Was anything still running when you stopped?
+## 0. What the last chain actually finished
 
-A chain was in flight at wrap-up: runs 1, 7 and 13 processed (7 failed, see below), then
-`diff --run-a 1 --run-b 7`, then `diff --run-a 12 --run-b 13`. The diffs may or may not have
-finished.
+The whole chain ran to completion — nothing was left mid-write, and no process was still alive
+at the end:
 
-Both diff writes go through `_replace_slice` — `DELETE FROM sim_gold_run_diff WHERE diff_key =
-'A-B'` followed by an append — so an interrupted diff leaves that **one key** short of rows and
-touches nothing else. It is idempotent: re-running the same diff deletes the partial slice and
-rewrites it. Nothing needs repairing by hand.
-
-Check what actually landed:
-
-```sql
-SELECT diff_key, overlap, count(*) FROM sim_gold_run_diff GROUP BY 1, 2 ORDER BY 1, 2;
+```
+DONE all --run-id 1    exit=0   11:24:49
+DONE all --run-id 7    exit=1   11:30:40   <- OOM, see section 1
+DONE all --run-id 13   exit=0   11:43:41
+DONE diff 1-7          exit=0   12:03:29
+DONE diff 12-13        exit=0   12:04:35
+ALL FINISHED
 ```
 
-* `1-7` at 10,827,093 rows with 4,312,263 null-descriptor `only_b` rows is the **pre-fix**
-  version — re-run it.
-* `12-13` present at all is new. Expect near-total overlap, since runs 12 and 13 share a build
-  space; a large `only_a`/`only_b` there would mean something is wrong.
+**The diff contents were never verified** — Docker Desktop stopped before the check ran, so the
+counts below are expectations, not observations. Confirm them first:
+
+```sql
+SELECT diff_key, overlap, count(*) n,
+       count(*) FILTER (WHERE role IS NULL)          AS role_null,
+       count(*) FILTER (WHERE skill_set_key IS NULL) AS sk_null
+FROM sim_gold_run_diff GROUP BY 1, 2 ORDER BY 1, 2;
+```
+
+* **`1-7` still needs re-running after run 7 is reprocessed.** It succeeded against run 7's
+  *stale* gold parquet — the one with no `skill_set_key` — which Spark tolerated by reading the
+  column as NULL rather than failing. So the descriptor fix did apply (the 4,312,263 `only_b`
+  rows should now carry a real role, weapon and rune set) but every `skill_set_key` on run 7's
+  side is NULL. Re-run it once section 1 is done.
+* **`12-13` is new and should be sound** — both sides were reprocessed with the column. Expect
+  near-total overlap, since runs 12 and 13 share a build space; a large `only_a`/`only_b` there
+  would mean something is wrong.
+
+If a future diff *is* interrupted, the damage is bounded: `_replace_slice` does `DELETE FROM
+sim_gold_run_diff WHERE diff_key = 'A-B'` then appends, so it costs that one key and nothing
+else, and re-running the same diff repairs it. Nothing needs fixing by hand.
 
 ## 1. Re-run run 7 — the one thing that is unfinished
 
