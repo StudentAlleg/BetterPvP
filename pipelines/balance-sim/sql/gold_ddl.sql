@@ -1096,13 +1096,29 @@ build_skill AS (
     WHERE jsonb_array_length(b.skills) <= 1
 ),
 applied AS (
-    -- One row per (hit, modifier). Attacker only: under MUTUAL the defender lands hits too,
-    -- and those carry the DEFENDER's modifiers, which have nothing to do with the build being
-    -- measured. Under ONE_WAY the filter is a no-op.
+    -- One row per (hit, modifier). `actor` is CARRIED rather than filtered on, and that is the
+    -- whole point of running a MUTUAL sweep.
+    --
+    -- This used to read `WHERE t.actor = 'attacker'`, on the reasoning that a defender-dealt hit
+    -- carries the defender's modifiers and so says nothing about the build being measured. That
+    -- is false here, and measurably so: `sim_result.target_skills` is empty on all 250,920 rows
+    -- of BOTH run 12 and run 13, so the target carries no skills and every skill modifier on
+    -- every hit -- whoever swung -- belongs to the one build under test.
+    --
+    -- `sim_trace.actor` is written as `attackerId.equals(hit.damager()) ? ATTACKER : DEFENDER`,
+    -- so it names who DEALT the hit, and `build_id` is always the measured (attacking-side)
+    -- build. That makes the two cases mean something precise:
+    --
+    --   actor = 'attacker'  the holder dealt this hit    -> an OUTGOING effect
+    --   actor = 'defender'  the holder received this hit -> an INCOMING effect
+    --
+    -- Filtering to 'attacker' therefore did not remove noise, it removed the entire incoming
+    -- half of every defensive skill.
     SELECT t.run_id,
            t.build_id,
            t.target_role,
            t.target_armor,
+           t.actor,
            m ->> 'source'             AS modifier_source,
            m ->> 'operator'           AS operator,
            m ->> 'type'               AS modifier_type,
@@ -1112,7 +1128,6 @@ applied AS (
     JOIN skill_runs USING (run_id)
     CROSS JOIN LATERAL jsonb_array_elements(t.modifiers) m
     WHERE t.modifiers IS NOT NULL
-      AND t.actor = 'attacker'
 ),
 agg AS (
     SELECT s.run_id,
@@ -1128,6 +1143,10 @@ agg AS (
            -- COUNT of the operand, not of the row: a silent skill must report 0 hits, and
            -- COUNT(*) over a left join would report 1.
            COUNT(a.operand)                      AS hits,
+           -- The two halves `direction` is read from. Counted with FILTER rather than split into
+           -- separate rows so the grain -- and the unique index on it -- stays exactly as it was.
+           COUNT(a.operand) FILTER (WHERE a.actor = 'attacker') AS hits_outgoing,
+           COUNT(a.operand) FILTER (WHERE a.actor = 'defender') AS hits_incoming,
            COUNT(DISTINCT s.build_id)            AS builds,
            COUNT(DISTINCT a.target_role)         AS targets,
            COUNT(DISTINCT a.operand)             AS operand_values,
@@ -1159,6 +1178,25 @@ SELECT agg.*,
            WHEN agg.operator = 'MULTIPLIER'        THEN 'percent'
            ELSE 'flat'
            END AS scaling_class,
+       -- Which side of the damage a modifier acts on, MEASURED rather than inferred.
+       --
+       -- The obvious shortcut is to read it off `reductive` -- reductive means defence, so it
+       -- applies to incoming damage. Fortify disproves that: it reduces incoming AND outgoing
+       -- damage by design, so the same reductive operand belongs on both axes. A projection that
+       -- inferred direction from `reductive` would drop Fortify's outgoing half and overstate a
+       -- Fortify build's DPS by 10-30%.
+       --
+       -- ONE_WAY cannot answer the question. Only the measured build ever swings, so every row
+       -- has hits_incoming = 0 and 'outgoing' would be an artefact of the scenario rather than a
+       -- property of the skill. That case is named rather than guessed: a run with no incoming
+       -- hits AT ALL reports `outgoing (unverified)`, and the fix is a MUTUAL sweep.
+       CASE
+           WHEN agg.hits = 0                                              THEN NULL
+           WHEN agg.hits_outgoing > 0 AND agg.hits_incoming > 0           THEN 'symmetric'
+           WHEN agg.hits_incoming > 0                                     THEN 'incoming'
+           WHEN MAX(agg.hits_incoming) OVER (PARTITION BY agg.run_id) = 0 THEN 'outgoing (unverified)'
+           ELSE 'outgoing'
+           END AS direction,
        -- Whether allocating another level actually changes the operand. A skill whose bars do
        -- not move here is one whose levels buy nothing the damage pipeline can see.
        (MIN(agg.operand_min) OVER w) IS DISTINCT FROM (MAX(agg.operand_max) OVER w)
@@ -1183,8 +1221,11 @@ CREATE INDEX IF NOT EXISTS idx_gold_skill_modifier_scan
 COMMENT ON MATERIALIZED VIEW sim_gold_skill_modifier IS
     'Measured damage modifiers per skill and level, read from sim_trace.modifiers rather than '
         'inferred from config. scaling_class is flat | percent | ramping; ramping means the '
-        'operand varies at a fixed level, so it is not a property of (skill, level). '
-        'Attribution is only sound for builds filling at most one skill slot.';
+        'operand varies at a fixed level, so it is not a property of (skill, level). direction '
+        'is outgoing | incoming | symmetric, measured from which side dealt the hit -- it cannot '
+        'be inferred from reductive, because Fortify reduces both. A ONE_WAY run reports '
+        'outgoing (unverified) since it never observes an incoming hit. Attribution is only '
+        'sound for builds filling at most one skill slot.';
 
 
 -- ---------------------------------------------------------------------------
