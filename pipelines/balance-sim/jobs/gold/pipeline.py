@@ -159,20 +159,24 @@ def _publish(cfg: Config, produced: dict[str, DataFrame], run_id: int) -> None:
 # previous run's rows and publish a chart that silently disagrees with the permutation grain
 # it was exploded from.
 _MATERIALIZED_VIEWS = ("sim_gold_tier_grid", "sim_gold_tier_extreme",
+                       # The standing baseline comes FIRST, and that ordering is load-bearing
+                       # rather than tidy. sim_gold_weapon_damage now unions the baseline in
+                       # under a synthetic negative run_id (via sim_gold_baseline_matchup, a
+                       # plain view needing no refresh), so refreshing the damage views before
+                       # the baseline would publish this run's numbers against LAST refresh's
+                       # baseline -- the two halves of the same chart one run apart.
+                       #
+                       # The cell view spans EVERY completed run rather than the one being
+                       # published, so it is the one view here whose content changes even when
+                       # this run's own marts do not. The lane view reads the cell view.
+                       "sim_gold_baseline_cell", "sim_gold_baseline_lane",
                        "sim_gold_weapon_damage", "sim_gold_damage_point",
-                       # density reads damage_point; composition reads weapon_damage. Both
-                       # after their parents, for the reason above.
+                       # density and composition both read damage_point, after their parent.
                        "sim_gold_damage_density", "sim_gold_damage_composition",
                        "gold_skill_damage",
                        "sim_gold_skill_damage", "gold_skill_coverage",
                        "sim_gold_skill_modifier", "sim_gold_modifier_expectation",
-                       "sim_gold_ambient_modifier",
-                       # The standing baseline, and the lane summary built on top of it.
-                       # Refreshed last and in this order: the lane view reads the cell view,
-                       # and the cell view spans EVERY completed run rather than the one being
-                       # published, so it is the one view here whose content changes even when
-                       # this run's own marts do not.
-                       "sim_gold_baseline_cell", "sim_gold_baseline_lane")
+                       "sim_gold_ambient_modifier")
 
 
 def _refresh_views(cfg: Config) -> None:

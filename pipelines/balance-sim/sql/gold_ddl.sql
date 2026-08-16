@@ -596,6 +596,343 @@ CREATE INDEX IF NOT EXISTS idx_gold_tier_extreme_scan
 
 
 -- ---------------------------------------------------------------------------
+-- sim_gold_baseline_cell -- the standing baseline, as a UNION OF MEASUREMENTS
+-- rather than as a chosen run.
+--
+-- The question this answers is "what does the game look like right now", and the reason it
+-- is a view rather than a run id is that no single run has ever measured the whole game.
+-- Run 7 swept equipment across 241,290 builds and equipped no skills; runs 12-14 swept
+-- skills across at most 5 weapons. Any rule that picks ONE run as the baseline throws away
+-- whichever half it did not pick.
+--
+-- THE TRAP THIS EXISTS TO REMOVE. The engine's own baseline rule (SimResultRepository
+-- .findBaselineRun) is newest-COMPLETED-wins within a (realm, scope, scenario) lane. In the
+-- SKILLS/one_way lane that currently selects run 14 -- 17,568 cells, three weapons, two
+-- skills -- over run 12, which measured 250,920 cells across 51 skills. A delta sweep
+-- launched today would carry forward 0.4% of what has actually been measured and re-run the
+-- rest, and nothing in the logs would call that a mistake. Newest is not widest.
+--
+-- WHY SCOPE IS NOT IN THE KEY, which is the whole design change. `scope` describes what a
+-- sweep VARIED, not what a cell IS. A measurement of (build fingerprint, target) is that
+-- measurement whether the sweep that produced it was enumerating weapons or skills, so
+-- keying the baseline on scope keeps two runs apart that should compose. Dropping it is
+-- what lets runs 7, 12, 13 and 14 be one baseline instead of three.
+--
+-- WHY SCENARIO IS. A MUTUAL measurement is not a substitute for a ONE_WAY one -- the
+-- defender fights back, so the numbers mean different things. Runs 12 and 13 enumerate an
+-- IDENTICAL build space (250,920 cells each) and differ only in scenario; collapsing them
+-- would silently overwrite one with the other on every cell. Scenario stays in the key.
+--
+-- Rows without a config_scope_hash are excluded, which drops run 1 entirely (0 of its
+-- 4,343,220 rows have one). That is correct rather than unfortunate: the hash is what a
+-- delta run compares against to decide whether a cell is still valid, so a cell without one
+-- can never be carried forward and does not belong in a baseline.
+--
+-- THE AUTHORITATIVE DROP STACK FOR THE WHOLE DAMAGE CHAIN IS HERE, deepest-first, because
+-- the damage views now read the baseline rather than only sim_gold_matchup:
+--
+--   density -> composition -> damage_point -> skill_damage -> weapon_damage
+--           -> baseline_matchup -> baseline_run -> baseline_lane -> baseline_cell
+--
+-- Postgres refuses to drop a view something else depends on, so this order is what lets the
+-- file be re-run from the top. Do not add a drop for any of these anywhere else -- a second
+-- stack that disagrees with this one is how the file stopped being re-runnable before.
+DROP MATERIALIZED VIEW IF EXISTS sim_gold_damage_density;
+DROP MATERIALIZED VIEW IF EXISTS sim_gold_damage_composition;
+DROP MATERIALIZED VIEW IF EXISTS sim_gold_damage_point;
+DROP MATERIALIZED VIEW IF EXISTS sim_gold_skill_damage;
+DROP MATERIALIZED VIEW IF EXISTS sim_gold_weapon_damage;
+DROP VIEW IF EXISTS sim_gold_baseline_matchup;
+DROP VIEW IF EXISTS sim_gold_baseline_run;
+DROP MATERIALIZED VIEW IF EXISTS sim_gold_baseline_lane;
+DROP MATERIALIZED VIEW IF EXISTS sim_gold_baseline_cell;
+CREATE MATERIALIZED VIEW sim_gold_baseline_cell AS
+WITH ranked AS (
+    SELECT run.realm,
+           run.scenario ->> 'scenario'                       AS scenario,
+           run.scenario ->> 'scope'                          AS measured_scope,
+           b.fingerprint,
+           r.target_role,
+           r.target_armor,
+           -- TWO different runs, and conflating them is a bug waiting for the first delta
+           -- sweep. `supplied_by` is the run whose sim_result row won recency and is what a
+           -- carry would copy FROM. `measured_run_id` is the run whose duels originally
+           -- produced the number, which survives any number of carries via the source row's
+           -- own value -- exactly the COALESCE carryForwardResults writes. They are equal on
+           -- every row today only because no delta run has ever executed.
+           r.run_id                                          AS supplied_by_run_id,
+           COALESCE(r.measured_run_id, r.run_id)             AS measured_run_id,
+           run.started_at                                    AS supplied_at,
+           run.config_hash,
+           run.engine_version,
+           r.config_scope_hash,
+           b.role,
+           b.weapon                                          AS weapon_key,
+           -- Bronze stores runes and skills as jsonb; the '+'-joined set keys are a gold
+           -- construction and are not available this far upstream. Their text form is a
+           -- stable set identity here because builds.py emits both arrays sorted, and set
+           -- identity is all the lane view counts.
+           b.runes::text                                     AS rune_set_key,
+           NULLIF(b.skills::text, '{}')                      AS skill_set_key,
+           r.dmg_per_hit,
+           r.dps_sustained,
+           r.ttk_s,
+           r.hits_to_kill,
+           -- Newest measurement of a cell wins. Ties broken on run id so the choice is
+           -- deterministic across refreshes -- an unstable baseline would make every diff
+           -- built on it unreproducible.
+           ROW_NUMBER() OVER (
+               PARTITION BY run.realm, run.scenario ->> 'scenario',
+                   b.fingerprint, r.target_role, r.target_armor
+               ORDER BY run.started_at DESC, r.run_id DESC)  AS recency,
+           COUNT(*) OVER (
+               PARTITION BY run.realm, run.scenario ->> 'scenario',
+                   b.fingerprint, r.target_role, r.target_armor) AS times_measured
+    FROM sim_result r
+             JOIN sim_build b ON b.id = r.build_id
+             JOIN sim_run run ON run.id = r.run_id
+    WHERE run.status IN ('COMPLETED', 'CANCELLED')
+      AND r.config_scope_hash IS NOT NULL
+)
+SELECT realm, scenario, measured_scope, fingerprint, target_role, target_armor,
+       supplied_by_run_id, measured_run_id, supplied_at, config_hash, engine_version,
+       config_scope_hash,
+       role, weapon_key, rune_set_key, skill_set_key,
+       dmg_per_hit, dps_sustained, ttk_s, hits_to_kill,
+       times_measured,
+       -- A cell measured more than once is a cell an older run also covered. Not an error --
+       -- it is exactly what re-measuring after a change looks like -- but it is the set a
+       -- drift check should read, because those are the cells where two runs can disagree.
+       times_measured > 1 AS contested
+FROM ranked
+WHERE recency = 1;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_gold_baseline_cell_key
+    ON sim_gold_baseline_cell (realm, scenario, fingerprint, target_role, target_armor);
+CREATE INDEX IF NOT EXISTS idx_gold_baseline_cell_run
+    ON sim_gold_baseline_cell (supplied_by_run_id);
+CREATE INDEX IF NOT EXISTS idx_gold_baseline_cell_scope
+    ON sim_gold_baseline_cell (realm, scenario, config_scope_hash);
+
+COMMENT ON MATERIALIZED VIEW sim_gold_baseline_cell IS
+    'The standing baseline: one row per (realm, scenario, build fingerprint, target), '
+        'supplied by whichever run measured it most recently. A union of runs rather than a '
+        'chosen run, because no single sweep has measured the whole game -- run 7 covers '
+        'equipment with no skills, runs 12-14 cover skills on at most five weapons. Scope is '
+        'deliberately NOT in the key (it describes what a sweep varied, not what a cell is); '
+        'scenario is (a MUTUAL measurement is not a ONE_WAY one). config_scope_hash is what a '
+        'delta sweep compares against to decide a cell is still valid.';
+
+
+-- ---------------------------------------------------------------------------
+-- sim_gold_baseline_lane -- what the baseline is made of, and what the engine would
+-- pick instead.
+--
+-- The decision panel. One row per (realm, scenario, contributing run): how many cells that
+-- run still supplies, how many it has had superseded, and whether the engine's own
+-- newest-wins rule would select it. Reading it against sim_gold_baseline_cell is how the
+-- narrow-newest-run trap becomes visible before a sweep is launched rather than after.
+CREATE MATERIALIZED VIEW sim_gold_baseline_lane AS
+WITH supplied AS (
+    SELECT realm, scenario, supplied_by_run_id, measured_scope,
+           COUNT(*)                                  AS cells_supplied,
+           COUNT(*) FILTER (WHERE contested)         AS cells_contested,
+           COUNT(DISTINCT fingerprint)               AS builds,
+           COUNT(DISTINCT weapon_key)                AS weapons,
+           COUNT(DISTINCT NULLIF(skill_set_key, '')) AS skill_sets,
+           COUNT(DISTINCT rune_set_key)              AS rune_sets,
+           MAX(supplied_at)                          AS supplied_at,
+           COUNT(DISTINCT measured_run_id)           AS origin_runs
+    FROM sim_gold_baseline_cell
+    GROUP BY 1, 2, 3, 4
+),
+-- The engine's rule, replicated exactly so the two can be compared rather than assumed to
+-- agree: newest COMPLETED (then CANCELLED) run within a (realm, scope, scenario) lane.
+engine_pick AS (
+    SELECT id AS run_id,
+           ROW_NUMBER() OVER (
+               PARTITION BY realm, scenario ->> 'scope', scenario ->> 'scenario'
+               ORDER BY (status = 'COMPLETED') DESC, started_at DESC, id DESC) = 1
+               AS is_engine_baseline
+    FROM sim_run
+    WHERE status IN ('COMPLETED', 'CANCELLED')
+)
+SELECT s.realm,
+       s.scenario,
+       s.measured_scope,
+       s.supplied_by_run_id,
+       s.supplied_at,
+       s.origin_runs,
+       s.cells_supplied,
+       s.cells_contested,
+       s.builds, s.weapons, s.skill_sets, s.rune_sets,
+       -- Share of the whole baseline this run is carrying. The number that makes the trap
+       -- obvious: the run the engine would diff against supplies 0.4% of it.
+       s.cells_supplied::numeric
+           / NULLIF(SUM(s.cells_supplied) OVER (PARTITION BY s.realm, s.scenario), 0)
+                                                                    AS share_of_baseline,
+       COALESCE(e.is_engine_baseline, false)                         AS is_engine_baseline
+FROM supplied s
+         LEFT JOIN engine_pick e ON e.run_id = s.supplied_by_run_id
+ORDER BY s.realm, s.scenario, s.cells_supplied DESC;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_gold_baseline_lane_key
+    ON sim_gold_baseline_lane (realm, scenario, supplied_by_run_id);
+
+COMMENT ON MATERIALIZED VIEW sim_gold_baseline_lane IS
+    'What the standing baseline is made of: one row per run still supplying cells to it, '
+        'with the share it carries and whether the engine''s newest-wins rule would select '
+        'it as THE baseline for a delta sweep. Where is_engine_baseline sits on a run with a '
+        'small share_of_baseline, a delta run launched today would re-measure everything the '
+        'other runs already know.';
+
+
+-- ---------------------------------------------------------------------------
+-- sim_gold_baseline_run -- the standing baseline, addressable as if it were a run.
+--
+-- sim_gold_baseline_cell settles WHAT the baseline is. This makes it SELECTABLE. Every
+-- damage view, every dashboard variable and every panel is keyed on run_id, so a baseline
+-- that is not a run id is a baseline no chart can be pointed at -- which is exactly what
+-- the dashboard showed: a run picker listing runs 1, 7, 12, 13, 14 and no way to ask for
+-- the thing the whole baseline design was built to produce.
+--
+-- The id is NEGATIVE and derived, never stored: -(realm * 10 + scenario ordinal). Negative
+-- because sim_run.id is a positive identity column, so the two spaces can never collide and
+-- a stray join to sim_run returns nothing rather than the wrong run. Derived because a
+-- stored id would need a migration and a writer, and the baseline is a projection of what
+-- has already been measured -- it has no existence of its own to record.
+--
+-- ONE PSEUDO-RUN PER (realm, scenario), not one overall. Scenario is in the baseline key
+-- for the reason given above -- a MUTUAL measurement is not a substitute for a ONE_WAY one
+-- -- and collapsing the two here would undo that at the last step and put both in one box.
+CREATE OR REPLACE VIEW sim_gold_baseline_run AS
+WITH lane AS (
+    SELECT c.realm,
+           c.scenario,
+           COUNT(*)                                              AS cells,
+           COUNT(DISTINCT c.fingerprint)                         AS builds,
+           COUNT(DISTINCT c.measured_run_id)                     AS origin_runs,
+           -- The runs the baseline is standing on, named. A reader picking "baseline" is
+           -- entitled to know it is reading runs 7 + 12 + 14 and not one sweep.
+           string_agg(DISTINCT c.measured_run_id::text, '+'
+                      ORDER BY c.measured_run_id::text)          AS origin_run_ids,
+           array_agg(DISTINCT c.measured_run_id)                 AS origin_run_array,
+           MAX(c.supplied_at)                                    AS newest_supplied_at,
+           MIN(c.supplied_at)                                    AS oldest_supplied_at,
+           COUNT(DISTINCT c.engine_version)                      AS engine_versions
+    FROM sim_gold_baseline_cell c
+    GROUP BY 1, 2
+),
+-- BALANCE CONFIG, NOT sim_run.config_hash, and the difference is the whole point of this
+-- CTE. config_hash digests the SWEEP -- its scope, its build space, its parameters -- so it
+-- is different on every run by construction: runs 7, 12, 13 and 14 carry four distinct
+-- hashes while all four were swept against balance config 3dd5fc5c9dc758ff. Counting
+-- config_hash here made the picker label every baseline "configs BLENDED", which is a
+-- warning that fires always and therefore means nothing.
+--
+-- scenario->>'balance_config' is the digest of the skill and item config the DAMAGE came
+-- from, which is the thing a reader needs to know is uniform before diffing against the
+-- baseline. Read off the small set of contributing runs rather than off the 4.1M cells.
+cfg AS (
+    SELECT l.realm, l.scenario,
+           COUNT(DISTINCT r.scenario ->> 'balance_config')       AS balance_configs,
+           string_agg(DISTINCT r.scenario ->> 'balance_config', ', ')
+                                                                 AS balance_config_ids
+    FROM lane l
+             JOIN sim_run r ON r.id = ANY (l.origin_run_array)
+    GROUP BY 1, 2
+)
+SELECT -(l.realm * 10 + CASE l.scenario WHEN 'one_way' THEN 1 WHEN 'mutual' THEN 2
+                                        ELSE 9 END)              AS run_id,
+       l.realm,
+       l.scenario,
+       l.cells,
+       l.builds,
+       l.origin_runs,
+       l.origin_run_ids,
+       l.newest_supplied_at,
+       l.oldest_supplied_at,
+       -- Config AGREEMENT, not config identity. When this is > 1 the baseline composes runs
+       -- swept against different balance configs, so it is a blend of more than one version
+       -- of the game and a diff against it is comparing to more than one thing.
+       c.balance_configs,
+       l.engine_versions,
+       -- Appended last rather than beside balance_configs, and that is not cosmetic: this
+       -- view sits under sim_gold_baseline_matchup and therefore under the whole damage
+       -- chain, so it can only ever be changed by CREATE OR REPLACE -- which appends columns
+       -- and refuses to reorder or rename them. Dropping it to tidy the column order would
+       -- mean dropping five materialized views and rebuilding ~25 minutes of them.
+       c.balance_config_ids
+FROM lane l
+         JOIN cfg c ON c.realm = l.realm AND c.scenario = l.scenario;
+
+COMMENT ON VIEW sim_gold_baseline_run IS
+    'The standing baseline addressed as a run: one synthetic negative run_id per (realm, '
+        'scenario), so a dashboard keyed on run_id can select the baseline the same way it '
+        'selects a sweep. The id is derived -(realm*10 + scenario ordinal), never stored, '
+        'and negative so it can never collide with sim_run.id. balance_configs > 1 means the '
+        'baseline blends runs swept under different SKILL/ITEM configs -- note that is '
+        'scenario->>''balance_config'', not sim_run.config_hash, which digests the sweep and '
+        'differs on every run by construction.';
+
+
+-- ---------------------------------------------------------------------------
+-- sim_gold_baseline_matchup -- the baseline's rows, shaped like the fact.
+--
+-- The bridge that lets sim_gold_weapon_damage aggregate the baseline with exactly the SQL
+-- it already uses for a run. sim_gold_baseline_cell resolves WHICH measurement wins each
+-- cell but carries only the four numbers the delta machinery needs; the damage views need
+-- the roll, the swing speed, the burst figure and the rune names, which live on the fact.
+-- So the cell resolves the choice and this projects the chosen fact row.
+--
+-- MEASURED ONLY, and that is a real exclusion worth stating. sim_gold_matchup also holds
+-- `derived` rows -- the modelled Backstab overlay, 1.77M of them on run 7 alone -- and the
+-- baseline drops every one. sim_gold_baseline_cell is built from sim_result, which is duels
+-- that were actually fought, so a modelled row has no cell to be chosen for. The
+-- consequence is visible and intended: on the baseline the weapon axis carries a measured
+-- skill or no skill, never a modelled one. A baseline that mixed the two would be a claim
+-- about the game supported half by measurement and half by arithmetic over config.
+--
+-- A PLAIN VIEW, not materialized. Every row here is already stored twice -- once in
+-- sim_gold_matchup and once as a key in sim_gold_baseline_cell -- and materializing 4.1M
+-- more copies to feed one aggregate that runs on refresh would spend ~2 GB to save a join
+-- nothing reads interactively.
+CREATE OR REPLACE VIEW sim_gold_baseline_matchup AS
+SELECT r.run_id,
+       c.realm,
+       c.scenario,
+       c.supplied_by_run_id,
+       c.measured_run_id,
+       c.config_scope_hash,
+       c.times_measured,
+       c.contested,
+       m.fingerprint, m.role,
+       m.weapon_key, m.weapon_slot, m.weapon_profile_key, m.weapon_roll,
+       m.rune_set_key, m.runes, m.rune_count,
+       m.skill_count, m.skill_set_key,
+       m.derived_skill, m.derived_skill_level, m.derived_bonus_per_hit,
+       m.target_role, m.target_armor, m.target_hp,
+       m.dmg_per_hit, m.dps_sustained, m.dps_burst,
+       m.swings_per_second, m.swing_interval_ticks,
+       m.ttk_s, m.hits_to_kill, m.kill_rate
+FROM sim_gold_baseline_cell c
+         JOIN sim_gold_baseline_run r ON r.realm = c.realm AND r.scenario = c.scenario
+         JOIN sim_gold_matchup m
+              ON m.run_id = c.supplied_by_run_id
+                  AND m.fingerprint = c.fingerprint
+                  AND m.target_role = c.target_role
+                  AND m.target_armor = c.target_armor
+                  AND m.provenance = 'measured';
+
+COMMENT ON VIEW sim_gold_baseline_matchup IS
+    'The standing baseline projected back onto the fact: each winning cell joined to the '
+        'sim_gold_matchup row that produced it, stamped with the synthetic baseline run_id. '
+        'Lets the damage views aggregate the baseline with the same SQL they use for a run. '
+        'Measured rows only -- the modelled overlay has no cell to be chosen for, so on the '
+        'baseline a weapon carries a measured skill or none.';
+
+
+-- ---------------------------------------------------------------------------
 -- sim_gold_weapon_damage -- one row per weapon x roll x rune set x skill state.
 --
 -- The substrate for the per-weapon damage distribution. Every rune permutation
@@ -606,15 +943,34 @@ CREATE INDEX IF NOT EXISTS idx_gold_tier_extreme_scan
 -- Collapsed over target: dmg_per_hit and swing interval do not depend on who is
 -- being hit (armour is pure health), so keeping target in the grain would
 -- multiply the view by six and put six identical damage numbers in every box.
--- Dropped deepest-first: density reads damage_point, damage_point and composition read
--- weapon_damage. Postgres refuses to drop a view something else depends on, so this order
--- is what lets the file be re-run from the top.
-DROP MATERIALIZED VIEW IF EXISTS sim_gold_damage_density;
-DROP MATERIALIZED VIEW IF EXISTS sim_gold_damage_composition;
-DROP MATERIALIZED VIEW IF EXISTS sim_gold_damage_point;
-DROP MATERIALIZED VIEW IF EXISTS sim_gold_skill_damage;
-DROP MATERIALIZED VIEW IF EXISTS sim_gold_weapon_damage;
+--
+-- SWEPT RUNS AND THE STANDING BASELINE, in one view, distinguished only by run_id. The
+-- baseline arrives as sim_gold_baseline_matchup under a negative synthetic id, so every
+-- view built on this one -- damage_point, density, composition, skill_damage -- can serve
+-- the baseline without a line of new code, and a panel selects it by changing $run. That
+-- is the whole reason the baseline was projected back onto the fact rather than given its
+-- own parallel set of damage views, which would have been five more views that could
+-- disagree with these five.
+--
+-- The cost is honest and worth naming: the baseline's rows are largely run 7's rows
+-- again, so this view and everything downstream carry them twice. It buys a baseline that
+-- is selectable everywhere instead of readable in one panel.
+--
+-- Drops for this view and its dependents live in ONE stack, at sim_gold_baseline_cell.
 CREATE MATERIALIZED VIEW sim_gold_weapon_damage AS
+WITH source AS (
+    SELECT run_id, weapon_key, weapon_slot, weapon_roll, rune_set_key, runes, rune_count,
+           derived_skill, derived_skill_level, derived_bonus_per_hit,
+           skill_count, skill_set_key, role,
+           dmg_per_hit, dps_sustained, dps_burst, swings_per_second, swing_interval_ticks
+    FROM sim_gold_matchup
+    UNION ALL
+    SELECT run_id, weapon_key, weapon_slot, weapon_roll, rune_set_key, runes, rune_count,
+           derived_skill, derived_skill_level, derived_bonus_per_hit,
+           skill_count, skill_set_key, role,
+           dmg_per_hit, dps_sustained, dps_burst, swings_per_second, swing_interval_ticks
+    FROM sim_gold_baseline_matchup
+)
 SELECT run_id,
        weapon_key,
        weapon_slot,
@@ -650,7 +1006,7 @@ SELECT run_id,
        percentile_cont(0.5) WITHIN GROUP (ORDER BY dps_burst)       AS dps_burst,
        percentile_cont(0.5) WITHIN GROUP (ORDER BY swings_per_second)    AS swings_per_second,
        percentile_cont(0.5) WITHIN GROUP (ORDER BY swing_interval_ticks) AS swing_ticks
-FROM sim_gold_matchup
+FROM source
 GROUP BY 1, 2, 3, 4, 5, 7, 8, 9;
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_gold_weapon_damage_key
@@ -1675,179 +2031,6 @@ COMMENT ON MATERIALIZED VIEW sim_gold_ambient_modifier IS
 
 
 
--- ---------------------------------------------------------------------------
--- sim_gold_baseline_cell -- the standing baseline, as a UNION OF MEASUREMENTS
--- rather than as a chosen run.
---
--- The question this answers is "what does the game look like right now", and the reason it
--- is a view rather than a run id is that no single run has ever measured the whole game.
--- Run 7 swept equipment across 241,290 builds and equipped no skills; runs 12-14 swept
--- skills across at most 5 weapons. Any rule that picks ONE run as the baseline throws away
--- whichever half it did not pick.
---
--- THE TRAP THIS EXISTS TO REMOVE. The engine's own baseline rule (SimResultRepository
--- .findBaselineRun) is newest-COMPLETED-wins within a (realm, scope, scenario) lane. In the
--- SKILLS/one_way lane that currently selects run 14 -- 17,568 cells, three weapons, two
--- skills -- over run 12, which measured 250,920 cells across 51 skills. A delta sweep
--- launched today would carry forward 0.4% of what has actually been measured and re-run the
--- rest, and nothing in the logs would call that a mistake. Newest is not widest.
---
--- WHY SCOPE IS NOT IN THE KEY, which is the whole design change. `scope` describes what a
--- sweep VARIED, not what a cell IS. A measurement of (build fingerprint, target) is that
--- measurement whether the sweep that produced it was enumerating weapons or skills, so
--- keying the baseline on scope keeps two runs apart that should compose. Dropping it is
--- what lets runs 7, 12, 13 and 14 be one baseline instead of three.
---
--- WHY SCENARIO IS. A MUTUAL measurement is not a substitute for a ONE_WAY one -- the
--- defender fights back, so the numbers mean different things. Runs 12 and 13 enumerate an
--- IDENTICAL build space (250,920 cells each) and differ only in scenario; collapsing them
--- would silently overwrite one with the other on every cell. Scenario stays in the key.
---
--- Rows without a config_scope_hash are excluded, which drops run 1 entirely (0 of its
--- 4,343,220 rows have one). That is correct rather than unfortunate: the hash is what a
--- delta run compares against to decide whether a cell is still valid, so a cell without one
--- can never be carried forward and does not belong in a baseline.
-DROP MATERIALIZED VIEW IF EXISTS sim_gold_baseline_lane;
-DROP MATERIALIZED VIEW IF EXISTS sim_gold_baseline_cell;
-CREATE MATERIALIZED VIEW sim_gold_baseline_cell AS
-WITH ranked AS (
-    SELECT run.realm,
-           run.scenario ->> 'scenario'                       AS scenario,
-           run.scenario ->> 'scope'                          AS measured_scope,
-           b.fingerprint,
-           r.target_role,
-           r.target_armor,
-           -- TWO different runs, and conflating them is a bug waiting for the first delta
-           -- sweep. `supplied_by` is the run whose sim_result row won recency and is what a
-           -- carry would copy FROM. `measured_run_id` is the run whose duels originally
-           -- produced the number, which survives any number of carries via the source row's
-           -- own value -- exactly the COALESCE carryForwardResults writes. They are equal on
-           -- every row today only because no delta run has ever executed.
-           r.run_id                                          AS supplied_by_run_id,
-           COALESCE(r.measured_run_id, r.run_id)             AS measured_run_id,
-           run.started_at                                    AS supplied_at,
-           run.config_hash,
-           run.engine_version,
-           r.config_scope_hash,
-           b.role,
-           b.weapon                                          AS weapon_key,
-           -- Bronze stores runes and skills as jsonb; the '+'-joined set keys are a gold
-           -- construction and are not available this far upstream. Their text form is a
-           -- stable set identity here because builds.py emits both arrays sorted, and set
-           -- identity is all the lane view counts.
-           b.runes::text                                     AS rune_set_key,
-           NULLIF(b.skills::text, '{}')                      AS skill_set_key,
-           r.dmg_per_hit,
-           r.dps_sustained,
-           r.ttk_s,
-           r.hits_to_kill,
-           -- Newest measurement of a cell wins. Ties broken on run id so the choice is
-           -- deterministic across refreshes -- an unstable baseline would make every diff
-           -- built on it unreproducible.
-           ROW_NUMBER() OVER (
-               PARTITION BY run.realm, run.scenario ->> 'scenario',
-                   b.fingerprint, r.target_role, r.target_armor
-               ORDER BY run.started_at DESC, r.run_id DESC)  AS recency,
-           COUNT(*) OVER (
-               PARTITION BY run.realm, run.scenario ->> 'scenario',
-                   b.fingerprint, r.target_role, r.target_armor) AS times_measured
-    FROM sim_result r
-             JOIN sim_build b ON b.id = r.build_id
-             JOIN sim_run run ON run.id = r.run_id
-    WHERE run.status IN ('COMPLETED', 'CANCELLED')
-      AND r.config_scope_hash IS NOT NULL
-)
-SELECT realm, scenario, measured_scope, fingerprint, target_role, target_armor,
-       supplied_by_run_id, measured_run_id, supplied_at, config_hash, engine_version,
-       config_scope_hash,
-       role, weapon_key, rune_set_key, skill_set_key,
-       dmg_per_hit, dps_sustained, ttk_s, hits_to_kill,
-       times_measured,
-       -- A cell measured more than once is a cell an older run also covered. Not an error --
-       -- it is exactly what re-measuring after a change looks like -- but it is the set a
-       -- drift check should read, because those are the cells where two runs can disagree.
-       times_measured > 1 AS contested
-FROM ranked
-WHERE recency = 1;
-
-CREATE UNIQUE INDEX IF NOT EXISTS idx_gold_baseline_cell_key
-    ON sim_gold_baseline_cell (realm, scenario, fingerprint, target_role, target_armor);
-CREATE INDEX IF NOT EXISTS idx_gold_baseline_cell_run
-    ON sim_gold_baseline_cell (supplied_by_run_id);
-CREATE INDEX IF NOT EXISTS idx_gold_baseline_cell_scope
-    ON sim_gold_baseline_cell (realm, scenario, config_scope_hash);
-
-COMMENT ON MATERIALIZED VIEW sim_gold_baseline_cell IS
-    'The standing baseline: one row per (realm, scenario, build fingerprint, target), '
-        'supplied by whichever run measured it most recently. A union of runs rather than a '
-        'chosen run, because no single sweep has measured the whole game -- run 7 covers '
-        'equipment with no skills, runs 12-14 cover skills on at most five weapons. Scope is '
-        'deliberately NOT in the key (it describes what a sweep varied, not what a cell is); '
-        'scenario is (a MUTUAL measurement is not a ONE_WAY one). config_scope_hash is what a '
-        'delta sweep compares against to decide a cell is still valid.';
-
-
--- ---------------------------------------------------------------------------
--- sim_gold_baseline_lane -- what the baseline is made of, and what the engine would
--- pick instead.
---
--- The decision panel. One row per (realm, scenario, contributing run): how many cells that
--- run still supplies, how many it has had superseded, and whether the engine's own
--- newest-wins rule would select it. Reading it against sim_gold_baseline_cell is how the
--- narrow-newest-run trap becomes visible before a sweep is launched rather than after.
-CREATE MATERIALIZED VIEW sim_gold_baseline_lane AS
-WITH supplied AS (
-    SELECT realm, scenario, supplied_by_run_id, measured_scope,
-           COUNT(*)                                  AS cells_supplied,
-           COUNT(*) FILTER (WHERE contested)         AS cells_contested,
-           COUNT(DISTINCT fingerprint)               AS builds,
-           COUNT(DISTINCT weapon_key)                AS weapons,
-           COUNT(DISTINCT NULLIF(skill_set_key, '')) AS skill_sets,
-           COUNT(DISTINCT rune_set_key)              AS rune_sets,
-           MAX(supplied_at)                          AS supplied_at,
-           COUNT(DISTINCT measured_run_id)           AS origin_runs
-    FROM sim_gold_baseline_cell
-    GROUP BY 1, 2, 3, 4
-),
--- The engine's rule, replicated exactly so the two can be compared rather than assumed to
--- agree: newest COMPLETED (then CANCELLED) run within a (realm, scope, scenario) lane.
-engine_pick AS (
-    SELECT id AS run_id,
-           ROW_NUMBER() OVER (
-               PARTITION BY realm, scenario ->> 'scope', scenario ->> 'scenario'
-               ORDER BY (status = 'COMPLETED') DESC, started_at DESC, id DESC) = 1
-               AS is_engine_baseline
-    FROM sim_run
-    WHERE status IN ('COMPLETED', 'CANCELLED')
-)
-SELECT s.realm,
-       s.scenario,
-       s.measured_scope,
-       s.supplied_by_run_id,
-       s.supplied_at,
-       s.origin_runs,
-       s.cells_supplied,
-       s.cells_contested,
-       s.builds, s.weapons, s.skill_sets, s.rune_sets,
-       -- Share of the whole baseline this run is carrying. The number that makes the trap
-       -- obvious: the run the engine would diff against supplies 0.4% of it.
-       s.cells_supplied::numeric
-           / NULLIF(SUM(s.cells_supplied) OVER (PARTITION BY s.realm, s.scenario), 0)
-                                                                    AS share_of_baseline,
-       COALESCE(e.is_engine_baseline, false)                         AS is_engine_baseline
-FROM supplied s
-         LEFT JOIN engine_pick e ON e.run_id = s.supplied_by_run_id
-ORDER BY s.realm, s.scenario, s.cells_supplied DESC;
-
-CREATE UNIQUE INDEX IF NOT EXISTS idx_gold_baseline_lane_key
-    ON sim_gold_baseline_lane (realm, scenario, supplied_by_run_id);
-
-COMMENT ON MATERIALIZED VIEW sim_gold_baseline_lane IS
-    'What the standing baseline is made of: one row per run still supplying cells to it, '
-        'with the share it carries and whether the engine''s newest-wins rule would select '
-        'it as THE baseline for a delta sweep. Where is_engine_baseline sits on a run with a '
-        'small share_of_baseline, a delta run launched today would re-measure everything the '
-        'other runs already know.';
 
 
 -- ---------------------------------------------------------------------------
@@ -1890,7 +2073,8 @@ COMMENT ON MATERIALIZED VIEW sim_gold_baseline_lane IS
 -- Built on sim_gold_weapon_damage, which is the true permutation grain and the only one of
 -- the three that names a measured skill. Every axis therefore reports the same numbers as
 -- the weapon axis by construction, not by two queries agreeing.
-DROP MATERIALIZED VIEW IF EXISTS sim_gold_damage_point;
+-- Dropped in the single stack at sim_gold_baseline_cell, not here: this view now sits
+-- under the baseline, so a drop order local to it would be wrong.
 CREATE MATERIALIZED VIEW sim_gold_damage_point AS
 WITH bare AS (
     -- Same weapon, roll and skill state carrying NO runes. The subtrahend for a rune's
@@ -1908,6 +2092,29 @@ unskilled AS (
            dmg_per_hit AS unskilled_dmg_per_hit, dps AS unskilled_dps
     FROM sim_gold_weapon_damage
     WHERE skill_level = 0
+),
+naked AS (
+    -- The weapon with NEITHER runes NOR skill. A THIRD subtrahend, and the one that turns
+    -- this view from "what is this permutation next to its neighbour" into "what is this
+    -- permutation MADE OF".
+    --
+    -- `bare` and `unskilled` are marginals held in context -- each answers what one part is
+    -- worth GIVEN the rest of the build. Neither can say how the whole number divides,
+    -- because both already contain the weapon. This one is the floor everything is measured
+    -- from, and with it every term of the decomposition is derivable per permutation:
+    --
+    --   rune_effect  = (dps - skill_dps_delta) - weapon_base     [= unskilled - naked]
+    --   skill_effect = (dps - rune_dps_delta)  - weapon_base     [= bare      - naked]
+    --   interaction  = dps - weapon_base - rune_effect - skill_effect
+    --
+    -- ONE stored column rather than four, because the other three are exact arithmetic over
+    -- columns already here and this view is 2M+ rows. Three doubles saved per row is not
+    -- worth three doubles of storage per row when the subtraction costs nothing on the few
+    -- thousand rows a panel actually reads.
+    SELECT run_id, weapon_key, weapon_roll,
+           dmg_per_hit AS naked_dmg_per_hit, dps AS naked_dps
+    FROM sim_gold_weapon_damage
+    WHERE rune_count = 0 AND skill_level = 0
 ),
 perm AS (
     SELECT w.run_id,
@@ -1933,7 +2140,9 @@ perm AS (
            w.dmg_per_hit - b.bare_dmg_per_hit AS rune_dmg_delta,
            w.dps         - b.bare_dps         AS rune_dps_delta,
            w.dmg_per_hit - u.unskilled_dmg_per_hit AS skill_dmg_delta,
-           w.dps         - u.unskilled_dps         AS skill_dps_delta
+           w.dps         - u.unskilled_dps         AS skill_dps_delta,
+           n.naked_dps                             AS weapon_base,
+           n.naked_dmg_per_hit                     AS weapon_base_dph
     FROM sim_gold_weapon_damage w
              LEFT JOIN bare b
                        ON b.run_id = w.run_id AND b.weapon_key = w.weapon_key
@@ -1943,12 +2152,16 @@ perm AS (
                        ON u.run_id = w.run_id AND u.weapon_key = w.weapon_key
                            AND u.weapon_roll = w.weapon_roll
                            AND u.rune_set_key = w.rune_set_key
+             LEFT JOIN naked n
+                       ON n.run_id = w.run_id AND n.weapon_key = w.weapon_key
+                           AND n.weapon_roll = w.weapon_roll
 )
 SELECT 'weapon'::text AS group_axis, d.weapon_name AS group_key,
        d.run_id, d.weapon_name, d.weapon_roll, d.rune_names, d.rune_count,
        d.skill, d.skill_level, d.duels,
        d.dmg_per_hit, d.dps, d.dps_burst, d.swings_per_second, d.swing_ticks,
-       d.rune_dmg_delta, d.rune_dps_delta, d.skill_dmg_delta, d.skill_dps_delta
+       d.rune_dmg_delta, d.rune_dps_delta, d.skill_dmg_delta, d.skill_dps_delta,
+       d.weapon_base, d.weapon_base_dph
 FROM perm d
 UNION ALL
 SELECT 'skill', CASE WHEN d.skill_level = 0 THEN 'No skill'
@@ -1956,7 +2169,8 @@ SELECT 'skill', CASE WHEN d.skill_level = 0 THEN 'No skill'
        d.run_id, d.weapon_name, d.weapon_roll, d.rune_names, d.rune_count,
        d.skill, d.skill_level, d.duels,
        d.dmg_per_hit, d.dps, d.dps_burst, d.swings_per_second, d.swing_ticks,
-       d.rune_dmg_delta, d.rune_dps_delta, d.skill_dmg_delta, d.skill_dps_delta
+       d.rune_dmg_delta, d.rune_dps_delta, d.skill_dmg_delta, d.skill_dps_delta,
+       d.weapon_base, d.weapon_base_dph
 FROM perm d
 UNION ALL
 -- One row per rune the permutation carries. A build with four runes is evidence about four
@@ -1965,7 +2179,8 @@ SELECT 'rune', REPLACE(REPLACE(r.rune, 'core:', ''), 'champions:', ''),
        d.run_id, d.weapon_name, d.weapon_roll, d.rune_names, d.rune_count,
        d.skill, d.skill_level, d.duels,
        d.dmg_per_hit, d.dps, d.dps_burst, d.swings_per_second, d.swing_ticks,
-       d.rune_dmg_delta, d.rune_dps_delta, d.skill_dmg_delta, d.skill_dps_delta
+       d.rune_dmg_delta, d.rune_dps_delta, d.skill_dmg_delta, d.skill_dps_delta,
+       d.weapon_base, d.weapon_base_dph
 FROM perm d
          CROSS JOIN LATERAL unnest(string_to_array(d.rune_set_key, '+')) AS r(rune)
 WHERE d.rune_count > 0
@@ -1977,12 +2192,27 @@ SELECT 'rune', 'No runes',
        d.run_id, d.weapon_name, d.weapon_roll, d.rune_names, d.rune_count,
        d.skill, d.skill_level, d.duels,
        d.dmg_per_hit, d.dps, d.dps_burst, d.swings_per_second, d.swing_ticks,
-       d.rune_dmg_delta, d.rune_dps_delta, d.skill_dmg_delta, d.skill_dps_delta
+       d.rune_dmg_delta, d.rune_dps_delta, d.skill_dmg_delta, d.skill_dps_delta,
+       d.weapon_base, d.weapon_base_dph
 FROM perm d
 WHERE d.rune_count = 0;
 
-CREATE INDEX IF NOT EXISTS idx_gold_damage_point_scan
-    ON sim_gold_damage_point (run_id, group_axis, group_key);
+-- UNIQUE, and it has to be: REFRESH MATERIALIZED VIEW CONCURRENTLY requires a unique index
+-- and silently is not available without one. Before this existed the pipeline logged
+-- "concurrent refresh of sim_gold_damage_point failed; falling back to a locking one" and
+-- took an exclusive lock for the whole rebuild -- a dashboard open during a publish blocked
+-- rather than reading the old rows, which is the entire thing CONCURRENTLY buys.
+--
+-- These eight columns are the permutation's full identity. rune_names rather than
+-- rune_set_key because that is what the view carries, and group_key is needed in its own
+-- right: on the rune axis one permutation appears once per rune it holds, so the axis
+-- category is part of what makes a row distinct. Verified unique over all 2,394,120 rows.
+--
+-- Replaces the non-unique (run_id, group_axis, group_key) scan index, which is a prefix of
+-- this one and therefore redundant -- range scans on the prefix use this index just as well.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_gold_damage_point_key
+    ON sim_gold_damage_point (run_id, group_axis, group_key, weapon_name, weapon_roll,
+                              rune_names, skill, skill_level);
 CREATE INDEX IF NOT EXISTS idx_gold_damage_point_filter
     ON sim_gold_damage_point (run_id, group_axis, weapon_roll, rune_count, skill_level);
 
@@ -1994,7 +2224,10 @@ COMMENT ON MATERIALIZED VIEW sim_gold_damage_point IS
         'by name, skill and level) as COLUMNS, so a point on the skill axis can still say '
         'which runes made it -- which sim_gold_skill_damage could not. Marginals '
         'are against the same weapon bare (rune_dps_delta) and the same weapon with no skill '
-        '(skill_dps_delta).';
+        '(skill_dps_delta). weapon_base is the same weapon with NEITHER, which makes the full '
+        'four-term composition derivable per permutation rather than only per category: '
+        'rune_effect = (dps - skill_dps_delta) - weapon_base, skill_effect = (dps - '
+        'rune_dps_delta) - weapon_base, interaction = the remainder.';
 
 
 -- ---------------------------------------------------------------------------
@@ -2025,61 +2258,41 @@ COMMENT ON MATERIALIZED VIEW sim_gold_damage_point IS
 -- of the total, so a median stack would draw bars that do not add up to the number beside
 -- them. Read sim_gold_damage_density for the shape of a distribution; this view is for its
 -- budget.
-DROP MATERIALIZED VIEW IF EXISTS sim_gold_damage_composition;
+--
+-- BUILT ON sim_gold_damage_point, not on sim_gold_weapon_damage a second time. This view
+-- used to re-derive the whole decomposition from three self-joins of weapon_damage, which
+-- was the same arithmetic damage_point already does -- two implementations of one rule, free
+-- to drift, and they would have drifted silently because nothing compared them. damage_point
+-- now carries weapon_base (the weapon with neither runes nor skill), so the other three terms
+-- are exact subtractions over columns that are already there, and this view is what it should
+-- always have been: an aggregate.
+--
+-- The row set is unchanged because the WHERE reproduces what the three INNER JOINs did --
+-- a permutation missing any of its three reference points is excluded rather than carried
+-- with a NULL term that would break the sum.
+-- Dropped in the single stack at sim_gold_baseline_cell, not here: this view now sits
+-- under the baseline, so a drop order local to it would be wrong.
 CREATE MATERIALIZED VIEW sim_gold_damage_composition AS
-WITH base AS (
-    SELECT run_id, weapon_key, weapon_roll, dps AS base_dps, dmg_per_hit AS base_dph
-    FROM sim_gold_weapon_damage WHERE rune_count = 0 AND skill_level = 0
-),
-runes_only AS (
-    SELECT run_id, weapon_key, weapon_roll, rune_set_key,
-           dps AS rune_dps, dmg_per_hit AS rune_dph
-    FROM sim_gold_weapon_damage WHERE skill_level = 0
-),
-skill_only AS (
-    SELECT run_id, weapon_key, weapon_roll, skill, skill_level,
-           dps AS skill_dps, dmg_per_hit AS skill_dph
-    FROM sim_gold_weapon_damage WHERE rune_count = 0
-),
-decomposed AS (
-    SELECT w.run_id, w.weapon_key,
-           REPLACE(REPLACE(w.weapon_key, 'core:', ''), 'champions:', '') AS weapon_name,
-           w.weapon_roll, w.rune_set_key, w.rune_count, w.skill, w.skill_level,
-           w.dps, w.dmg_per_hit,
-           b.base_dps                                       AS weapon_base,
-           r.rune_dps  - b.base_dps                          AS rune_effect,
-           s.skill_dps - b.base_dps                          AS skill_effect,
-           w.dps - b.base_dps - (r.rune_dps - b.base_dps)
-                 - (s.skill_dps - b.base_dps)                AS interaction,
-           b.base_dph                                        AS weapon_base_dph,
-           r.rune_dph  - b.base_dph                          AS rune_effect_dph,
-           s.skill_dph - b.base_dph                          AS skill_effect_dph,
-           w.dmg_per_hit - b.base_dph - (r.rune_dph - b.base_dph)
-                         - (s.skill_dph - b.base_dph)        AS interaction_dph
-    FROM sim_gold_weapon_damage w
-             JOIN base b ON b.run_id = w.run_id AND b.weapon_key = w.weapon_key
-                                AND b.weapon_roll = w.weapon_roll
-             JOIN runes_only r ON r.run_id = w.run_id AND r.weapon_key = w.weapon_key
-                                      AND r.weapon_roll = w.weapon_roll
-                                      AND r.rune_set_key = w.rune_set_key
-             JOIN skill_only s ON s.run_id = w.run_id AND s.weapon_key = w.weapon_key
-                                      AND s.weapon_roll = w.weapon_roll
-                                      AND s.skill = w.skill AND s.skill_level = w.skill_level
-),
--- Same long form as sim_gold_damage_point, and for the same reason: the composition has to
--- be readable on whichever axis the reader is grouping by.
-long AS (
-    SELECT 'weapon'::text AS group_axis, weapon_name AS group_key, d.* FROM decomposed d
-    UNION ALL
-    SELECT 'skill', CASE WHEN d.skill_level = 0 THEN 'No skill'
-                         ELSE d.skill || ' ' || d.skill_level END, d.* FROM decomposed d
-    UNION ALL
-    SELECT 'rune', REPLACE(REPLACE(r.rune, 'core:', ''), 'champions:', ''), d.*
-    FROM decomposed d
-             CROSS JOIN LATERAL unnest(string_to_array(d.rune_set_key, '+')) AS r(rune)
-    WHERE d.rune_count > 0
-    UNION ALL
-    SELECT 'rune', 'No runes', d.* FROM decomposed d WHERE d.rune_count = 0
+WITH term AS (
+    SELECT run_id, group_axis, group_key, weapon_roll, dps, dmg_per_hit,
+           weapon_base,
+           dps - skill_dps_delta - weapon_base          AS rune_effect,
+           dps - rune_dps_delta  - weapon_base          AS skill_effect,
+           -- The residual, written as the identity rather than as (dps - the other three) so
+           -- it is visibly the same expression the header describes.
+           dps - weapon_base
+               - (dps - skill_dps_delta - weapon_base)
+               - (dps - rune_dps_delta  - weapon_base)  AS interaction,
+           weapon_base_dph,
+           dmg_per_hit - skill_dmg_delta - weapon_base_dph AS rune_effect_dph,
+           dmg_per_hit - rune_dmg_delta  - weapon_base_dph AS skill_effect_dph,
+           dmg_per_hit - weapon_base_dph
+               - (dmg_per_hit - skill_dmg_delta - weapon_base_dph)
+               - (dmg_per_hit - rune_dmg_delta  - weapon_base_dph) AS interaction_dph
+    FROM sim_gold_damage_point
+    WHERE weapon_base IS NOT NULL
+      AND rune_dps_delta IS NOT NULL
+      AND skill_dps_delta IS NOT NULL
 )
 SELECT run_id, group_axis, group_key, weapon_roll,
        COUNT(*)                    AS permutations,
@@ -2099,7 +2312,7 @@ SELECT run_id, group_axis, group_key, weapon_roll,
        AVG(rune_effect)  / NULLIF(AVG(dps), 0) AS rune_share,
        AVG(skill_effect) / NULLIF(AVG(dps), 0) AS skill_share,
        AVG(interaction)  / NULLIF(AVG(dps), 0) AS interaction_share
-FROM long
+FROM term
 GROUP BY 1, 2, 3, 4;
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_gold_damage_composition_key
@@ -2131,7 +2344,8 @@ COMMENT ON MATERIALIZED VIEW sim_gold_damage_composition IS
 -- Bin edges are shared across every category within a (run, group_axis, metric), so the
 -- categories are directly comparable -- per-category edges would make two histograms that
 -- cannot be read against each other. 40 bins over the observed range.
-DROP MATERIALIZED VIEW IF EXISTS sim_gold_damage_density;
+-- Dropped in the single stack at sim_gold_baseline_cell, not here: this view now sits
+-- under the baseline, so a drop order local to it would be wrong.
 CREATE MATERIALIZED VIEW sim_gold_damage_density AS
 WITH points AS (
     SELECT run_id, group_axis, group_key, weapon_roll, 'dps' AS metric, dps AS val
@@ -2170,6 +2384,11 @@ SELECT run_id, group_axis, group_key, weapon_roll, metric, bin,
            PARTITION BY run_id, group_axis, group_key, weapon_roll, metric) AS share
 FROM binned;
 
+-- Unique for the same reason as sim_gold_damage_point's: without it CONCURRENTLY is
+-- unavailable and the refresh takes an exclusive lock. The grain is one row per bin of a
+-- category, which is exactly these six columns.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_gold_damage_density_key
+    ON sim_gold_damage_density (run_id, group_axis, group_key, weapon_roll, metric, bin);
 CREATE INDEX IF NOT EXISTS idx_gold_damage_density_scan
     ON sim_gold_damage_density (run_id, group_axis, metric, weapon_roll);
 
