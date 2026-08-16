@@ -511,3 +511,81 @@ def test_runes_and_skills_stay_distinguishable(frame):
     assert set(kinds) == {"rune", "skill"}
     assert kinds["skill"]["dps_delta_mean"] == pytest.approx(6.0)
     assert kinds["rune"]["dps_delta_mean"] == pytest.approx(2.0)
+
+
+def test_a_measured_skill_names_itself_in_skill_contribution(frame):
+    """The mart called skill_contribution has to attribute a contribution to a skill.
+
+    `skill_name` was `coalesce(derived_skill, '(measured build)')`, and derived_skill is
+    only set for a MODELLED skill -- so every skill the sweep actually fought with landed
+    in one placeholder bucket. Run 14 swept exactly two skills and the mart reported a
+    single '(measured build)' row averaging Tormented Soil's amplification against Blood
+    Barrier's silence, with neither recoverable.
+    """
+    tormented = _fact_row(
+        result_id=40, build_id=40, skill_count=1, skill_set_key="Tormented Soil:3",
+        dmg_per_hit=9.0, dps_sustained=28.125, ttk_s=1.4, hits_to_kill=4.0,
+    )
+    barrier = _fact_row(
+        result_id=41, build_id=41, skill_count=1, skill_set_key="Blood Barrier:2",
+        dmg_per_hit=7.0, dps_sustained=21.875, ttk_s=1.6, hits_to_kill=5.0,
+    )
+    fact = frame([BASELINE, tormented, barrier], FACT_SCHEMA)
+
+    rows = {r["skill_name"]: r for r in marts.skill_contribution(fact).collect()}
+    assert set(rows) == {"Tormented Soil", "Blood Barrier"}, "skills are indistinguishable"
+    assert rows["Tormented Soil"]["skill_level"] == 3
+    assert rows["Blood Barrier"]["skill_level"] == 2
+    # The whole point of naming them: the two contributions no longer average together.
+    assert rows["Tormented Soil"]["dps_delta"] == pytest.approx(28.125 - 21.875, abs=1e-3)
+    assert rows["Blood Barrier"]["dps_delta"] == pytest.approx(0.0, abs=1e-3)
+
+
+def test_a_skilled_row_keeps_its_own_metrics_across_the_baseline_join(frame):
+    """A skilled row's metrics are its OWN, not the baseline's it was measured against.
+
+    Every contribution mart builds its baseline by filtering the fact it is about to join
+    to, so both sides are the same logical plan and carry the same expression ids --
+    `baseline[key]` can then resolve to the LEFT side and the condition degenerate to
+    `left.k <=> left.k`. Spark says so out loud ('Constructing trivially true equals
+    predicate'), which is why `_contrast_join` now renames the right-hand keys.
+
+    Not a regression test: no published number ever moved, because the analyzer's
+    relation dedup was rescuing these plans. The near-zero measured deltas in run 14 that
+    prompted this were REAL -- Tormented Soil is an axe skill and the skill-less baseline
+    was swept on swords only, so in a matched cell it genuinely contributes nothing. This
+    pins the invariant instead, with every value distinct so a substitution would show.
+    """
+    skilled = _fact_row(
+        result_id=50, build_id=50, skill_count=1, skill_set_key="Tormented Soil:3",
+        dmg_per_hit=8.289, dps_sustained=28.339, ttk_s=2.061, hits_to_kill=5.881,
+    )
+    fact = frame([BASELINE, skilled], FACT_SCHEMA)
+    base = [r for r in fact.collect() if r["result_id"] == 1][0]
+
+    row = marts.skill_contribution(fact).collect()[0]
+
+    assert row["dps_sustained"] == pytest.approx(28.339), "skilled row lost its own DPS"
+    assert row["dmg_per_hit"] == pytest.approx(8.289)
+    assert row["ttk_s"] == pytest.approx(2.061)
+    assert row["base_dps"] == pytest.approx(base["dps_sustained"])
+    assert row["base_dmg_per_hit"] == pytest.approx(base["dmg_per_hit"])
+    # The delta the mart exists to report, and the number that read 0.000 in production.
+    assert row["dps_delta"] == pytest.approx(28.339 - base["dps_sustained"])
+    assert row["dps_delta"] > 0.0
+
+
+def test_a_multi_skill_build_refuses_to_name_one_slot(frame):
+    """Several skills, one delta, no way to choose -- so the mart says so rather than
+    naming the first slot and implying an attribution it has not made."""
+    both = _fact_row(
+        result_id=42, build_id=42, skill_count=2,
+        skill_set_key="Blood Barrier:2+Tormented Soil:3",
+        dmg_per_hit=9.0, dps_sustained=28.125, ttk_s=1.4, hits_to_kill=4.0,
+    )
+    fact = frame([BASELINE, both], FACT_SCHEMA)
+
+    rows = marts.skill_contribution(fact).collect()
+    assert len(rows) == 1
+    assert rows[0]["skill_name"] == "(multi-skill build)"
+    assert rows[0]["skill_level"] is None

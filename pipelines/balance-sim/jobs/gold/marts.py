@@ -67,16 +67,68 @@ CONTRAST_KEY = [
 ]
 
 
-def _null_safe_join(left: DataFrame, right: DataFrame, keys: list[str]) -> Column:
-    """`derived_skill` is null on every measured row, and `a.col = b.col` is never
-    true for two nulls. Joining measured rows on it with plain equality silently
-    produces zero matches -- a mart that is empty rather than wrong, which is the
-    kind of bug that survives review."""
-    condition = None
+# Prefix stamped onto the right-hand frame's shared columns before a self-join. See
+# `_contrast_join` for why it has to exist at all.
+_RIGHT = "__r_"
+
+
+def _contrast_join(
+    left: DataFrame,
+    right: DataFrame,
+    keys: list[str],
+    how: str = "inner",
+    carry: list[str] | None = None,
+) -> tuple[DataFrame, DataFrame]:
+    """Join a frame to a baseline derived from the SAME frame, without the two sides
+    collapsing into each other. Returns `(joined, right)` -- the caller must read the
+    right-hand side through the returned frame, not the one it passed in.
+
+    Two things are going wrong at once here, and only one of them is obvious.
+
+    NULLS. `derived_skill` is null on every measured row, and `a.col = b.col` is never
+    true for two nulls, so a plain equality join drops every measured row and yields a
+    mart that is empty rather than wrong. Hence `eqNullSafe` throughout.
+
+    AMBIGUITY, which is the one that actually shipped. Every caller builds its baseline
+    by FILTERING the same fact it is about to join to, so both sides of the join are the
+    same logical plan and their columns carry the same expression ids. `right[key]` then
+    resolves to the LEFT side's attribute: Spark says so out loud --
+
+        WARN Column: Constructing trivially true equals predicate, 'role == role'.
+                     Perhaps you need to use aliases.
+
+    -- and that warning was printed once per key, on every run, for months. The join
+    condition degenerates to `left.k <=> left.k`, which is trivially true, and column
+    references chosen afterwards resolve to whichever side the analyzer picked.
+
+    Honesty about what this did and did not fix: no published number moved. Spark's
+    DeduplicateRelations was evidently rescuing these plans, and a row-by-row check of
+    run 14 found all 4,680 `skill_contribution` rows already agreeing with the fact. This
+    is a latent-hazard fix -- the analyzer was being trusted to disambiguate something the
+    query had no business leaving ambiguous, and `run_diff` in particular coalesced
+    `left[k]` against a `right[k]` that could resolve back to the left, which is how an
+    `only_b` row loses its identity. It was NOT the cause of the near-zero measured skill
+    deltas: those are real, and `skill_contribution` was right about them. Tormented Soil
+    is an AXE skill and does nothing on the swords the skill-less baseline was swept with,
+    so within a matched cell it correctly contributes zero.
+
+    Aliasing the frames does not fix it (the ambiguity is in the expression ids, not the
+    names), so the fix is structural: rename the right-hand frame's shared columns, which
+    forces fresh expression ids through `Alias`. After this the two sides share no ids at
+    all, there is nothing left to resolve ambiguously, and Spark stops warning.
+
+    `carry` names columns that are shared but are NOT part of the condition -- they get the
+    same rename so the caller can still tell the two sides apart when reading them back.
+    """
+    for key in keys + list(carry or []):
+        right = right.withColumnRenamed(key, _RIGHT + key)
+
+    condition: Column | None = None
     for key in keys:
-        clause = left[key].eqNullSafe(right[key])
+        clause = left[key].eqNullSafe(right[_RIGHT + key])
         condition = clause if condition is None else (condition & clause)
-    return condition
+
+    return left.join(right, condition, how), right
 
 
 # ---------------------------------------------------------------------------
@@ -279,7 +331,7 @@ def rune_contribution(fact: DataFrame) -> DataFrame:
         F.col("kill_rate").alias("base_kill_rate"),
     )
 
-    joined = singles.join(baseline, _null_safe_join(singles, baseline, BASELINE_KEY), "inner")
+    joined, baseline = _contrast_join(singles, baseline, BASELINE_KEY)
 
     return joined.select(
         *[singles[key] for key in BASELINE_KEY],
@@ -333,8 +385,9 @@ def rune_set_synergy(fact: DataFrame, contributions: DataFrame) -> DataFrame:
     baseline = fact.where(F.col("rune_count") == 0).select(
         *BASELINE_KEY, F.col("dps_sustained").alias("base_dps"), F.col("ttk_s").alias("base_ttk_s")
     )
+    set_joined, baseline = _contrast_join(sets, baseline, BASELINE_KEY)
     set_vs_base = (
-        sets.join(baseline, _null_safe_join(sets, baseline, BASELINE_KEY), "inner")
+        set_joined
         .select(
             *[sets[key] for key in BASELINE_KEY],
             # The grain is one row per (build, target), not per build: a build is
@@ -362,12 +415,11 @@ def rune_set_synergy(fact: DataFrame, contributions: DataFrame) -> DataFrame:
         F.explode(F.split(F.col("rune_set_key"), r"\+")).alias("rune_key"),
     )
     singles = contributions.select(*BASELINE_KEY, "rune_key", "dps_delta")
+    # `contributions` is rune_contribution's output, which descends from this same fact, so
+    # the member-sum join is a self-join too and needs the same disambiguation.
+    member_joined, _ = _contrast_join(exploded, singles, BASELINE_KEY + ["rune_key"], "left")
     summed = (
-        exploded.join(
-            singles,
-            _null_safe_join(exploded, singles, BASELINE_KEY) & (exploded["rune_key"] == singles["rune_key"]),
-            "left",
-        )
+        member_joined
         .groupBy(exploded["result_id"])
         .agg(
             F.sum("dps_delta").alias("sum_individual_dps_delta"),
@@ -411,7 +463,7 @@ def skill_contribution(fact: DataFrame) -> DataFrame:
         F.col("hits_to_kill").alias("base_hits_to_kill"),
     )
 
-    joined = skilled.join(baseline, _null_safe_join(skilled, baseline, join_key), "inner")
+    joined, baseline = _contrast_join(skilled, baseline, join_key)
 
     return (
         joined.select(
@@ -422,8 +474,36 @@ def skill_contribution(fact: DataFrame) -> DataFrame:
             skilled["weapon_attack_speed_applied"],
             skilled["swings_per_second"],
             skilled["build_id"],
-            F.coalesce(skilled["derived_skill"], F.lit("(measured build)")).alias("skill_name"),
-            skilled["derived_skill_level"].alias("skill_level"),
+            # A MEASURED skill names itself, which this mart used to make impossible.
+            #
+            # `skill_name` was `coalesce(derived_skill, '(measured build)')`, and derived_skill
+            # is only ever set for a modelled skill -- so every skill the sweep actually fought
+            # with collapsed into one placeholder bucket. Run 14 is the case that shows the
+            # cost: it swept exactly two skills, and the mart reported a single
+            # '(measured build)' row of 4,680 matchups averaging -0.006 DPS, with Tormented
+            # Soil's amplification and Blood Barrier's silence averaged into each other and
+            # neither recoverable. The mart named skill_contribution could not attribute a
+            # contribution to a skill.
+            #
+            # skill_set_key is the identity, and it is already on the fact: builds.py writes it
+            # as '<skill>:<allocated_level>' joined on '+'. It is deliberately NOT in
+            # CONTRAST_KEY -- that is what lets a skilled row find a skill-less baseline -- but
+            # nothing stopped carrying it into the output, which is the half that was missing.
+            #
+            # Split only for a single-slot build. A multi-skill build has several candidate
+            # explanations for one delta and this mart cannot choose between them, so it says
+            # so rather than naming the first slot and implying an attribution it has not made.
+            F.coalesce(
+                skilled["derived_skill"],
+                F.when(skilled["skill_count"] == 1,
+                       F.split(skilled["skill_set_key"], ":").getItem(0)),
+                F.lit("(multi-skill build)"),
+            ).alias("skill_name"),
+            F.coalesce(
+                skilled["derived_skill_level"],
+                F.when(skilled["skill_count"] == 1,
+                       F.split(skilled["skill_set_key"], ":").getItem(1).cast("int")),
+            ).alias("skill_level"),
             skilled["derived_bonus_per_hit"],
             skilled["derived_uptime"],
             skilled["dps_sustained"],
@@ -633,13 +713,17 @@ def run_diff(fact_a: DataFrame, fact_b: DataFrame) -> DataFrame:
         F.col("kill_rate").alias("kill_rate_b"),
     )
 
-    joined = left.join(right, _null_safe_join(left, right, key), "full_outer")
+    # Both sides carry `key` AND `descriptors` under the same names, and on a self-diff
+    # (a run against itself, or two facts read from one frame) they would carry the same
+    # expression ids too -- at which point the coalesces below silently read one side
+    # twice and every `only_b` row loses its identity again. Disambiguate both lists.
+    joined, right = _contrast_join(left, right, key, "full_outer", carry=descriptors)
     return (
         joined.select(
-            *[F.coalesce(left[k], right[k]).alias(k) for k in key],
+            *[F.coalesce(left[k], right[_RIGHT + k]).alias(k) for k in key],
             left["run_a"],
             right["run_b"],
-            *[F.coalesce(left[k], right[k]).alias(k) for k in descriptors],
+            *[F.coalesce(left[k], right[_RIGHT + k]).alias(k) for k in descriptors],
             left["dps_a"],
             right["dps_b"],
             left["ttk_a"],

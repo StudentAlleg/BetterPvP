@@ -82,6 +82,11 @@ def run(spark: SparkSession, cfg: Config, auditor: Auditor, run_id: int, publish
 
     if publish:
         _publish(cfg, produced, run_id)
+        # After the publish, because _publish is what refreshes the views these read. The
+        # baseline is the one thing in the warehouse that is ALSO implemented in the plugin,
+        # so it is the one thing that can drift without either side changing.
+        auditor.expect(_baseline_is_current(spark, cfg), fact)
+        auditor.expect(_baseline_agrees_with_engine(spark, cfg), fact)
 
     return counts
 
@@ -149,10 +154,25 @@ def _publish(cfg: Config, produced: dict[str, DataFrame], run_id: int) -> None:
 # bronze/silver/gold at all -- it lands in bronze and stops. Refreshing it here is what gives
 # that table its only consumer, and the view guards its own cost by restricting the scan to
 # runs whose builds actually carried a skill.
+# ORDER MATTERS. sim_gold_damage_point and sim_gold_skill_damage are both built FROM
+# sim_gold_weapon_damage, so refreshing them before it would rebuild them against the
+# previous run's rows and publish a chart that silently disagrees with the permutation grain
+# it was exploded from.
 _MATERIALIZED_VIEWS = ("sim_gold_tier_grid", "sim_gold_tier_extreme",
-                       "sim_gold_weapon_damage", "gold_skill_damage",
+                       "sim_gold_weapon_damage", "sim_gold_damage_point",
+                       # density reads damage_point; composition reads weapon_damage. Both
+                       # after their parents, for the reason above.
+                       "sim_gold_damage_density", "sim_gold_damage_composition",
+                       "gold_skill_damage",
                        "sim_gold_skill_damage", "gold_skill_coverage",
-                       "sim_gold_skill_modifier")
+                       "sim_gold_skill_modifier", "sim_gold_modifier_expectation",
+                       "sim_gold_ambient_modifier",
+                       # The standing baseline, and the lane summary built on top of it.
+                       # Refreshed last and in this order: the lane view reads the cell view,
+                       # and the cell view spans EVERY completed run rather than the one being
+                       # published, so it is the one view here whose content changes even when
+                       # this run's own marts do not.
+                       "sim_gold_baseline_cell", "sim_gold_baseline_lane")
 
 
 def _refresh_views(cfg: Config) -> None:
@@ -377,6 +397,131 @@ def _carried_rows_are_reported() -> Check:
         )
 
     return Check("carried_forward_share", GOLD, "matchup", fn)
+
+
+# The rule the plugin applies when it carries a matchup forward, written the way the plugin
+# writes it: a correlated lateral that takes the newest measurement of ONE matchup. The view
+# states the same rule as a ROW_NUMBER window over everything at once. Two formulations of one
+# rule, in two languages, in two repositories -- which is exactly the arrangement that agrees
+# on the day it is written and silently stops agreeing later.
+#
+# Restricted to CONTESTED cells, and that restriction is exact rather than a sample. A cell
+# only one run measured resolves to that run under any recency rule whatsoever, so it cannot
+# distinguish the two implementations. Every cell where they COULD disagree has
+# times_measured > 1, so checking those checks all of them -- 17,568 rows today instead of
+# 4,119,084, for the same guarantee.
+_ENGINE_RULE_SQL = """
+SELECT COUNT(*)                                                        AS contested,
+       COUNT(*) FILTER (WHERE c.supplied_by_run_id <> src.run_id)      AS disagreed,
+       COALESCE(MIN(c.supplied_by_run_id) FILTER
+                (WHERE c.supplied_by_run_id <> src.run_id), 0)         AS example_view_run,
+       COALESCE(MIN(src.run_id) FILTER
+                (WHERE c.supplied_by_run_id <> src.run_id), 0)         AS example_engine_run
+FROM sim_gold_baseline_cell c
+CROSS JOIN LATERAL (
+    SELECT r.run_id
+    FROM sim_result r
+    JOIN sim_build ob ON ob.id = r.build_id
+    JOIN sim_run run ON run.id = r.run_id
+    WHERE ob.fingerprint = c.fingerprint
+      AND r.target_role = c.target_role
+      AND r.target_armor = c.target_armor
+      AND r.config_scope_hash = c.config_scope_hash
+      AND run.realm = c.realm
+      AND run.status IN ('COMPLETED', 'CANCELLED')
+      AND run.scenario ->> 'scenario' = c.scenario
+    ORDER BY run.started_at DESC, run.id DESC
+    LIMIT 1
+) src
+WHERE c.contested
+"""
+
+# Whether the materialised baseline has been refreshed since the runs it is supposed to
+# describe. A stale matview is invisible to the rule check above -- both sides would agree
+# perfectly about a baseline that is missing a run entirely.
+_BASELINE_CURRENCY_SQL = """
+WITH newest AS (
+    SELECT DISTINCT ON (realm, scenario ->> 'scenario')
+           id, realm, scenario ->> 'scenario' AS scenario
+    FROM sim_run
+    WHERE status IN ('COMPLETED', 'CANCELLED')
+    ORDER BY realm, scenario ->> 'scenario', started_at DESC, id DESC
+)
+SELECT COUNT(*)                                            AS lanes,
+       COUNT(*) FILTER (WHERE b.cells IS NULL)             AS missing,
+       COALESCE(MIN(n.id) FILTER (WHERE b.cells IS NULL), 0) AS example_run
+FROM newest n
+         LEFT JOIN (SELECT realm, scenario, supplied_by_run_id, COUNT(*) AS cells
+                    FROM sim_gold_baseline_cell
+                    GROUP BY 1, 2, 3) b
+                   ON b.realm = n.realm AND b.scenario = n.scenario
+                       AND b.supplied_by_run_id = n.id
+-- A run with no hashed results can never supply a baseline cell and its absence is correct,
+-- so it is not evidence of staleness. Run 1 predates config_scope_hash entirely.
+WHERE EXISTS (SELECT 1 FROM sim_result r
+              WHERE r.run_id = n.id AND r.config_scope_hash IS NOT NULL)
+"""
+
+
+def _baseline_agrees_with_engine(spark: SparkSession, cfg: Config) -> Check:
+    """`sim_gold_baseline_cell` resolves every contested cell the way the plugin would.
+
+    The warehouse and the plugin now implement the same baseline rule independently -- the
+    view so a dashboard can show what the baseline is, `SimResultRepository` so a delta sweep
+    can carry from it. Nothing structural keeps them in step: someone tightening the view's
+    status filter, or reordering its recency tiebreak, or adding scope back to its partition,
+    would produce a dashboard that describes a baseline no sweep will ever use. The failure is
+    silent in both directions, which is the argument for checking it on every publish rather
+    than trusting the two comments to be read together.
+    """
+
+    def fn(_: DataFrame) -> tuple[bool, float, str]:
+        row = jdbc.query(spark, cfg, _ENGINE_RULE_SQL).first()
+        if row is None or row["contested"] == 0:
+            # No cell has been measured twice yet, so the two rules have not been asked a
+            # question they could answer differently. Reported rather than passed silently:
+            # "agrees everywhere" and "was never tested" are different states.
+            return True, 0.0, "no contested cells yet; the two rules are untested, not agreed"
+        disagreed = int(row["disagreed"])
+        contested = int(row["contested"])
+        if disagreed == 0:
+            return True, 0.0, (
+                f"all {contested} contested cells resolve to the same run in the view and "
+                f"under the plugin's carry rule"
+            )
+        return False, float(disagreed), (
+            f"{disagreed} of {contested} contested cells disagree: the view supplies them from "
+            f"run {row['example_view_run']}, the plugin's carry rule would take run "
+            f"{row['example_engine_run']}. sim_gold_baseline_cell and "
+            f"SimResultRepository.carryForwardResults have drifted apart"
+        )
+
+    return Check("baseline_agrees_with_engine", GOLD, "baseline_cell", fn)
+
+
+def _baseline_is_current(spark: SparkSession, cfg: Config) -> Check:
+    """The baseline view has been refreshed since the newest run in each lane.
+
+    Guards the blind spot in the check above: two implementations of a rule agree perfectly
+    about a baseline that is simply out of date. The newest run in a lane always supplies at
+    least its own cells -- nothing can supersede it -- so a newest run holding zero cells means
+    the matview has not been rebuilt since that run published.
+    """
+
+    def fn(_: DataFrame) -> tuple[bool, float, str]:
+        row = jdbc.query(spark, cfg, _BASELINE_CURRENCY_SQL).first()
+        if row is None or row["lanes"] == 0:
+            return True, 0.0, "no lane has a run carrying config scope hashes yet"
+        missing = int(row["missing"])
+        lanes = int(row["lanes"])
+        if missing == 0:
+            return True, 0.0, f"the newest run in each of {lanes} lane(s) supplies baseline cells"
+        return False, float(missing), (
+            f"{missing} of {lanes} lanes have a newest run (e.g. {row['example_run']}) supplying "
+            f"no baseline cells, so sim_gold_baseline_cell is stale against it"
+        )
+
+    return Check("baseline_is_current", GOLD, "baseline_cell", fn)
 
 
 def _armour_tier_is_known() -> Check:

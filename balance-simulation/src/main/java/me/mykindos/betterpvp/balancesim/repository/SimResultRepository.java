@@ -200,37 +200,57 @@ public class SimResultRepository {
     // -------------------------------------------------------------------------
 
     /**
-     * The newest finished run a delta sweep could carry rows forward from, or null if there is none.
+     * Every run whose measurements a delta sweep may carry forward, newest first.
      *
-     * <p>Candidacy is realm, scope and scenario -- deliberately <em>not</em> {@code config_hash},
-     * which is the whole point. A baseline is useful precisely when the balance config has moved
-     * since; requiring the hash to match would only ever find a run measured under identical config,
-     * which has nothing to carry that a resume would not already have found. What guards correctness
-     * instead is {@code sim_result.config_scope_hash}, compared per matchup: a row is carried only
-     * when the config <em>it</em> depended on is unchanged, whatever else in the game moved.
+     * <p>This used to return one run -- the newest finished one in a {@code (realm, scope, scenario)}
+     * lane -- and that was the bug. <b>Newest is not widest.</b> Run 14 measured 17,568 matchups
+     * across three weapons and two skills; run 12, two days older, measured 250,920 across 51 skills.
+     * Newest-wins picks run 14, so a delta sweep would carry forward 0.45% of what has actually been
+     * measured and re-run the rest, with nothing in the logs calling that a mistake.
      *
-     * <p>{@code COMPLETED} is preferred over {@code CANCELLED} rather than required. A stopped sweep's
-     * rows are real measurements and carrying them is sound; there are simply fewer of them, so a
-     * finished run is the better baseline where both exist. Ordering says that rather than a filter,
-     * because "no baseline" and "a thin baseline" both work and the thin one is better than nothing.
+     * <p><b>Scope is deliberately gone from the key.</b> It describes what a sweep VARIED, not what a
+     * measurement IS: a duel between a build and a target is that duel whether the sweep producing it
+     * was enumerating weapons or skills. Keeping scope in the lane kept run 7 (equipment, 3.6M
+     * matchups, no skills) and run 12 (skills, five weapons) permanently apart, so no delta run could
+     * ever use both halves of what the project knows. Dropping it is what makes one baseline out of
+     * many runs.
      *
-     * @param scope    the tier name as written to {@code sim_run.scenario}
+     * <p><b>Scenario stays.</b> A {@code MUTUAL} measurement is not a substitute for a {@code ONE_WAY}
+     * one -- the defender fights back, so the numbers answer different questions. Runs 12 and 13
+     * enumerate an identical 250,920-matchup build space and differ only in this, so collapsing the
+     * two would overwrite every cell with a measurement of something else.
+     *
+     * <p>Candidacy is still deliberately <em>not</em> {@code config_hash}. A baseline is useful
+     * precisely when the balance config has moved since; requiring the hash to match would only ever
+     * find a run measured under identical config, which has nothing to carry that a resume would not
+     * already have found. What guards correctness instead is {@code sim_result.config_scope_hash},
+     * compared per matchup: a row is carried only when the config <em>it</em> depended on is
+     * unchanged, whatever else in the game moved.
+     *
+     * <p>{@code CANCELLED} runs contribute. A stopped sweep's rows are real measurements and there is
+     * no reason to discard them -- under newest-wins a thin cancelled run could shadow a complete
+     * one, which is why it used to be ranked below {@code COMPLETED}; per-cell resolution removes
+     * that hazard, because a cancelled run can only ever supply cells it actually measured.
+     *
+     * <p>{@code engine_version} is not filtered on either. Carrying across engine versions is
+     * allowed: the scope hash covers the config a matchup depends on, and an engine change that
+     * invalidates a measurement is a change the hash cannot see. That is a real limitation and it is
+     * recorded here rather than papered over -- if the duel engine's damage maths changes, the
+     * baseline must be re-measured deliberately, because nothing in this query will notice.
+     *
      * @param scenario the scenario name as written to {@code sim_run.scenario}
+     * @return candidate run ids, newest first; empty when this lane has never been swept
      */
-    public CompletableFuture<@Nullable Long> findBaselineRun(int realm, String scope, String scenario) {
+    public CompletableFuture<List<Long>> findBaselineRuns(int realm, String scenario) {
         return database.getAsyncDslContext().executeAsync(ctx -> ctx
                 .select(SIM_RUN.ID)
                 .from(SIM_RUN)
                 .where(SIM_RUN.REALM.eq(realm))
                 .and(SIM_RUN.STATUS.in("COMPLETED", "CANCELLED"))
-                // The scenario column is JSONB; ->> reads a text member out of it. Matched on both
-                // scope and scenario because a MELEE baseline has nothing an EQUIPMENT sweep wants and
-                // a ONE_WAY row is not a MUTUAL measurement.
-                .and(DSL.field("scenario ->> 'scope'", String.class).eq(scope))
+                // The scenario column is JSONB; ->> reads a text member out of it.
                 .and(DSL.field("scenario ->> 'scenario'", String.class).eq(scenario))
-                .orderBy(DSL.field("status = 'COMPLETED'").desc(), SIM_RUN.STARTED_AT.desc(), SIM_RUN.ID.desc())
-                .limit(1)
-                .fetchOne(SIM_RUN.ID));
+                .orderBy(SIM_RUN.STARTED_AT.desc(), SIM_RUN.ID.desc())
+                .fetch(SIM_RUN.ID));
     }
 
     /**
@@ -291,10 +311,23 @@ public class SimResultRepository {
      * 1 would be 4.3 million rows over the wire and back for a copy Postgres can do without them
      * leaving the server.
      *
+     * <p><b>Resolved per matchup, not per run.</b> Each planned matchup independently finds the most
+     * recent measurement of itself anywhere in its lane, so one delta run can carry equipment cells
+     * from run 7 and skill cells from run 12 in a single statement. Picking one source run first --
+     * which is what this did -- meant the sweep could only ever inherit from whichever half of the
+     * game that run happened to cover.
+     *
      * @param runId      the delta run, which must already have its {@code sim_build} rows and its plan
-     * @param baselineId the run being carried from
+     * @param realm      the realm whose runs are candidates
+     * @param scenario   the scenario name as written to {@code sim_run.scenario}
+     * @param pinnedRun  a single run to carry from, or null to use the whole lane. Set by
+     *                   {@code --baseline}, for reproducing an old sweep's decisions exactly.
      */
-    public CompletableFuture<Integer> carryForwardResults(long runId, long baselineId) {
+    public CompletableFuture<Integer> carryForwardResults(long runId, int realm, String scenario,
+                                                          @Nullable Long pinnedRun) {
+        // Built as text rather than bound, because a null bind cannot be told from a real one inside
+        // `(? IS NULL OR r.run_id = ?)` without a cast, and the cast is harder to read than a branch.
+        final String pinClause = pinnedRun == null ? "" : "  AND r.run_id = " + pinnedRun + "\n";
         return database.getAsyncDslContext().executeAsync(ctx -> ctx.transactionResult(configuration -> {
             final DSLContext trx = DSL.using(configuration);
             return trx.execute("""
@@ -303,22 +336,41 @@ public class SimResultRepository {
                                             target_skills, target_points, target_role_aliases,
                                             dmg_per_hit, dps_sustained, dps_burst, ttk_s, hits_to_kill,
                                             energy_limited, extras, config_scope_hash, measured_run_id)
-                    SELECT ?, nb.id, r.target_role, r.target_armor, r.target_hp,
-                           r.target_armor_set, r.target_armor_tier,
-                           r.target_skills, r.target_points, r.target_role_aliases,
-                           r.dmg_per_hit, r.dps_sustained, r.dps_burst, r.ttk_s, r.hits_to_kill,
-                           r.energy_limited, r.extras, r.config_scope_hash,
-                           COALESCE(r.measured_run_id, r.run_id)
+                    SELECT ?, nb.id, src.target_role, src.target_armor, src.target_hp,
+                           src.target_armor_set, src.target_armor_tier,
+                           src.target_skills, src.target_points, src.target_role_aliases,
+                           src.dmg_per_hit, src.dps_sustained, src.dps_burst, src.ttk_s,
+                           src.hits_to_kill,
+                           src.energy_limited, src.extras, src.config_scope_hash,
+                           COALESCE(src.measured_run_id, src.run_id)
                     FROM sim_delta_plan p
-                    JOIN sim_build ob ON ob.run_id = ? AND ob.fingerprint = p.fingerprint
-                    JOIN sim_result r ON r.run_id = ?
-                                     AND r.build_id = ob.id
-                                     AND r.target_role = p.target_role
-                                     AND r.target_armor = p.target_armor
-                                     AND r.config_scope_hash = p.config_scope_hash
                     JOIN sim_build nb ON nb.run_id = ? AND nb.fingerprint = p.fingerprint
+                    -- One source row per planned matchup: the newest measurement of THIS matchup
+                    -- under an unchanged config scope, from anywhere in the lane. LIMIT 1 inside the
+                    -- lateral is what keeps the insert one row per plan row -- without it a matchup
+                    -- measured by three runs would be carried three times and every downstream
+                    -- aggregate would triple-count it.
+                    CROSS JOIN LATERAL (
+                        SELECT r.*
+                        FROM sim_result r
+                        JOIN sim_build ob ON ob.id = r.build_id
+                        JOIN sim_run run ON run.id = r.run_id
+                        WHERE ob.fingerprint = p.fingerprint
+                          AND r.target_role = p.target_role
+                          AND r.target_armor = p.target_armor
+                          AND r.config_scope_hash = p.config_scope_hash
+                          -- Never carry from the run being built. Reachable with --changed --resume,
+                          -- where this run is already the newest in its own lane; without it a
+                          -- resumed sweep would copy its own rows back onto itself.
+                          AND r.run_id <> ?
+                          AND run.realm = ?
+                          AND run.status IN ('COMPLETED', 'CANCELLED')
+                          AND run.scenario ->> 'scenario' = ?
+                    %s                    ORDER BY run.started_at DESC, run.id DESC
+                        LIMIT 1
+                    ) src
                     WHERE p.run_id = ?
-                    """, baselineId, baselineId, baselineId, runId, runId);
+                    """.formatted(pinClause), runId, runId, runId, realm, scenario, runId);
         }));
     }
 
@@ -332,30 +384,37 @@ public class SimResultRepository {
      * allow-list while a resume drives from a skip-list: the two are the same decision read from
      * whichever end is cheaper to hold.
      */
-    public CompletableFuture<Set<String>> findPendingMatchups(long runId, long baselineId) {
+    public CompletableFuture<Set<String>> findPendingMatchups(long runId, int realm, String scenario,
+                                                              @Nullable Long pinnedRun) {
+        final String pinClause = pinnedRun == null ? "" : "        AND r.run_id = " + pinnedRun + "\n";
+        // Existence, not recency: this asks whether ANY run in the lane still holds a valid
+        // measurement of the matchup. Which one supplies it is the carry's problem, and asking that
+        // here would mean ordering 4 million times to answer a yes/no question.
         return database.getAsyncDslContext().executeAsync(ctx -> {
             final Set<String> pending = new HashSet<>();
-            ctx.select(SIM_DELTA_PLAN.FINGERPRINT, SIM_DELTA_PLAN.TARGET_ROLE, SIM_DELTA_PLAN.TARGET_ARMOR)
-                    .from(SIM_DELTA_PLAN)
-                    .where(SIM_DELTA_PLAN.RUN_ID.eq(runId))
-                    // Asked of the baseline rather than of what the carry landed, so the answer is the
-                    // same whether or not this run is copying the unchanged rows in. "Did the baseline
-                    // measure this matchup under a config scope that has not moved" is the actual
-                    // question; whether we then chose to keep a copy of the answer is a separate one.
-                    .andNotExists(DSL.selectOne()
-                            .from(SIM_RESULT)
-                            .join(SIM_BUILD).on(SIM_BUILD.ID.eq(SIM_RESULT.BUILD_ID))
-                            .where(SIM_RESULT.RUN_ID.eq(baselineId))
-                            .and(SIM_BUILD.RUN_ID.eq(baselineId))
-                            .and(SIM_BUILD.FINGERPRINT.eq(SIM_DELTA_PLAN.FINGERPRINT))
-                            .and(SIM_RESULT.TARGET_ROLE.eq(SIM_DELTA_PLAN.TARGET_ROLE))
-                            .and(SIM_RESULT.TARGET_ARMOR.eq(SIM_DELTA_PLAN.TARGET_ARMOR))
-                            .and(SIM_RESULT.CONFIG_SCOPE_HASH.eq(SIM_DELTA_PLAN.CONFIG_SCOPE_HASH)))
-                    .fetch()
+            ctx.fetch("""
+                            SELECT p.fingerprint, p.target_role, p.target_armor
+                            FROM sim_delta_plan p
+                            WHERE p.run_id = ?
+                              AND NOT EXISTS (
+                                SELECT 1
+                                FROM sim_result r
+                                JOIN sim_build ob ON ob.id = r.build_id
+                                JOIN sim_run run ON run.id = r.run_id
+                                WHERE ob.fingerprint = p.fingerprint
+                                  AND r.target_role = p.target_role
+                                  AND r.target_armor = p.target_armor
+                                  AND r.config_scope_hash = p.config_scope_hash
+                                  AND r.run_id <> ?
+                                  AND run.realm = ?
+                                  AND run.status IN ('COMPLETED', 'CANCELLED')
+                                  AND run.scenario ->> 'scenario' = ?
+                            %s                  )
+                            """.formatted(pinClause), runId, runId, realm, scenario)
                     .forEach(record -> pending.add(matchupKey(
-                            record.get(SIM_DELTA_PLAN.FINGERPRINT),
-                            record.get(SIM_DELTA_PLAN.TARGET_ROLE),
-                            record.get(SIM_DELTA_PLAN.TARGET_ARMOR))));
+                            record.get("fingerprint", String.class),
+                            record.get("target_role", String.class),
+                            record.get("target_armor", String.class))));
             return pending;
         });
     }

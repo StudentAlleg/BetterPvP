@@ -1,4 +1,4 @@
--- Serving-layer tables for the balance-simulation medallion pipeline.
+﻿-- Serving-layer tables for the balance-simulation medallion pipeline.
 --
 -- Spark's JDBC writer will create these itself on a first publish, but only as
 -- untyped, unindexed heaps. Applying this file first gives the marts their indexes
@@ -606,6 +606,12 @@ CREATE INDEX IF NOT EXISTS idx_gold_tier_extreme_scan
 -- Collapsed over target: dmg_per_hit and swing interval do not depend on who is
 -- being hit (armour is pure health), so keeping target in the grain would
 -- multiply the view by six and put six identical damage numbers in every box.
+-- Dropped deepest-first: density reads damage_point, damage_point and composition read
+-- weapon_damage. Postgres refuses to drop a view something else depends on, so this order
+-- is what lets the file be re-run from the top.
+DROP MATERIALIZED VIEW IF EXISTS sim_gold_damage_density;
+DROP MATERIALIZED VIEW IF EXISTS sim_gold_damage_composition;
+DROP MATERIALIZED VIEW IF EXISTS sim_gold_damage_point;
 DROP MATERIALIZED VIEW IF EXISTS sim_gold_skill_damage;
 DROP MATERIALIZED VIEW IF EXISTS sim_gold_weapon_damage;
 CREATE MATERIALIZED VIEW sim_gold_weapon_damage AS
@@ -616,8 +622,26 @@ SELECT run_id,
        rune_set_key,
        MIN(runes)                                                   AS runes,
        rune_count,
-       COALESCE(derived_skill, 'none')                              AS skill,
-       COALESCE(derived_skill_level, 0)                             AS skill_level,
+       -- A MEASURED skill has to reach this axis, and used to not.
+       --
+       -- This was `COALESCE(derived_skill, 'none')`, and derived_skill is set only on a
+       -- MODELLED row -- so every skill the sweep actually fought with fell through to
+       -- 'none' and was averaged into the skill-less bucket. Run 14 is the case that
+       -- shows the damage: all 17,568 of its duels, Blood Barrier and Tormented Soil
+       -- included, sat under skill = 'none', so the weapon and rune axes could neither
+       -- show a measured skill nor exclude one from the bare baseline they compare to.
+       --
+       -- skill_set_key is the measured identity and is already on the fact. Split only
+       -- for a single-slot build: a multi-skill row has several candidate explanations
+       -- for one number and naming the first slot would imply an attribution this view
+       -- has not made. Same rule as marts.skill_contribution, deliberately.
+       CASE WHEN derived_skill IS NOT NULL THEN derived_skill
+            WHEN skill_count = 1 THEN split_part(skill_set_key, ':', 1)
+            WHEN skill_count > 1 THEN '(multi-skill build)'
+            ELSE 'none' END                                         AS skill,
+       CASE WHEN derived_skill IS NOT NULL THEN derived_skill_level
+            WHEN skill_count = 1 THEN NULLIF(split_part(skill_set_key, ':', 2), '')::int
+            ELSE 0 END                                              AS skill_level,
        AVG(derived_bonus_per_hit)                                   AS skill_bonus,
        COUNT(*)                                                     AS duels,
        COUNT(DISTINCT role)                                         AS roles,
@@ -633,6 +657,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_gold_weapon_damage_key
     ON sim_gold_weapon_damage (run_id, weapon_key, weapon_roll, rune_set_key, skill, skill_level);
 CREATE INDEX IF NOT EXISTS idx_gold_weapon_damage_scan
     ON sim_gold_weapon_damage (run_id, weapon_roll, rune_count, skill_level);
+
 
 
 -- ---------------------------------------------------------------------------
@@ -1070,6 +1095,13 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_gold_skill_coverage_key
 -- of millions of rows, all of them from builds with no skills at all. `skill_runs` restricts
 -- the scan to runs that actually measured a skill, so this view costs what run 12 costs
 -- rather than what the archive costs.
+-- Dependents first. sim_gold_modifier_expectation, _ambient_modifier and the plain view
+-- _modifier_unmatched all read sim_gold_skill_modifier, and Postgres refuses to drop a view
+-- something depends on -- so without these three lines this file cannot be re-run from the
+-- top at all. It could not, until the re-run was actually attempted.
+DROP VIEW IF EXISTS sim_gold_modifier_unmatched;
+DROP MATERIALIZED VIEW IF EXISTS sim_gold_ambient_modifier;
+DROP MATERIALIZED VIEW IF EXISTS sim_gold_modifier_expectation;
 DROP MATERIALIZED VIEW IF EXISTS sim_gold_skill_modifier;
 CREATE MATERIALIZED VIEW sim_gold_skill_modifier AS
 WITH skill_runs AS (
@@ -1321,3 +1353,829 @@ COMMENT ON VIEW sim_gold_run_health IS
         'published. Plain view, not materialized: a run blocked by a failing gold '
         'expectation must be visible without the refresh that failure prevented. health is '
         'blocked | unpublished | warnings | clean.';
+
+
+-- ---------------------------------------------------------------------------
+-- sim_gold_modifier_expectation -- measured operand vs the one config declares.
+--
+-- The join nothing had made. sim_gold_skill_modifier reads what the game DID to a hit;
+-- gold_skill_damage parses what config DECLARES. Both existed, neither was compared to
+-- the other, and the cost of that gap is that a measured operand carries no scale: a
+-- reader looking at Tormented Soil's flat 1.33 and Blood Barrier's flat 0.7 has no way
+-- to tell that the first is exactly what config asks for and the second is a correct
+-- number landing on the wrong side of the fight.
+--
+-- THE KEY NAME DOES NOT DECIDE THE FORMULA -- the construction does, and the two do not
+-- agree. Void declares `baseDamageReduction = 2.0` and builds `Flat(-2.0)`; Agility
+-- declares the same key and builds `Multiplier(1 - x)`. A first cut of this view read the
+-- formula off the key and reported Void as off by exactly -1.0 at every level, which is
+-- the signature of applying `1 - x` to something that was never a multiplier. So the shape
+-- comes from the MEASURED operator and only the magnitude comes from config:
+--
+--   operator = MULTIPLIER, increase key    1 + x    Tormented Soil, Frailty
+--   operator = MULTIPLIER, reduction key   1 - x    Agility, Defensive Stance,
+--                                                   Vanguards Might, Blood Barrier
+--   operator = FLAT,       reduction key     -x     Void, Break Fall, Level Field
+--
+-- Reduction keys are spelled four ways across the catalog -- baseDamageReduction,
+-- damageReduction, baseDamageReduced -- and missing one is silent: Blood Barrier uses
+-- `damageReduction`, so it simply failed to join and vanished from the view rather than
+-- reporting a mismatch. Absence is the failure mode to watch here, which is what
+-- `unmatched_skills` at the bottom of this file exists to make visible.
+--
+-- Deflection and Combo Attack are expected to MISS and that is the view earning its keep:
+-- their operand is a function of accumulated charge or hit streak, not of (skill, level),
+-- so no config row can predict it. They report 'ramping' rather than a discrepancy,
+-- because a view that flagged them as wrong would be crying wolf forever.
+--
+-- The verdict worth building this for is 'agrees, wrong axis': config predicts the operand
+-- exactly AND the measured direction is not the one the skill's targeting implies. That is
+-- the shape of the ally-targeting defect -- the arithmetic was never wrong, the fight was.
+-- 'agrees, both axes' is its weaker cousin, for a one-sided skill measured as symmetric;
+-- Fortify is symmetric by design, so this is a flag to read rather than a failure.
+DROP MATERIALIZED VIEW IF EXISTS sim_gold_modifier_expectation;
+CREATE MATERIALIZED VIEW sim_gold_modifier_expectation AS
+WITH kv AS (
+    -- Same parse as gold_skill_damage, kept local rather than shared: that view filters to
+    -- base_damage IS NOT NULL and so drops every pure-multiplier skill, which is precisely
+    -- the population this one is about.
+    SELECT realm,
+           split_part(config_key, '.', 3)  AS skill,
+           split_part(config_key, '.', 4)  AS param,
+           MAX(config_value::numeric)      AS val
+    FROM grafana_config
+    WHERE plugin = 'Champions'
+      AND config_file = 'skills/skills'
+      AND config_key ~ '^skills\.[^.]+\.[^.]+\.[^.]+$'
+      AND config_value ~ '^-?[0-9]+(\.[0-9]+)?$'
+    GROUP BY 1, 2, 3
+),
+declared AS (
+    SELECT realm, skill,
+           MAX(val) FILTER (WHERE param IN ('baseDamageIncrease',
+                                            'baseDamagePercent'))                AS amp_base,
+           COALESCE(MAX(val) FILTER (WHERE param IN ('damageIncreasePerLevel',
+                                                     'damagePercentIncreasePerLevel')), 0)
+                                                                                 AS amp_per_level,
+           MAX(val) FILTER (WHERE param IN ('baseDamageReduction',
+                                            'damageReduction',
+                                            'baseDamageReduced'))                AS red_base,
+           COALESCE(MAX(val) FILTER (WHERE param IN ('damageReductionIncreasePerLevel',
+                                                     'damageReductionPerLevel',
+                                                     'damagedReducedPerLevel')), 0)
+                                                                                 AS red_per_level,
+           -- Levels come from the skill's own declaration, not a hardcoded 5. Void caps at 3.
+           COALESCE(MAX(val) FILTER (WHERE param = 'maxlevel'), 5)               AS max_level
+    FROM kv GROUP BY 1, 2
+),
+-- The declared magnitude per level, still unsigned and still unshaped. Turning it into an
+-- operand needs the operator, which lives on the measured row.
+declared_level AS (
+    SELECT d.realm, d.skill, lvl.level AS skill_level,
+           d.amp_base IS NOT NULL                                       AS amplifying,
+           CASE WHEN d.amp_base IS NOT NULL
+                    THEN d.amp_base + d.amp_per_level * (lvl.level - 1)
+                ELSE d.red_base + d.red_per_level * (lvl.level - 1) END  AS magnitude
+    FROM declared d
+             CROSS JOIN LATERAL (SELECT generate_series(1, d.max_level::int) AS level) lvl
+    WHERE COALESCE(d.amp_base, d.red_base) IS NOT NULL
+),
+joined AS (
+    SELECT m.run_id,
+           m.role,
+           m.skill_name,
+           m.skill_level,
+           m.modifier_source,
+           m.operator,
+           m.scaling_class,
+           m.direction,
+           m.hits,
+           m.hits_outgoing,
+           m.hits_incoming,
+           m.operand_median,
+           CASE
+               WHEN m.operator = 'MULTIPLIER' AND e.amplifying     THEN 1 + e.magnitude
+               WHEN m.operator = 'MULTIPLIER' AND NOT e.amplifying THEN 1 - e.magnitude
+               WHEN e.amplifying                                   THEN     e.magnitude
+               ELSE                                                        -e.magnitude
+               END AS expected_operand,
+           CASE
+               WHEN m.operator = 'MULTIPLIER' AND e.amplifying     THEN 'Multiplier(1 + increase)'
+               WHEN m.operator = 'MULTIPLIER' AND NOT e.amplifying THEN 'Multiplier(1 - reduction)'
+               WHEN e.amplifying                                   THEN 'Flat(+increase)'
+               ELSE                                                     'Flat(-reduction)'
+               END AS basis,
+           -- What the skill's targeting implies, which is the axis the measurement is checked
+           -- against. A reduction the holder applies to itself is incoming; an increase it
+           -- applies to whoever it hits is outgoing.
+           CASE WHEN e.amplifying THEN 'outgoing' ELSE 'incoming' END AS expected_direction
+    FROM sim_gold_skill_modifier m
+             JOIN declared_level e
+                  ON e.skill = lower(regexp_replace(m.skill_name, '[^a-zA-Z0-9]', '', 'g'))
+                      AND e.skill_level = m.skill_level
+    -- Only the skill's own modifier is checked against the skill's own config. A rune or a
+    -- potion effect riding the same hit is a real row in sim_gold_skill_modifier and has no
+    -- business being compared to this skill's declared numbers.
+    WHERE m.is_own_skill
+)
+SELECT j.*,
+       j.operand_median - j.expected_operand AS operand_delta,
+       CASE
+           -- Named before it is compared: an operand that is not a property of (skill, level)
+           -- has nothing to compare against, and saying so beats reporting a false miss.
+           WHEN j.scaling_class = 'ramping'
+               THEN 'ramping -- not predictable from config'
+           WHEN j.hits = 0
+               THEN 'silent -- never reached the damage pipeline'
+           -- Half a percent of the operand, floored, so a level-5 multiplier is not judged by
+           -- the same absolute tolerance as a level-1 one.
+           WHEN abs(j.operand_median - j.expected_operand)
+                    > GREATEST(0.005, abs(j.expected_operand) * 0.005)
+               THEN 'differs from config'
+           -- A ONE_WAY run never observes an incoming hit, so its direction is an artefact of
+           -- the scenario and cannot contradict anything.
+           WHEN j.direction IS NULL OR j.direction LIKE 'outgoing (unverified)%'
+               THEN 'agrees with config'
+           WHEN j.direction = 'symmetric' AND j.expected_direction <> 'symmetric'
+               THEN 'agrees, both axes'
+           WHEN j.direction <> j.expected_direction
+               THEN 'agrees, wrong axis'
+           ELSE 'agrees with config'
+           END AS verdict
+FROM joined j;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_gold_modifier_expectation_key
+    ON sim_gold_modifier_expectation (run_id, role, skill_name, skill_level,
+                                      modifier_source, operator);
+CREATE INDEX IF NOT EXISTS idx_gold_modifier_expectation_verdict
+    ON sim_gold_modifier_expectation (run_id, verdict);
+
+COMMENT ON MATERIALIZED VIEW sim_gold_modifier_expectation IS
+    'Measured damage operand vs the one config declares, per skill and level. The formula '
+        'shape comes from the MEASURED operator and only the magnitude from config, because '
+        'the key name does not decide the construction -- Void and Agility declare the same '
+        'baseDamageReduction and build Flat(-x) and Multiplier(1-x) respectively. verdict is '
+        'agrees with config | differs from config | agrees, wrong axis | agrees, both axes | '
+        'ramping | silent. "agrees, wrong axis" means the arithmetic is right and the damage '
+        'landed on the wrong side of the fight, which is what an ally-targeted buff hitting '
+        'the opponent looks like.';
+
+
+-- ---------------------------------------------------------------------------
+-- sim_gold_modifier_unmatched -- skills the expectation view could not check.
+--
+-- The companion the view above needs to be trustworthy, because its failure mode is
+-- ABSENCE. Blood Barrier spells its key `damageReduction` rather than `baseDamageReduction`,
+-- so the first cut of the join simply did not match it -- and a skill that is missing looks
+-- exactly like a skill that is fine. Nothing on a dashboard would have said otherwise.
+--
+-- Plain view: it is small, it is read after a config change as often as after a sweep, and
+-- being one refresh stale is precisely the state it exists to catch.
+CREATE OR REPLACE VIEW sim_gold_modifier_unmatched AS
+SELECT m.run_id,
+       m.role,
+       m.skill_name,
+       m.skill_level,
+       m.operator,
+       m.direction,
+       m.hits,
+       m.operand_median,
+       CASE WHEN m.hits = 0 THEN 'silent -- nothing to reconcile'
+            ELSE 'no reduction/increase key in config for this skill' END AS reason
+FROM sim_gold_skill_modifier m
+WHERE m.is_own_skill
+  AND NOT EXISTS (SELECT 1
+                  FROM sim_gold_modifier_expectation x
+                  WHERE x.run_id = m.run_id
+                    AND x.skill_name = m.skill_name
+                    AND x.skill_level = m.skill_level
+                    AND x.modifier_source = m.modifier_source);
+
+COMMENT ON VIEW sim_gold_modifier_unmatched IS
+    'Skills carrying a measured own-skill modifier that sim_gold_modifier_expectation could '
+        'not reconcile, because config declares no damage increase or reduction key it '
+        'recognises. Exists because that view fails by absence, and a missing skill is '
+        'indistinguishable from a passing one.';
+
+-- ---------------------------------------------------------------------------
+-- sim_gold_ambient_modifier -- modifiers that are NOT a property of the build.
+--
+-- The axis the warehouse did not have. Everything else here models a modifier as something
+-- a build CARRIES, so a projection can walk (weapon x skill x rune) and compose. A large and
+-- growing class of modifiers does not work that way: it belongs to the SITUATION, and can
+-- land on any build at all regardless of what that build brings.
+--
+--   Tormented Soil    a zone. Its onDamage handler asks only where the DAMAGEE is standing
+--                     and never whether the damager carries the skill, so anyone who fights
+--                     inside it takes 1.33x -- including a build with no damage skills.
+--   Blood Barrier     ShieldData is written for the caster AND for every nearby ally, so a
+--                     player who never took the skill can carry its 0.7.
+--   Arctic Armour     resistance granted by someone else's aura.
+--   Vulnerability     a debuff an opponent places on YOU. Measured here at 1.1.
+--
+-- Membership is MEASURED, not declared: a row appears here when a modifier was recorded on a
+-- hit from a build that does not carry its source. That is a fact about the trace, so the view
+-- cannot go stale against a skill list, and a skill that gains ally-application shows up the
+-- next time it is swept without anyone editing SQL.
+--
+-- What it is FOR. A projected row is currently `base x own modifiers`. These are the terms that
+-- have to be applied on top of any such row, as an overlay with an uptime rather than as a
+-- build attribute -- which is why `hit_share` is here: it is the fraction of the run's hits the
+-- modifier actually touched, and it is the honest coefficient to project with. A projection
+-- that folds an ambient modifier into a build's own stack attributes someone else's zone to
+-- that build's kit.
+--
+-- CAVEAT, and it is the reason to read hit_share rather than trust it: runs 12 and 13 predate
+-- the EntityProperty.ENEMY fix, so an ally-targeted buff could land on the opponent, and arena
+-- reuse let one duel's zone survive into the next. Both inflate ambient reach. Re-measure after
+-- a rebuilt-plugin sweep before projecting from these numbers.
+DROP MATERIALIZED VIEW IF EXISTS sim_gold_ambient_modifier;
+CREATE MATERIALIZED VIEW sim_gold_ambient_modifier AS
+WITH skill_keys AS (
+    SELECT DISTINCT split_part(config_key, '.', 3) AS skill
+    FROM grafana_config
+    WHERE plugin = 'Champions' AND config_file = 'skills/skills'
+),
+-- Rune names as the sweep spells them ('core:brutality'), so an equipment-sourced modifier
+-- ('Rune of Brutality') can be told from a genuinely ambient one. Matched on containment
+-- because the two namespaces disagree about prefixes, not about the noun.
+--
+-- SCOPED TO THE RUNS THIS VIEW COVERS, which is not a detail. Unscoped, the lateral walks
+-- every build in the archive -- runs 1 and 7 are EQUIPMENT sweeps of millions of rune-bearing
+-- builds -- to produce a list of maybe a dozen distinct nouns, and the refresh does not
+-- finish in two minutes. Restricted to the skill runs it is 20,910 builds and instant.
+rune_keys AS (
+    SELECT DISTINCT regexp_replace(lower(split_part(r #>> '{}', ':', 2)),
+                                   '[^a-z0-9]', '', 'g') AS rune
+    FROM sim_build b CROSS JOIN LATERAL jsonb_array_elements(b.runes) r
+    WHERE b.run_id IN (SELECT DISTINCT run_id FROM sim_gold_skill_modifier)
+),
+run_hits AS (
+    SELECT run_id, SUM(hits) AS hits_in_run
+    FROM sim_gold_skill_modifier WHERE hits > 0 GROUP BY 1
+),
+foreign_mods AS (
+    SELECT m.run_id,
+           m.modifier_source,
+           m.operator,
+           m.modifier_type,
+           m.reductive,
+           lower(regexp_replace(m.modifier_source, '[^a-zA-Z0-9]', '', 'g')) AS source_key,
+           m.skill_name,
+           m.hits,
+           m.direction,
+           m.operand_min,
+           m.operand_max,
+           m.operand_median
+    FROM sim_gold_skill_modifier m
+    WHERE NOT m.is_own_skill
+      AND m.hits > 0
+)
+SELECT f.run_id,
+       f.modifier_source,
+       f.operator,
+       f.modifier_type,
+       f.reductive,
+       -- Where the modifier comes from, which decides whether a projection already has it.
+       -- Equipment is ALREADY modelled by the rune marts; skill and effect are not.
+       CASE
+           WHEN EXISTS (SELECT 1 FROM rune_keys r WHERE f.source_key LIKE '%' || r.rune || '%')
+               THEN 'equipment'
+           WHEN EXISTS (SELECT 1 FROM skill_keys s WHERE s.skill = f.source_key)
+               THEN 'skill (someone else''s)'
+           ELSE 'effect'
+           END                                            AS source_class,
+       COUNT(DISTINCT f.skill_name)                       AS carrier_skills,
+       string_agg(DISTINCT f.skill_name, ', ')            AS carried_by,
+       string_agg(DISTINCT f.direction, ', ')             AS directions,
+       SUM(f.hits)                                        AS hits,
+       -- The coefficient to project with. Not a probability of the modifier existing -- it is
+       -- the share of measured hits it actually touched, under this sweep's conditions.
+       SUM(f.hits)::numeric / NULLIF(MAX(rh.hits_in_run), 0) AS hit_share,
+       MIN(f.operand_min)                                 AS operand_min,
+       MAX(f.operand_max)                                 AS operand_max,
+       -- Weighted by hits, so a modifier seen 40k times on one operand is not averaged flat
+       -- against one seen twice on another.
+       SUM(f.operand_median * f.hits) / NULLIF(SUM(f.hits), 0) AS operand_weighted
+FROM foreign_mods f
+         JOIN run_hits rh ON rh.run_id = f.run_id
+GROUP BY 1, 2, 3, 4, 5, 6;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_gold_ambient_modifier_key
+    ON sim_gold_ambient_modifier (run_id, modifier_source, operator, modifier_type, reductive);
+
+COMMENT ON MATERIALIZED VIEW sim_gold_ambient_modifier IS
+    'Damage modifiers measured on builds that do not carry their source -- a zone, an ally''s '
+        'aura or shield, an opponent''s debuff. These belong to the situation rather than to '
+        'the build, so a projection must apply them as an overlay weighted by hit_share, not '
+        'fold them into the build''s own modifier stack. source_class separates equipment '
+        '(already modelled by the rune marts) from skill and effect (not modelled anywhere '
+        'else). Measured under runs that predate the EntityProperty.ENEMY fix, so reach is '
+        'overstated until a rebuilt-plugin sweep re-measures it.';
+
+
+
+-- ---------------------------------------------------------------------------
+-- sim_gold_baseline_cell -- the standing baseline, as a UNION OF MEASUREMENTS
+-- rather than as a chosen run.
+--
+-- The question this answers is "what does the game look like right now", and the reason it
+-- is a view rather than a run id is that no single run has ever measured the whole game.
+-- Run 7 swept equipment across 241,290 builds and equipped no skills; runs 12-14 swept
+-- skills across at most 5 weapons. Any rule that picks ONE run as the baseline throws away
+-- whichever half it did not pick.
+--
+-- THE TRAP THIS EXISTS TO REMOVE. The engine's own baseline rule (SimResultRepository
+-- .findBaselineRun) is newest-COMPLETED-wins within a (realm, scope, scenario) lane. In the
+-- SKILLS/one_way lane that currently selects run 14 -- 17,568 cells, three weapons, two
+-- skills -- over run 12, which measured 250,920 cells across 51 skills. A delta sweep
+-- launched today would carry forward 0.4% of what has actually been measured and re-run the
+-- rest, and nothing in the logs would call that a mistake. Newest is not widest.
+--
+-- WHY SCOPE IS NOT IN THE KEY, which is the whole design change. `scope` describes what a
+-- sweep VARIED, not what a cell IS. A measurement of (build fingerprint, target) is that
+-- measurement whether the sweep that produced it was enumerating weapons or skills, so
+-- keying the baseline on scope keeps two runs apart that should compose. Dropping it is
+-- what lets runs 7, 12, 13 and 14 be one baseline instead of three.
+--
+-- WHY SCENARIO IS. A MUTUAL measurement is not a substitute for a ONE_WAY one -- the
+-- defender fights back, so the numbers mean different things. Runs 12 and 13 enumerate an
+-- IDENTICAL build space (250,920 cells each) and differ only in scenario; collapsing them
+-- would silently overwrite one with the other on every cell. Scenario stays in the key.
+--
+-- Rows without a config_scope_hash are excluded, which drops run 1 entirely (0 of its
+-- 4,343,220 rows have one). That is correct rather than unfortunate: the hash is what a
+-- delta run compares against to decide whether a cell is still valid, so a cell without one
+-- can never be carried forward and does not belong in a baseline.
+DROP MATERIALIZED VIEW IF EXISTS sim_gold_baseline_lane;
+DROP MATERIALIZED VIEW IF EXISTS sim_gold_baseline_cell;
+CREATE MATERIALIZED VIEW sim_gold_baseline_cell AS
+WITH ranked AS (
+    SELECT run.realm,
+           run.scenario ->> 'scenario'                       AS scenario,
+           run.scenario ->> 'scope'                          AS measured_scope,
+           b.fingerprint,
+           r.target_role,
+           r.target_armor,
+           -- TWO different runs, and conflating them is a bug waiting for the first delta
+           -- sweep. `supplied_by` is the run whose sim_result row won recency and is what a
+           -- carry would copy FROM. `measured_run_id` is the run whose duels originally
+           -- produced the number, which survives any number of carries via the source row's
+           -- own value -- exactly the COALESCE carryForwardResults writes. They are equal on
+           -- every row today only because no delta run has ever executed.
+           r.run_id                                          AS supplied_by_run_id,
+           COALESCE(r.measured_run_id, r.run_id)             AS measured_run_id,
+           run.started_at                                    AS supplied_at,
+           run.config_hash,
+           run.engine_version,
+           r.config_scope_hash,
+           b.role,
+           b.weapon                                          AS weapon_key,
+           -- Bronze stores runes and skills as jsonb; the '+'-joined set keys are a gold
+           -- construction and are not available this far upstream. Their text form is a
+           -- stable set identity here because builds.py emits both arrays sorted, and set
+           -- identity is all the lane view counts.
+           b.runes::text                                     AS rune_set_key,
+           NULLIF(b.skills::text, '{}')                      AS skill_set_key,
+           r.dmg_per_hit,
+           r.dps_sustained,
+           r.ttk_s,
+           r.hits_to_kill,
+           -- Newest measurement of a cell wins. Ties broken on run id so the choice is
+           -- deterministic across refreshes -- an unstable baseline would make every diff
+           -- built on it unreproducible.
+           ROW_NUMBER() OVER (
+               PARTITION BY run.realm, run.scenario ->> 'scenario',
+                   b.fingerprint, r.target_role, r.target_armor
+               ORDER BY run.started_at DESC, r.run_id DESC)  AS recency,
+           COUNT(*) OVER (
+               PARTITION BY run.realm, run.scenario ->> 'scenario',
+                   b.fingerprint, r.target_role, r.target_armor) AS times_measured
+    FROM sim_result r
+             JOIN sim_build b ON b.id = r.build_id
+             JOIN sim_run run ON run.id = r.run_id
+    WHERE run.status IN ('COMPLETED', 'CANCELLED')
+      AND r.config_scope_hash IS NOT NULL
+)
+SELECT realm, scenario, measured_scope, fingerprint, target_role, target_armor,
+       supplied_by_run_id, measured_run_id, supplied_at, config_hash, engine_version,
+       config_scope_hash,
+       role, weapon_key, rune_set_key, skill_set_key,
+       dmg_per_hit, dps_sustained, ttk_s, hits_to_kill,
+       times_measured,
+       -- A cell measured more than once is a cell an older run also covered. Not an error --
+       -- it is exactly what re-measuring after a change looks like -- but it is the set a
+       -- drift check should read, because those are the cells where two runs can disagree.
+       times_measured > 1 AS contested
+FROM ranked
+WHERE recency = 1;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_gold_baseline_cell_key
+    ON sim_gold_baseline_cell (realm, scenario, fingerprint, target_role, target_armor);
+CREATE INDEX IF NOT EXISTS idx_gold_baseline_cell_run
+    ON sim_gold_baseline_cell (supplied_by_run_id);
+CREATE INDEX IF NOT EXISTS idx_gold_baseline_cell_scope
+    ON sim_gold_baseline_cell (realm, scenario, config_scope_hash);
+
+COMMENT ON MATERIALIZED VIEW sim_gold_baseline_cell IS
+    'The standing baseline: one row per (realm, scenario, build fingerprint, target), '
+        'supplied by whichever run measured it most recently. A union of runs rather than a '
+        'chosen run, because no single sweep has measured the whole game -- run 7 covers '
+        'equipment with no skills, runs 12-14 cover skills on at most five weapons. Scope is '
+        'deliberately NOT in the key (it describes what a sweep varied, not what a cell is); '
+        'scenario is (a MUTUAL measurement is not a ONE_WAY one). config_scope_hash is what a '
+        'delta sweep compares against to decide a cell is still valid.';
+
+
+-- ---------------------------------------------------------------------------
+-- sim_gold_baseline_lane -- what the baseline is made of, and what the engine would
+-- pick instead.
+--
+-- The decision panel. One row per (realm, scenario, contributing run): how many cells that
+-- run still supplies, how many it has had superseded, and whether the engine's own
+-- newest-wins rule would select it. Reading it against sim_gold_baseline_cell is how the
+-- narrow-newest-run trap becomes visible before a sweep is launched rather than after.
+CREATE MATERIALIZED VIEW sim_gold_baseline_lane AS
+WITH supplied AS (
+    SELECT realm, scenario, supplied_by_run_id, measured_scope,
+           COUNT(*)                                  AS cells_supplied,
+           COUNT(*) FILTER (WHERE contested)         AS cells_contested,
+           COUNT(DISTINCT fingerprint)               AS builds,
+           COUNT(DISTINCT weapon_key)                AS weapons,
+           COUNT(DISTINCT NULLIF(skill_set_key, '')) AS skill_sets,
+           COUNT(DISTINCT rune_set_key)              AS rune_sets,
+           MAX(supplied_at)                          AS supplied_at,
+           COUNT(DISTINCT measured_run_id)           AS origin_runs
+    FROM sim_gold_baseline_cell
+    GROUP BY 1, 2, 3, 4
+),
+-- The engine's rule, replicated exactly so the two can be compared rather than assumed to
+-- agree: newest COMPLETED (then CANCELLED) run within a (realm, scope, scenario) lane.
+engine_pick AS (
+    SELECT id AS run_id,
+           ROW_NUMBER() OVER (
+               PARTITION BY realm, scenario ->> 'scope', scenario ->> 'scenario'
+               ORDER BY (status = 'COMPLETED') DESC, started_at DESC, id DESC) = 1
+               AS is_engine_baseline
+    FROM sim_run
+    WHERE status IN ('COMPLETED', 'CANCELLED')
+)
+SELECT s.realm,
+       s.scenario,
+       s.measured_scope,
+       s.supplied_by_run_id,
+       s.supplied_at,
+       s.origin_runs,
+       s.cells_supplied,
+       s.cells_contested,
+       s.builds, s.weapons, s.skill_sets, s.rune_sets,
+       -- Share of the whole baseline this run is carrying. The number that makes the trap
+       -- obvious: the run the engine would diff against supplies 0.4% of it.
+       s.cells_supplied::numeric
+           / NULLIF(SUM(s.cells_supplied) OVER (PARTITION BY s.realm, s.scenario), 0)
+                                                                    AS share_of_baseline,
+       COALESCE(e.is_engine_baseline, false)                         AS is_engine_baseline
+FROM supplied s
+         LEFT JOIN engine_pick e ON e.run_id = s.supplied_by_run_id
+ORDER BY s.realm, s.scenario, s.cells_supplied DESC;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_gold_baseline_lane_key
+    ON sim_gold_baseline_lane (realm, scenario, supplied_by_run_id);
+
+COMMENT ON MATERIALIZED VIEW sim_gold_baseline_lane IS
+    'What the standing baseline is made of: one row per run still supplying cells to it, '
+        'with the share it carries and whether the engine''s newest-wins rule would select '
+        'it as THE baseline for a delta sweep. Where is_engine_baseline sits on a run with a '
+        'small share_of_baseline, a delta run launched today would re-measure everything the '
+        'other runs already know.';
+
+
+-- ---------------------------------------------------------------------------
+-- sim_gold_damage_point -- one row per PLOTTABLE POINT, on whichever axis groups it.
+--
+-- The chart this backs asks one question -- what does a build hit for, and what made it
+-- that -- and lets the reader regroup the same points by weapon, by skill or by rune.
+-- Regrouping must not change which points are in the chart or what they say about
+-- themselves; it changes only what goes on the category axis.
+--
+-- WHY THE THREE EXISTING VIEWS COULD NOT DO THIS. sim_gold_weapon_damage, _rune_damage and
+-- _skill_damage are three grains, and a panel per grain is three charts that merely look
+-- alike. The skill one is the clearest failure: it aggregates runes away into
+-- rune_count_min/max, rune_sets and example_rune_set, so a point on the skill axis cannot
+-- say WHICH runes produced it -- exactly the composition a reader hovers to find. Worse, the
+-- three hovers were written separately and disagree about what a point is made of.
+--
+-- LONG FORM, and that is the whole design. One row per (permutation x grouping axis), with
+-- `group_axis` naming the axis and `group_key` the category. A panel then reads
+--
+--     WHERE run_id = $run AND group_axis = '$group_by'
+--
+-- which is one index range scan and no joins, explodes or CASE-per-axis at dashboard time.
+-- Switching the grouping re-reads the same view instead of running different SQL, so the
+-- three groupings cannot drift apart -- they are literally the same rows.
+--
+-- A permutation appears ONCE on the weapon axis, ONCE on the skill axis, and once per rune
+-- it carries on the rune axis. That asymmetry is correct rather than a bug: a four-rune
+-- build genuinely is evidence about four runes, and the same build's damage is one fact
+-- about one weapon. It does mean rune-axis boxes hold more points than weapon-axis boxes
+-- and the two counts should not be compared.
+--
+-- THE COMPOSITION IS COLUMNS, NOT A PRECOMPUTED STRING, and that was measured rather than
+-- assumed. Building the hover text into the view made it 1298 MB -- five times every other
+-- gold view combined -- to save 1.0s on a 680,976-row read. The wrong trade: the same read
+-- ships 197 MB of hover text to the browser, so the bottleneck is the payload, not the
+-- concatenation. The panel samples per group instead and builds the string over the few
+-- thousand rows that survive, which is free.
+--
+-- Built on sim_gold_weapon_damage, which is the true permutation grain and the only one of
+-- the three that names a measured skill. Every axis therefore reports the same numbers as
+-- the weapon axis by construction, not by two queries agreeing.
+DROP MATERIALIZED VIEW IF EXISTS sim_gold_damage_point;
+CREATE MATERIALIZED VIEW sim_gold_damage_point AS
+WITH bare AS (
+    -- Same weapon, roll and skill state carrying NO runes. The subtrahend for a rune's
+    -- marginal value: without it a rune's box is mostly a picture of the weapon under it.
+    SELECT run_id, weapon_key, weapon_roll, skill, skill_level,
+           dmg_per_hit AS bare_dmg_per_hit, dps AS bare_dps
+    FROM sim_gold_weapon_damage
+    WHERE rune_count = 0
+),
+unskilled AS (
+    -- Same weapon, roll and rune set carrying NO skill. The subtrahend for a skill's
+    -- marginal value, and the reason a skill that does nothing on this weapon reads as zero
+    -- rather than as the weapon's damage.
+    SELECT run_id, weapon_key, weapon_roll, rune_set_key,
+           dmg_per_hit AS unskilled_dmg_per_hit, dps AS unskilled_dps
+    FROM sim_gold_weapon_damage
+    WHERE skill_level = 0
+),
+perm AS (
+    SELECT w.run_id,
+           w.weapon_key,
+           REPLACE(REPLACE(w.weapon_key, 'core:', ''), 'champions:', '') AS weapon_name,
+           w.weapon_slot,
+           w.weapon_roll,
+           w.rune_set_key,
+           w.rune_count,
+           COALESCE(NULLIF(REPLACE(w.runes, 'core:', ''), ''), 'none')   AS rune_names,
+           w.skill,
+           w.skill_level,
+           w.duels,
+           w.dmg_per_hit,
+           w.dps,
+           w.dps_burst,
+           w.swings_per_second,
+           w.swing_ticks,
+           b.bare_dmg_per_hit,
+           b.bare_dps,
+           u.unskilled_dmg_per_hit,
+           u.unskilled_dps,
+           w.dmg_per_hit - b.bare_dmg_per_hit AS rune_dmg_delta,
+           w.dps         - b.bare_dps         AS rune_dps_delta,
+           w.dmg_per_hit - u.unskilled_dmg_per_hit AS skill_dmg_delta,
+           w.dps         - u.unskilled_dps         AS skill_dps_delta
+    FROM sim_gold_weapon_damage w
+             LEFT JOIN bare b
+                       ON b.run_id = w.run_id AND b.weapon_key = w.weapon_key
+                           AND b.weapon_roll = w.weapon_roll
+                           AND b.skill = w.skill AND b.skill_level = w.skill_level
+             LEFT JOIN unskilled u
+                       ON u.run_id = w.run_id AND u.weapon_key = w.weapon_key
+                           AND u.weapon_roll = w.weapon_roll
+                           AND u.rune_set_key = w.rune_set_key
+)
+SELECT 'weapon'::text AS group_axis, d.weapon_name AS group_key,
+       d.run_id, d.weapon_name, d.weapon_roll, d.rune_names, d.rune_count,
+       d.skill, d.skill_level, d.duels,
+       d.dmg_per_hit, d.dps, d.dps_burst, d.swings_per_second, d.swing_ticks,
+       d.rune_dmg_delta, d.rune_dps_delta, d.skill_dmg_delta, d.skill_dps_delta
+FROM perm d
+UNION ALL
+SELECT 'skill', CASE WHEN d.skill_level = 0 THEN 'No skill'
+                     ELSE d.skill || ' ' || d.skill_level END,
+       d.run_id, d.weapon_name, d.weapon_roll, d.rune_names, d.rune_count,
+       d.skill, d.skill_level, d.duels,
+       d.dmg_per_hit, d.dps, d.dps_burst, d.swings_per_second, d.swing_ticks,
+       d.rune_dmg_delta, d.rune_dps_delta, d.skill_dmg_delta, d.skill_dps_delta
+FROM perm d
+UNION ALL
+-- One row per rune the permutation carries. A build with four runes is evidence about four
+-- runes and appears in four boxes.
+SELECT 'rune', REPLACE(REPLACE(r.rune, 'core:', ''), 'champions:', ''),
+       d.run_id, d.weapon_name, d.weapon_roll, d.rune_names, d.rune_count,
+       d.skill, d.skill_level, d.duels,
+       d.dmg_per_hit, d.dps, d.dps_burst, d.swings_per_second, d.swing_ticks,
+       d.rune_dmg_delta, d.rune_dps_delta, d.skill_dmg_delta, d.skill_dps_delta
+FROM perm d
+         CROSS JOIN LATERAL unnest(string_to_array(d.rune_set_key, '+')) AS r(rune)
+WHERE d.rune_count > 0
+UNION ALL
+-- Bare permutations get their own box on the rune axis rather than vanishing from it. It is
+-- the reference the other boxes are read against, and a rune axis without it invites the
+-- reader to compare runes only to each other.
+SELECT 'rune', 'No runes',
+       d.run_id, d.weapon_name, d.weapon_roll, d.rune_names, d.rune_count,
+       d.skill, d.skill_level, d.duels,
+       d.dmg_per_hit, d.dps, d.dps_burst, d.swings_per_second, d.swing_ticks,
+       d.rune_dmg_delta, d.rune_dps_delta, d.skill_dmg_delta, d.skill_dps_delta
+FROM perm d
+WHERE d.rune_count = 0;
+
+CREATE INDEX IF NOT EXISTS idx_gold_damage_point_scan
+    ON sim_gold_damage_point (run_id, group_axis, group_key);
+CREATE INDEX IF NOT EXISTS idx_gold_damage_point_filter
+    ON sim_gold_damage_point (run_id, group_axis, weapon_roll, rune_count, skill_level);
+
+COMMENT ON MATERIALIZED VIEW sim_gold_damage_point IS
+    'One row per plottable point per grouping axis -- the backing view for the damage '
+        'distribution chart. Long form: group_axis is one of weapon/skill/rune and group_key '
+        'is the category, so regrouping the chart is an index range scan rather than '
+        'different SQL. Every point carries its FULL composition (weapon, roll, every rune '
+        'by name, skill and level) as COLUMNS, so a point on the skill axis can still say '
+        'which runes made it -- which sim_gold_skill_damage could not. Marginals '
+        'are against the same weapon bare (rune_dps_delta) and the same weapon with no skill '
+        '(skill_dps_delta).';
+
+
+-- ---------------------------------------------------------------------------
+-- sim_gold_damage_composition -- what the number is MADE OF, not merely what carried it.
+--
+-- sim_gold_damage_point names a permutation's parts in a hover. It does not say how much of
+-- the damage each part is responsible for, and that is the question a balance pass actually
+-- asks. This view decomposes every permutation's DPS into four terms that sum to it exactly:
+--
+--   weapon_base   the same weapon at the same roll with NO runes and NO skill
+--   rune_effect   (weapon + runes, no skill)  - weapon_base
+--   skill_effect  (weapon + skill, no runes)  - weapon_base
+--   interaction   whatever is left over
+--
+-- THE INTERACTION TERM IS THE INTERESTING ONE and the reason this is four columns rather
+-- than three. The damage model is `final = (base x sum(amplifying) + sum(flats)) x
+-- prod(reductive)`, which is not additive, so measuring a rune alone and a skill alone and
+-- adding them does NOT reproduce the build that carries both. On run 1 the residual runs
+-- +0.70 / +1.04 / +1.46 DPS at Backstab 1 / 2 / 3: a per-hit skill bonus compounds with the
+-- attack speed the runes bought, and it compounds harder the bigger the bonus. A three-term
+-- decomposition would have silently buried that in one of the other terms.
+--
+-- The four terms sum to the measured DPS by construction, because `interaction` is defined as
+-- the residual rather than modelled. That makes the stack honest -- it can never disagree
+-- with the fact -- at the cost of the residual absorbing any measurement noise too.
+--
+-- MEANS, not medians, and that is forced. Medians of four components do not sum to the median
+-- of the total, so a median stack would draw bars that do not add up to the number beside
+-- them. Read sim_gold_damage_density for the shape of a distribution; this view is for its
+-- budget.
+DROP MATERIALIZED VIEW IF EXISTS sim_gold_damage_composition;
+CREATE MATERIALIZED VIEW sim_gold_damage_composition AS
+WITH base AS (
+    SELECT run_id, weapon_key, weapon_roll, dps AS base_dps, dmg_per_hit AS base_dph
+    FROM sim_gold_weapon_damage WHERE rune_count = 0 AND skill_level = 0
+),
+runes_only AS (
+    SELECT run_id, weapon_key, weapon_roll, rune_set_key,
+           dps AS rune_dps, dmg_per_hit AS rune_dph
+    FROM sim_gold_weapon_damage WHERE skill_level = 0
+),
+skill_only AS (
+    SELECT run_id, weapon_key, weapon_roll, skill, skill_level,
+           dps AS skill_dps, dmg_per_hit AS skill_dph
+    FROM sim_gold_weapon_damage WHERE rune_count = 0
+),
+decomposed AS (
+    SELECT w.run_id, w.weapon_key,
+           REPLACE(REPLACE(w.weapon_key, 'core:', ''), 'champions:', '') AS weapon_name,
+           w.weapon_roll, w.rune_set_key, w.rune_count, w.skill, w.skill_level,
+           w.dps, w.dmg_per_hit,
+           b.base_dps                                       AS weapon_base,
+           r.rune_dps  - b.base_dps                          AS rune_effect,
+           s.skill_dps - b.base_dps                          AS skill_effect,
+           w.dps - b.base_dps - (r.rune_dps - b.base_dps)
+                 - (s.skill_dps - b.base_dps)                AS interaction,
+           b.base_dph                                        AS weapon_base_dph,
+           r.rune_dph  - b.base_dph                          AS rune_effect_dph,
+           s.skill_dph - b.base_dph                          AS skill_effect_dph,
+           w.dmg_per_hit - b.base_dph - (r.rune_dph - b.base_dph)
+                         - (s.skill_dph - b.base_dph)        AS interaction_dph
+    FROM sim_gold_weapon_damage w
+             JOIN base b ON b.run_id = w.run_id AND b.weapon_key = w.weapon_key
+                                AND b.weapon_roll = w.weapon_roll
+             JOIN runes_only r ON r.run_id = w.run_id AND r.weapon_key = w.weapon_key
+                                      AND r.weapon_roll = w.weapon_roll
+                                      AND r.rune_set_key = w.rune_set_key
+             JOIN skill_only s ON s.run_id = w.run_id AND s.weapon_key = w.weapon_key
+                                      AND s.weapon_roll = w.weapon_roll
+                                      AND s.skill = w.skill AND s.skill_level = w.skill_level
+),
+-- Same long form as sim_gold_damage_point, and for the same reason: the composition has to
+-- be readable on whichever axis the reader is grouping by.
+long AS (
+    SELECT 'weapon'::text AS group_axis, weapon_name AS group_key, d.* FROM decomposed d
+    UNION ALL
+    SELECT 'skill', CASE WHEN d.skill_level = 0 THEN 'No skill'
+                         ELSE d.skill || ' ' || d.skill_level END, d.* FROM decomposed d
+    UNION ALL
+    SELECT 'rune', REPLACE(REPLACE(r.rune, 'core:', ''), 'champions:', ''), d.*
+    FROM decomposed d
+             CROSS JOIN LATERAL unnest(string_to_array(d.rune_set_key, '+')) AS r(rune)
+    WHERE d.rune_count > 0
+    UNION ALL
+    SELECT 'rune', 'No runes', d.* FROM decomposed d WHERE d.rune_count = 0
+)
+SELECT run_id, group_axis, group_key, weapon_roll,
+       COUNT(*)                    AS permutations,
+       AVG(dps)                    AS dps,
+       AVG(weapon_base)            AS weapon_base,
+       AVG(rune_effect)            AS rune_effect,
+       AVG(skill_effect)           AS skill_effect,
+       AVG(interaction)            AS interaction,
+       AVG(dmg_per_hit)            AS dmg_per_hit,
+       AVG(weapon_base_dph)        AS weapon_base_dph,
+       AVG(rune_effect_dph)        AS rune_effect_dph,
+       AVG(skill_effect_dph)       AS skill_effect_dph,
+       AVG(interaction_dph)        AS interaction_dph,
+       -- What share of the final number each part is responsible for. The column a reader
+       -- sorts by when the question is "where is this build's damage actually coming from".
+       AVG(weapon_base)  / NULLIF(AVG(dps), 0) AS weapon_share,
+       AVG(rune_effect)  / NULLIF(AVG(dps), 0) AS rune_share,
+       AVG(skill_effect) / NULLIF(AVG(dps), 0) AS skill_share,
+       AVG(interaction)  / NULLIF(AVG(dps), 0) AS interaction_share
+FROM long
+GROUP BY 1, 2, 3, 4;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_gold_damage_composition_key
+    ON sim_gold_damage_composition (run_id, group_axis, group_key, weapon_roll);
+
+COMMENT ON MATERIALIZED VIEW sim_gold_damage_composition IS
+    'DPS decomposed into weapon_base + rune_effect + skill_effect + interaction, which sum to '
+        'the measured DPS exactly because interaction is the residual rather than a model. '
+        'The residual is not noise: the damage pipeline is multiplicative, so a per-hit skill '
+        'bonus compounds with rune-bought attack speed and the term grows with both. Means '
+        'rather than medians, because medians of components do not sum to the median of the '
+        'total. Long form on group_axis, matching sim_gold_damage_point.';
+
+
+-- ---------------------------------------------------------------------------
+-- sim_gold_damage_density -- the actual shape of each distribution, over EVERY point.
+--
+-- A box plot reports five numbers and hides everything between them. Two categories with the
+-- same quartiles can be one tight mode and two far-apart clusters, and for balance work that
+-- difference is the finding -- a bimodal weapon is one that plays as two different weapons
+-- depending on what is on it. The chart cannot show that from a box, and it cannot show it
+-- from a sample either.
+--
+-- WHY THIS EXISTS RATHER THAN JUST RAISING THE SAMPLE. sim_gold_damage_point's panel samples
+-- because 680,976 points is ~197 MB of hover text into a browser. Binning server-side inverts
+-- that trade completely: the density is computed over EVERY point, exactly, and what crosses
+-- the wire is ~40 rows per category. Exact and small, rather than approximate and large.
+--
+-- Bin edges are shared across every category within a (run, group_axis, metric), so the
+-- categories are directly comparable -- per-category edges would make two histograms that
+-- cannot be read against each other. 40 bins over the observed range.
+DROP MATERIALIZED VIEW IF EXISTS sim_gold_damage_density;
+CREATE MATERIALIZED VIEW sim_gold_damage_density AS
+WITH points AS (
+    SELECT run_id, group_axis, group_key, weapon_roll, 'dps' AS metric, dps AS val
+    FROM sim_gold_damage_point WHERE dps IS NOT NULL
+    UNION ALL
+    SELECT run_id, group_axis, group_key, weapon_roll, 'dmg_per_hit', dmg_per_hit
+    FROM sim_gold_damage_point WHERE dmg_per_hit IS NOT NULL
+),
+scale AS (
+    SELECT run_id, group_axis, metric, MIN(val) AS lo, MAX(val) AS hi
+    FROM points GROUP BY 1, 2, 3
+),
+binned AS (
+    SELECT p.run_id, p.group_axis, p.group_key, p.weapon_roll, p.metric,
+           s.lo, s.hi,
+           -- width_bucket returns 1..40 inside the range and 0 / 41 outside it; the range is
+           -- the observed min/max so only the maximum itself lands in 41, and LEAST folds it
+           -- back into the top bin rather than into a phantom 41st.
+           LEAST(width_bucket(p.val, s.lo, s.hi, 40), 40) AS bin,
+           COUNT(*) AS points
+    FROM points p
+             JOIN scale s ON s.run_id = p.run_id AND s.group_axis = p.group_axis
+                                 AND s.metric = p.metric
+    WHERE s.hi > s.lo
+    GROUP BY 1, 2, 3, 4, 5, 6, 7, 8
+)
+SELECT run_id, group_axis, group_key, weapon_roll, metric, bin,
+       lo + (hi - lo) * (bin - 1) / 40.0                  AS bin_lo,
+       lo + (hi - lo) * bin / 40.0                        AS bin_hi,
+       lo + (hi - lo) * (bin - 0.5) / 40.0                AS bin_mid,
+       points,
+       -- Normalised WITHIN the category, so a rare weapon's shape is readable next to a
+       -- common one. Comparing heights across categories is a different question and needs
+       -- `points`, which is why both are here.
+       points::numeric / SUM(points) OVER (
+           PARTITION BY run_id, group_axis, group_key, weapon_roll, metric) AS share
+FROM binned;
+
+CREATE INDEX IF NOT EXISTS idx_gold_damage_density_scan
+    ON sim_gold_damage_density (run_id, group_axis, metric, weapon_roll);
+
+COMMENT ON MATERIALIZED VIEW sim_gold_damage_density IS
+    'Exact histogram of every permutation, 40 bins per (run, group_axis, metric) with edges '
+        'shared across categories so they can be read against each other. Exists because a '
+        'box hides bimodality and a sampled scatter cannot prove it: binning server-side '
+        'computes the density over EVERY point and ships ~40 rows per category. `share` is '
+        'normalised within a category for shape; `points` is the raw count for mass.';

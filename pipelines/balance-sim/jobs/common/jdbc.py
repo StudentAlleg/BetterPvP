@@ -98,6 +98,25 @@ def read(
     return spark.read.format("jdbc").options(**options).load()
 
 
+def query(spark: SparkSession, cfg: Config, sql: str) -> DataFrame:
+    """Run a query in the warehouse and read the result back as one partition.
+
+    For questions the pipeline cannot answer from its own DataFrames because they are
+    about the warehouse itself -- a materialised view's contents, or a rule the plugin
+    implements in SQL that a mart is supposed to agree with. Deliberately unpartitioned:
+    every caller here aggregates server-side and reads back a handful of rows, and
+    partitioning a GROUP BY would mean bounding a key that does not exist.
+
+    Only for small results. A query returning millions of rows belongs in `read`, which
+    splits on a primary key for the reasons in this module's docstring.
+    """
+    return (
+        spark.read.format("jdbc")
+        .options(**_opts(cfg.warehouse), dbtable=f"({sql}) q")
+        .load()
+    )
+
+
 def write(df: DataFrame, cfg: Config, table: str, *, mode: str = "overwrite") -> None:
     """Publish a gold mart to the serving database.
 

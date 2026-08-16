@@ -762,25 +762,26 @@ public class DuelOrchestrator {
             return CompletableFuture.completedFuture(null);
         }
         final int realm = Core.getCurrentRealm().getId();
-        final CompletableFuture<@Nullable Long> baseline = request.baselineId() != null
-                ? CompletableFuture.completedFuture(request.baselineId())
-                : repository.findBaselineRun(realm, request.scope().name(), scenario.jsonValue());
+        final String scenarioName = scenario.jsonValue();
+        final Long pinnedRun = request.baselineId();
+        // The baseline is a LANE, not a run: every completed or cancelled run at this realm and
+        // scenario, with each matchup independently inheriting from whichever of them measured it
+        // most recently. Scope is not part of it, which is what lets an equipment sweep and a skills
+        // sweep contribute to the same baseline -- see findBaselineRuns for why.
+        final CompletableFuture<List<Long>> candidates = pinnedRun != null
+                ? CompletableFuture.completedFuture(List.of(pinnedRun))
+                : repository.findBaselineRuns(realm, scenarioName);
 
-        return baseline.thenCompose(baselineId -> {
-            if (baselineId == null) {
-                log.info("Run {} was asked to measure only what changed, but no finished {} {} run"
-                                + " exists to diff against. Measuring everything; this run becomes the"
-                                + " baseline the next --changed sweep uses.",
-                        runId, request.scope(), scenario).submit();
-                return CompletableFuture.completedFuture(null);
-            }
-            if (baselineId == runId) {
-                // Reachable when --changed is combined with --resume and the resumed run is itself the
-                // newest one at this scope. Carrying a run into itself would be a no-op join at best
-                // and a duplicate-row insert at worst, and the resume path already skips what it
-                // measured -- so the delta has nothing to add.
-                log.info("Run {} is its own newest baseline, so there is nothing to carry forward;"
-                        + " the resume path already skips what it measured.", runId).submit();
+        return candidates.thenCompose(laneRuns -> {
+            // This run is never its own source. Excluded here as well as in the SQL so the
+            // "nothing to diff against" branch below is reached when the lane holds only this run,
+            // which is the --changed --resume case that used to be special-cased on run id.
+            final List<Long> sources = laneRuns.stream().filter(id -> id != runId).toList();
+            if (sources.isEmpty()) {
+                log.info("Run {} was asked to measure only what changed, but no finished {} run"
+                                + " exists to diff against. Measuring everything; this run becomes"
+                                + " part of the baseline the next --changed sweep uses.",
+                        runId, scenarioName).submit();
                 return CompletableFuture.completedFuture(null);
             }
 
@@ -812,19 +813,23 @@ public class DuelOrchestrator {
             }
 
             final long planned = (long) builds.size() * targets.size();
-            log.info("Run {} planning a delta against run {}: {} matchups staged.",
-                    runId, baselineId, plan.size()).submit();
+            log.info("Run {} planning a delta against the {} baseline ({} run{}: {}){}:"
+                            + " {} matchups staged.",
+                    runId, scenarioName, sources.size(), sources.size() == 1 ? "" : "s",
+                    sources.stream().map(String::valueOf).collect(Collectors.joining(", ")),
+                    pinnedRun != null ? " pinned by --baseline" : "", plan.size()).submit();
 
             return repository.stageDeltaPlan(runId, plan)
                     .thenCompose(ignored -> request.carry()
-                            ? repository.carryForwardResults(runId, baselineId)
+                            ? repository.carryForwardResults(runId, realm, scenarioName, pinnedRun)
                             // --no-carry: the delta still decides what to measure, it just does not
                             // keep a copy of what it did not. A lean run for the case where the
                             // question is "what did my change do" rather than "what does the game
                             // look like now" -- and the pipeline's run_diff mart answers the first
                             // from two whole runs anyway, so this is the narrower tool.
                             : CompletableFuture.completedFuture(0))
-                    .thenCompose(carried -> repository.findPendingMatchups(runId, baselineId)
+                    .thenCompose(carried -> repository
+                            .findPendingMatchups(runId, realm, scenarioName, pinnedRun)
                             .thenCompose(pending -> repository.clearDeltaPlan(runId)
                                     .thenApply(cleared -> {
                                         // Every matchup the plan could not account for is measured:
@@ -834,10 +839,11 @@ public class DuelOrchestrator {
                                         if (unmeasurableScopes > 0) {
                                             addUnfingerprinted(builds, targets, buildIds, toMeasure);
                                         }
-                                        log.info("Run {} delta against run {}: {} of {} matchups"
-                                                        + " carried forward unchanged, {} to measure"
-                                                        + " ({}% of the sweep avoided).",
-                                                runId, baselineId, carried, planned, toMeasure.size(),
+                                        log.info("Run {} delta against the {} baseline: {} of {}"
+                                                        + " matchups carried forward unchanged, {} to"
+                                                        + " measure ({}% of the sweep avoided).",
+                                                runId, scenarioName, carried, planned,
+                                                toMeasure.size(),
                                                 planned == 0 ? 0 : 100L * carried / planned).submit();
                                         return toMeasure;
                                     })));
