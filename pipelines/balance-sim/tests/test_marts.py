@@ -43,6 +43,14 @@ FACT_SCHEMA = StructType(
         StructField("swings_per_second", DoubleType()),
         StructField("target_role", StringType()),
         StructField("target_armor", StringType()),
+        # What canonical_identity needs and the delta marts do not: the realm and scenario
+        # are part of the fight's identity, and the target fold is a function of the
+        # defender's health and whether it carries anything.
+        StructField("realm", IntegerType()),
+        StructField("scenario", StringType()),
+        StructField("target_hp", DoubleType()),
+        StructField("target_skill_count", IntegerType()),
+        StructField("fingerprint", StringType()),
         StructField("rune_count", IntegerType()),
         StructField("rune_set_key", StringType()),
         StructField("skill_count", IntegerType()),
@@ -77,6 +85,14 @@ def _fact_row(**overrides):
         swings_per_second=3.125,
         target_role="ASSASSIN",
         target_armor="none",
+        realm=1,
+        scenario="one_way",
+        target_hp=100.0,
+        target_skill_count=0,
+        # Stood in from the build id. The mart only requires that it exists and identifies
+        # a build; what it is a hash OF is exactly what canonical identity stops caring
+        # about, which is the point of these tests.
+        fingerprint="fp-1",
         rune_count=0,
         rune_set_key="",
         skill_count=0,
@@ -93,6 +109,42 @@ def _fact_row(**overrides):
         derived_bonus_per_hit=None,
         derived_uptime=None,
         energy_limited=False,
+    )
+    row.update(overrides)
+    return row
+
+
+# The canonical identity of a build, as sim_gold_canonical_build would report it. Read
+# rather than recomputed by the mart, so a test supplies it the same way production does.
+CANON_SCHEMA = StructType(
+    [
+        StructField("build_id", LongType()),
+        StructField("canonical_weapon_key", StringType()),
+        StructField("canonical_skill_key", StringType()),
+        StructField("bands_known", BooleanType()),
+        StructField("band_contested", BooleanType()),
+    ]
+)
+
+BAND_SCHEMA = StructType(
+    [
+        StructField("realm", IntegerType()),
+        StructField("scenario", StringType()),
+        StructField("role", StringType()),
+        StructField("skill", StringType()),
+        StructField("allocated_level", IntegerType()),
+        StructField("canonical_level", IntegerType()),
+    ]
+)
+
+
+def _canon_row(**overrides):
+    row = dict(
+        build_id=1,
+        canonical_weapon_key="6.000/7.000/8.000 @0.000 base",
+        canonical_skill_key=None,
+        bands_known=True,
+        band_contested=False,
     )
     row.update(overrides)
     return row
@@ -236,20 +288,28 @@ def test_a_skill_is_still_measured_against_a_skill_less_baseline(frame):
     assert rows[0]["dps_delta"] == pytest.approx(28.125 - 21.875, abs=1e-3)
 
 
+def _canonical(frame, rows, canon_rows):
+    """A fact put through canonical_identity, the way pipeline.diff does it."""
+    return marts.canonical_identity(
+        frame(rows, FACT_SCHEMA), frame(canon_rows, CANON_SCHEMA), frame([], BAND_SCHEMA)
+    )
+
+
 def test_run_diff_identifies_rows_present_only_in_run_b(frame):
     """A full outer join taking the descriptors from the left side alone leaves every
     only_b row with a null role, weapon and skill set. On the 1-vs-7 diff that was
     4,312,263 rows saying only that run B added *something*."""
-    from pyspark.sql import functions as F
-
     only_in_b = _fact_row(
         result_id=40, build_id=40, run_id=2, skill_count=1, skill_set_key="Frailty:3",
         rune_count=1, rune_set_key="core:brutality", weapon_key="champions:thornfang",
+        fingerprint="fp-40",
     )
-    # fingerprint is not in the narrowed schema; stand it in from the weapon key, as the
-    # overlap test above does. The two rows must not share one, or nothing is only_b.
-    a = frame([BASELINE], FACT_SCHEMA).withColumn("fingerprint", F.col("weapon_key"))
-    b = frame([only_in_b], FACT_SCHEMA).withColumn("fingerprint", F.col("weapon_key"))
+    a = _canonical(frame, [BASELINE], [_canon_row()])
+    b = _canonical(
+        frame, [only_in_b],
+        [_canon_row(build_id=40, canonical_weapon_key="9.000/10.000/11.000 @0.000 base",
+                    canonical_skill_key="Frailty:3")],
+    )
     diff = marts.run_diff(a, b)
 
     rows = {r["overlap"]: r for r in diff.collect()}
@@ -258,6 +318,109 @@ def test_run_diff_identifies_rows_present_only_in_run_b(frame):
     assert added["role"] == "ASSASSIN"
     assert added["weapon_key"] == "champions:thornfang"
     assert added["skill_set_key"] == "Frailty:3"
+
+
+def test_a_respelled_build_is_one_matched_row_not_a_removal_and_an_addition(frame):
+    """The reason the diff stopped joining on `sim_build.fingerprint`.
+
+    Two runs enumerate the same fight. Run B spells the weapon differently -- which is
+    exactly what the slot-agnostic fold does to every skill-less build -- and calls the
+    unarmoured 100 hp defender a MAGE where run A called it a RANGER. Same stat profile,
+    no skill allocated, same health: one duel.
+
+    On a fingerprint join that was an only_a plus an only_b, which reads as a build
+    deleted and a build added -- a balance change, when nothing about the balance moved.
+    """
+    a = _canonical(
+        frame,
+        [_fact_row(run_id=1, weapon_key="champions:iron_sword", fingerprint="fp-a")],
+        [_canon_row()],
+    )
+    b = _canonical(
+        frame,
+        [_fact_row(run_id=2, weapon_key="champions:iron_axe", target_role="MAGE",
+                   fingerprint="fp-b", dps_sustained=23.875)],
+        [_canon_row()],
+    )
+
+    rows = {r["overlap"]: r for r in marts.run_diff(a, b).collect()}
+    assert set(rows) == {"both"}, "a re-spelling must not read as a removal plus an addition"
+    matched = rows["both"]
+    assert matched["spelling_changed"] is True
+    assert matched["fingerprint_a"] == "fp-a"
+    assert matched["fingerprint_b"] == "fp-b"
+    # collapseByDurability: unarmoured, skill-less, one_way and the same health is one
+    # defender, whatever the sweep chose to label it.
+    # Three decimals, and that is the assertion doing the work: the SQL copy of this rule
+    # renders the same health the same way, and when the two disagreed by one character a
+    # baseline diff matched literally nothing.
+    assert matched["canonical_target_key"] == "hp:100.000"
+    assert matched["dps_delta"] == pytest.approx(2.0)
+
+
+def test_a_row_present_on_one_side_claims_no_spelling_verdict(frame):
+    """`spelling_changed` is null, not false, where there is no second spelling to differ
+    from -- otherwise a COUNT of the unchanged rows quietly includes the additions."""
+    a = _canonical(frame, [_fact_row(fingerprint="fp-a")], [_canon_row()])
+    b = _canonical(
+        frame,
+        [_fact_row(run_id=2, build_id=7, weapon_key="champions:thornfang", fingerprint="fp-b")],
+        [_canon_row(build_id=7, canonical_weapon_key="9.000/10.000/11.000 @0.000 base")],
+    )
+
+    rows = {r["overlap"]: r for r in marts.run_diff(a, b).collect()}
+    assert set(rows) == {"only_a", "only_b"}
+    assert rows["only_a"]["spelling_changed"] is None
+    assert rows["only_b"]["spelling_changed"] is None
+
+
+def test_an_armoured_target_is_not_folded_to_its_health(frame):
+    """collapseByDurability sums only StatTypes.HEALTH, so armour can carry stats two sets
+    agreeing on health still differ in. Where the premise fails the target keeps its own
+    key, and the two runs correctly fail to match."""
+    a = _canonical(
+        frame, [_fact_row(target_armor="iron", target_role="RANGER", fingerprint="fp-a")],
+        [_canon_row()],
+    )
+    b = _canonical(
+        frame,
+        [_fact_row(run_id=2, target_armor="iron", target_role="MAGE", fingerprint="fp-b")],
+        [_canon_row()],
+    )
+
+    rows = {r["overlap"]: r for r in marts.run_diff(a, b).collect()}
+    assert set(rows) == {"only_a", "only_b"}, "an armoured defender must not fold by health"
+    assert rows["only_a"]["canonical_target_key"] == "RANGER/iron"
+
+
+def test_a_mutual_defender_is_not_folded_to_its_health(frame):
+    """Under MUTUAL the defender fights back, so its role stops being a health total."""
+    a = _canonical(
+        frame, [_fact_row(scenario="mutual", target_role="RANGER", fingerprint="fp-a")],
+        [_canon_row()],
+    )
+    b = _canonical(
+        frame,
+        [_fact_row(run_id=2, scenario="mutual", target_role="MAGE", fingerprint="fp-b")],
+        [_canon_row()],
+    )
+
+    rows = {r["overlap"]: r for r in marts.run_diff(a, b).collect()}
+    assert set(rows) == {"only_a", "only_b"}
+    assert rows["only_a"]["canonical_target_key"] == "RANGER/none"
+
+
+def test_the_same_build_under_two_scenarios_does_not_match(frame):
+    """Runs 12 and 13 enumerate an identical build space differing only in scenario and
+    land on a different measured band for 85 of 252 levels. A one_way TTK and a mutual TTK
+    are different quantities, so no overlap is the correct answer -- not deltas."""
+    a = _canonical(frame, [_fact_row(scenario="one_way", fingerprint="fp-a")], [_canon_row()])
+    b = _canonical(
+        frame, [_fact_row(run_id=2, scenario="mutual", fingerprint="fp-a")], [_canon_row()]
+    )
+
+    rows = {r["overlap"] for r in marts.run_diff(a, b).collect()}
+    assert rows == {"only_a", "only_b"}
 
 
 def test_synergy_counts_each_set_member_exactly_once(frame):
@@ -331,19 +494,21 @@ def test_run_diff_reports_overlap_rather_than_dropping_it(frame):
     )
     b = frame([_fact_row(run_id=2, result_id=1, weapon_key="w1", dps_sustained=25.0)], FACT_SCHEMA)
 
-    # fingerprint is not in the narrowed schema, so stand it in from the weapon key --
-    # the mart only requires that the column exists and identifies a build.
-    from pyspark.sql import functions as F
-
-    a = a.withColumn("fingerprint", F.col("weapon_key"))
-    b = b.withColumn("fingerprint", F.col("weapon_key"))
+    # Two distinct weapon profiles, so build 9 has no counterpart in run B.
+    canon = frame(
+        [_canon_row(), _canon_row(build_id=9, canonical_weapon_key="9.000/10.000/11.000 @0.000 base")],
+        CANON_SCHEMA,
+    )
+    bands = frame([], BAND_SCHEMA)
+    a = marts.canonical_identity(a, canon, bands)
+    b = marts.canonical_identity(b, canon, bands)
 
     rows = marts.run_diff(a, b).collect()
-    overlap = {r["fingerprint"]: r for r in rows}
-    assert overlap["w1"]["overlap"] == "both"
-    assert overlap["w1"]["dps_delta"] == pytest.approx(25.0 - 21.875)
-    assert overlap["w2"]["overlap"] == "only_a"
-    assert overlap["w2"]["dps_delta"] is None
+    overlap = {r["canonical_weapon_key"]: r for r in rows}
+    assert overlap["6.000/7.000/8.000 @0.000 base"]["overlap"] == "both"
+    assert overlap["6.000/7.000/8.000 @0.000 base"]["dps_delta"] == pytest.approx(25.0 - 21.875)
+    assert overlap["9.000/10.000/11.000 @0.000 base"]["overlap"] == "only_a"
+    assert overlap["9.000/10.000/11.000 @0.000 base"]["dps_delta"] is None
 
 
 # ---------------------------------------------------------------------------

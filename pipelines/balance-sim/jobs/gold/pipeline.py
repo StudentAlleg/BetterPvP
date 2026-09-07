@@ -92,30 +92,203 @@ def run(spark: SparkSession, cfg: Config, auditor: Auditor, run_id: int, publish
 
 
 def diff(spark: SparkSession, cfg: Config, auditor: Auditor, run_a: int, run_b: int, publish: bool = True) -> int:
-    """Materialise a patch diff between two already-processed runs."""
-    fact_a = read(spark, cfg, "matchup", run_a)
-    fact_b = read(spark, cfg, "matchup", run_b)
-    df = marts.run_diff(fact_a, fact_b).withColumn("diff_key", F.concat_ws("-", F.lit(run_a), F.lit(run_b)))
+    """Materialise a patch diff between two already-processed runs.
 
+    Either side may be a NEGATIVE run id, which names the standing baseline for a
+    (realm, scenario) rather than a sweep -- -11 is realm 1 one_way, the union of runs 7,
+    12 and 14, and it is the side an incremental change usually wants to be measured
+    against. See `_diff_side`.
+
+    The join is on canonical fight identity, not on `sim_build.fingerprint`, so the
+    canonical views have to be current. They are refreshed by `_publish`; a diff run
+    against a warehouse that has never published will read whatever they last held.
+    """
+    # 608,088 rows across every run, at build grain -- `query` would pull all of it through
+    # one connection into one task. Bucketed on build_id, which is already a number and is
+    # uniform by construction.
+    canon_build = jdbc.query_wide(
+        spark,
+        cfg,
+        "SELECT build_id, canonical_weapon_key, canonical_skill_key, bands_known, "
+        "band_contested FROM sim_gold_canonical_build",
+        on="build_id::text",
+    ).cache()
+    band_canon = jdbc.query(
+        spark,
+        cfg,
+        "SELECT realm, scenario, role, skill, allocated_level, canonical_level "
+        "FROM sim_skill_band_canon",
+    ).cache()
+
+    fact_a = _diff_side(spark, cfg, run_a, canon_build, band_canon)
+    fact_b = _diff_side(spark, cfg, run_b, canon_build, band_canon)
+    # '_vs_' rather than '-'. A baseline side is a NEGATIVE id, and '-11-15' splits into
+    # ('', '11', '15') -- every reader of the key would take the wrong ends, and the
+    # dashboard's run-pair picker would render "run  ->  run 11". The separator has to be
+    # something that cannot occur inside an integer.
+    df = marts.run_diff(fact_a, fact_b).withColumn(
+        "diff_key", F.concat_ws("_vs_", F.lit(run_a), F.lit(run_b))
+    )
+    # A DERIVED row on the candidate side of a BASELINE diff is not a coverage gap, and
+    # counting it as one is a lie the overlap number told for every baseline diff so far.
+    # `sim_gold_baseline_cell` is measured-only -- it has no provenance column and holds no
+    # modelled rows at all -- so a derived row cannot match a baseline no matter how right it
+    # is. Run 14 against baseline -11 is the whole story: 18,972 keys, 17,568 of them measured
+    # and every single one matched, and the 1,404 reported as "only in B" were exactly its
+    # derived rows.
+    #
+    # Marked rather than dropped. Filtering them out here would make 1,404 rows vanish between
+    # the fact and the diff with nothing saying where they went, and "why is this smaller than
+    # the run" is a question the next reader should not have to answer twice. They stay, they
+    # say what they are, and `_diff_overlap_is_meaningful` leaves them out of its denominator.
+    baseline_diff = run_a < 0 or run_b < 0
+    df = df.withColumn(
+        "baseline_incomparable",
+        F.lit(baseline_diff)
+        & (F.col("provenance") == F.lit("derived"))
+        & (F.col("overlap") != F.lit("both")),
+    )
+
+    path = cfg.dataset(GOLD, "run_diff")
     (
         df.write.mode("overwrite")
         .format("parquet")
         .partitionBy("diff_key")
-        .save(cfg.dataset(GOLD, "run_diff"))
+        .save(path)
     )
+    # Read the diff BACK before anything else touches it. `df` is a lazy plan over two JDBC
+    # reads and a full outer join; the parquet write does not feed back into it, so the audit
+    # count, the overlap tally, both checks and the publish would each re-run that join from
+    # the database -- five complete passes over 2.4 million rows. The run that proved the
+    # canonical keys work took twenty minutes doing exactly that and was killed for memory
+    # before it reached the publish, which left the warehouse holding the previous, wrong
+    # result. Re-reading costs one columnar scan per action instead, and unlike .cache() it
+    # does not ask a machine that just ran out of memory to hold the frame in it.
+    df = spark.read.parquet(path)
     count = auditor.record_dataset(GOLD, "run_diff", df, f"gold:matchup[{run_a}] vs gold:matchup[{run_b}]")
 
     overlaps = {row["overlap"]: row["n"] for row in df.groupBy("overlap").agg(F.count("*").alias("n")).collect()}
     LOG.info("run %s vs %s overlap: %s", run_a, run_b, overlaps)
+    if not overlaps.get("both"):
+        _name_the_disjoint_key(fact_a, fact_b, run_a, run_b)
     auditor.expect(_diff_overlap_is_meaningful(run_a, run_b), df)
+    auditor.expect(_diff_identity_is_canonical(run_a, run_b), df)
 
     if publish:
         table = f"{cfg.warehouse['table_prefix']}run_diff"
-        _replace_slice(cfg, df, table, f"diff_key = '{run_a}-{run_b}'")
+        _replace_slice(cfg, df, table, f"diff_key = '{run_a}_vs_{run_b}'")
     return count
 
 
 # ---------------------------------------------------------------------------
+
+
+def _name_the_disjoint_key(fact_a: DataFrame, fact_b: DataFrame, run_a: int, run_b: int) -> None:
+    """Nothing matched. Say WHICH key column is to blame, per column.
+
+    Zero overlap has two very different causes and the row counts cannot tell them apart. It
+    is a legitimate answer -- a cross-scenario pair shares no fight by construction, and so
+    does a diff of two genuinely disjoint scopes. It is also what a key that means two
+    different things on the two sides looks like, and that one is a bug.
+
+    This exists because the second cause shipped. `sim_gold_canonical_build` spelled the rune
+    set as raw jsonb (`["core:scorching"]`) while every matchup fact spells it the way silver
+    does (`core:scorching`), and the target key rendered 29 health as `hp:29.00` in Postgres
+    against `hp:29.0` in Spark. A baseline diff against one of its OWN contributing runs came
+    back 2,381,265 only_a and 18,972 only_b -- a full, successful, completely empty run, with
+    nothing in the log naming a column.
+
+    A column whose two sides share no value AT ALL, while other columns share plenty, is not
+    a scope difference. It is a spelling difference, and it is named here.
+
+    Run only on the zero-overlap path, so the ten aggregations it costs are paid exactly when
+    there is nothing else to go on.
+    """
+    LOG.error("run %s vs %s matched NOTHING -- checking each key column for a shared vocabulary", run_a, run_b)
+    for column in marts.CANONICAL_DIFF_KEY:
+        left = fact_a.select(F.col(column).alias("v")).distinct()
+        right = fact_b.select(F.col(column).alias("v")).distinct()
+        n_left, n_right = left.count(), right.count()
+        shared = left.intersect(right).count()
+        verdict = "DISJOINT" if shared == 0 and n_left and n_right else "ok"
+        LOG.error(
+            "  %-24s A=%-8s B=%-8s shared=%-8s %s", column, n_left, n_right, shared, verdict
+        )
+
+
+def _diff_side(
+    spark: SparkSession, cfg: Config, run: int, canon_build: DataFrame, band_canon: DataFrame
+) -> DataFrame:
+    """One side of a diff, as a canonically-identified matchup fact.
+
+    A positive id is a sweep: its parquet matchup, put through `marts.canonical_identity`.
+
+    A negative id is the standing baseline -- the pseudo-run from sim_gold_baseline_run,
+    -(realm * 10 + scenario ordinal) -- and it is read from `sim_gold_canonical_cell`,
+    which is ALREADY at canonical grain. That is the point of allowing it. The full
+    baseline for realm 1 one_way is not one run, it is runs 7 (EQUIPMENT), 12 and 14
+    (SKILLS) unioned, and until now a diff could only name a single run_id -- so the only
+    available comparison against "the baseline" was against whichever third of it the
+    reader happened to pick.
+
+    Two honest limitations on the baseline side, both structural rather than oversights.
+    It carries only MEASURED rows: sim_gold_baseline_cell has no provenance column because
+    the standing baseline is what was actually duelled, and a modelled row is not that. And
+    it has no kill_rate, which sim_gold_canonical_cell does not aggregate. Both come back
+    null, and a delta against null is null -- reported as absent rather than as zero.
+    """
+    if run >= 0:
+        fact = read(spark, cfg, "matchup", run)
+        return marts.canonical_identity(fact, canon_build, band_canon)
+
+    LOG.info("diff side %s is the standing baseline, read from sim_gold_canonical_cell", run)
+    # 2,381,265 rows for realm 1 one_way (of 2,540,205 canonical rows overall). Bucketed on
+    # the canonical weapon key, the widest axis of the fold and so the one a hash spreads
+    # most evenly -- measured at 7k to 313k per bucket over 16, which is uneven but is not
+    # the single serialised task the unbucketed read would be.
+    cell = jdbc.query_wide(
+        spark,
+        cfg,
+        "SELECT c.realm, c.scenario, c.role, c.canonical_weapon_key, c.rune_set_key, "
+        "       c.canonical_skill_key, c.canonical_target_key, c.bands_known, "
+        "       c.band_contested, c.sample_fingerprint, "
+        "       array_to_string(c.weapon_aliases, ', ')      AS weapon_key, "
+        "       array_to_string(c.skill_set_aliases, ', ')   AS skill_set_key, "
+        "       array_to_string(c.target_role_aliases, ', ') AS target_role, "
+        "       c.dmg_per_hit, c.dps_sustained, c.ttk_s "
+        f"  FROM sim_gold_canonical_cell c "
+        f"  JOIN sim_gold_baseline_run r ON r.realm = c.realm AND r.scenario = c.scenario "
+        f" WHERE r.run_id = {int(run)}",
+        on="canonical_weapon_key",
+    )
+
+    return (
+        cell
+        # Read back out of the canonical key rather than assumed. A folded row is unarmoured
+        # by construction -- the fold only fires when the armour IS none -- but an UNFOLDED
+        # row keeps its 'ROLE/armour' key, and hardcoding 'none' would have labelled every
+        # armoured baseline row as bare. It is a descriptor, not part of the join, so this
+        # was wrong without being loud.
+        .withColumn(
+            "target_armor",
+            F.when(F.col("canonical_target_key").startswith("hp:"), F.lit("none")).otherwise(
+                F.split(F.col("canonical_target_key"), "/").getItem(1)
+            ),
+        )
+        .withColumn("provenance", F.lit("measured"))
+        .withColumn("derived_skill", F.lit(None).cast("string"))
+        .withColumn("canonical_derived_level", F.lit(None).cast("int"))
+        .withColumn("kill_rate", F.lit(None).cast("double"))
+        .withColumnRenamed("sample_fingerprint", "fingerprint")
+        .withColumn("run_id", F.lit(run).cast("bigint"))
+        # The cell view stores its averages as NUMERIC, which Spark reads as DECIMAL; the
+        # sweep side is DOUBLE. Left alone, the coalesces in run_diff would be comparing
+        # two numeric types across a full outer join, so the cast is done once here rather
+        # than being left to whatever Spark picks per column.
+        .withColumn("dmg_per_hit", F.col("dmg_per_hit").cast("double"))
+        .withColumn("dps_sustained", F.col("dps_sustained").cast("double"))
+        .withColumn("ttk_s", F.col("ttk_s").cast("double"))
+    )
 
 
 def _write(cfg: Config, name: str, df: DataFrame) -> None:
@@ -170,13 +343,29 @@ _MATERIALIZED_VIEWS = ("sim_gold_tier_grid", "sim_gold_tier_extreme",
                        # published, so it is the one view here whose content changes even when
                        # this run's own marts do not. The lane view reads the cell view.
                        "sim_gold_baseline_cell", "sim_gold_baseline_lane",
+                       # The canonical fold, deepest-first. The build view carries the weapon
+                       # and level folds at build grain; the cell view reads BOTH it and the
+                       # baseline above, so it comes last of the three or it re-keys the
+                       # PREVIOUS refresh's baseline and every alias list it publishes
+                       # describes a union one run out of date. sim_skill_band_canon is not
+                       # here on purpose: it is a plain view over sim_skill_level_band, also a
+                       # plain view, so both are current by construction.
+                       "sim_gold_canonical_build", "sim_gold_canonical_cell",
                        "sim_gold_weapon_damage", "sim_gold_damage_point",
                        # density and composition both read damage_point, after their parent.
                        "sim_gold_damage_density", "sim_gold_damage_composition",
                        "gold_skill_damage",
                        "sim_gold_skill_damage", "gold_skill_coverage",
                        "sim_gold_skill_modifier", "sim_gold_modifier_expectation",
-                       "sim_gold_ambient_modifier")
+                       "sim_gold_ambient_modifier",
+                       # The composed multi-skill chain, and its order is load-bearing three ways.
+                       # skill_effect reads sim_trace directly (like skill_modifier above, the hit
+                       # trace has no path through bronze/silver). composed_skillset reads
+                       # skill_effect. composed_fit then reads composed_skillset back -- it measures
+                       # the composition against the single-skill rows it was derived from, so it
+                       # MUST come last or it grades the previous refresh's arithmetic.
+                       "sim_gold_skill_effect", "sim_gold_composed_skillset",
+                       "sim_gold_composed_fit")
 
 
 def _refresh_views(cfg: Config) -> None:
@@ -629,13 +818,64 @@ def _diff_overlap_is_meaningful(run_a: int, run_b: int) -> Check:
     that says so belongs beside the deltas rather than in a footnote."""
 
     def fn(df: DataFrame) -> tuple[bool, float, str]:
-        total = df.count()
-        both = df.where(F.col("overlap") == "both").count()
-        share = both / total if total else 0.0
+        # Measured against the SMALLER side, not against the union. The question this check
+        # exists to ask is whether the two runs overlap enough for their deltas to mean
+        # anything, and dividing by the union answers a different one: it reports the size
+        # RATIO between the sides as though it were a coverage problem. A baseline diff is
+        # exactly where those come apart -- baseline -11 holds 2,393,406 keys and run 14
+        # holds 18,972, so even a perfect run 14 that matched every single one of its own
+        # rows would score 0.79% against the union and fail. Measured against itself it
+        # scores 92.6% (17,568 of 18,972), and the 1,404 it misses are not a shortfall
+        # either: they are exactly run 14's DERIVED rows, which the baseline structurally
+        # cannot hold because sim_gold_baseline_cell is measured-only. Every one of run
+        # 14's 17,568 measured rows matched. What a small side cannot cover is the large
+        # side's scope, and that is not a defect; it is what diffing an increment against
+        # a baseline IS.
+        # Rows the baseline structurally cannot hold are not part of the question. See the
+        # `baseline_incomparable` comment in `diff`; without this the check marks a run down
+        # for carrying derived rows, which every SKILLS run does by design.
+        comparable = df.where(~F.coalesce(F.col("baseline_incomparable"), F.lit(False)))
+        both = comparable.where(F.col("overlap") == "both").count()
+        only_a = comparable.where(F.col("overlap") == "only_a").count()
+        only_b = comparable.where(F.col("overlap") == "only_b").count()
+        smaller = min(both + only_a, both + only_b)
+        share = both / smaller if smaller else 0.0
         return (
             share >= 0.5,
             share,
-            f"{both} of {total} keys ({share:.2%}) are present in both run {run_a} and run {run_b}",
+            f"{both} of the smaller side's {smaller} keys ({share:.2%}) are present in both "
+            f"run {run_a} and run {run_b} ({both + only_a} vs {both + only_b} keys in total)",
         )
 
     return Check("diff_overlap", GOLD, "run_diff", fn, "warn")
+
+
+def _diff_identity_is_canonical(run_a: int, run_b: int) -> Check:
+    """How much of the overlap is the same fight under two different spellings.
+
+    This is the audit of the switch away from `sim_build.fingerprint`. Every row it counts
+    is a row the old key would have reported TWICE -- once as "only in A" and once as
+    "only in B" -- turning a re-spelling into a disappearance plus an appearance, which
+    reads exactly like a balance change and is not one.
+
+    It warns rather than fails, and high is not bad. A large share means the two runs
+    enumerate the same fights under different names, which is what an equipment-scope
+    change looks like and is precisely the case this exists to make visible. Zero on two
+    runs that enumerated identically is the other correct answer. What would be a problem
+    is a number that moves when nothing about the scope changed.
+    """
+
+    def fn(df: DataFrame) -> tuple[bool, float, str]:
+        both = df.where(F.col("overlap") == "both")
+        matched = both.count()
+        respelled = both.where(F.col("spelling_changed")).count()
+        share = respelled / matched if matched else 0.0
+        return (
+            True,
+            share,
+            f"{respelled} of {matched} matched rows ({share:.2%}) are the same fight under a "
+            f"different fingerprint in run {run_a} and run {run_b}; a fingerprint join would "
+            f"have reported each of them as a removal AND an addition",
+        )
+
+    return Check("diff_respelled", GOLD, "run_diff", fn, "warn")

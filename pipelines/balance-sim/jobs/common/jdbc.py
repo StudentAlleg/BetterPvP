@@ -117,6 +117,49 @@ def query(spark: SparkSession, cfg: Config, sql: str) -> DataFrame:
     )
 
 
+def query_wide(
+    spark: SparkSession, cfg: Config, sql: str, *, on: str, partitions: int = 16
+) -> DataFrame:
+    """A warehouse query whose result is too big for `query`, split across connections.
+
+    `query` reads its result through ONE connection into ONE task, which is right for the
+    aggregates it was written for and wrong for anything at row grain: the canonical fold
+    hands back 1.87 million rows for realm 1 one_way alone, and that is the shape this
+    module's docstring describes as the usual cause of a driver OOM.
+
+    JDBC can only partition on a NUMBER, and the views this reads are keyed on text. `on`
+    is therefore an expression evaluated server-side to a bucket -- `hashtext(...)` over
+    the key -- and the bounds are the bucket range, not a real key range. It is written
+    over the wrapped query's OUTPUT columns and referenced UNQUALIFIED: the inner query's
+    own table aliases are not in scope in the wrapper, so `c.canonical_weapon_key` is a
+    plan-time error where `canonical_weapon_key` resolves. Buckets are
+    balanced only as well as the hash is, which for a key built from a weapon profile and
+    a rune set is good enough; this is about not serialising the read, not about perfectly
+    even tasks.
+
+    `hashtext` is stable within a Postgres major version, which is all that is needed --
+    the buckets exist for the duration of one read and are never stored.
+    """
+    bucketed = (
+        f"(SELECT q.*, abs(hashtext({on})) % {partitions} AS _bucket FROM ({sql}) q) b"
+    )
+    LOG.info("reading a wide warehouse query in %s partitions on %s", partitions, on)
+    return (
+        spark.read.format("jdbc")
+        .options(
+            **_opts(cfg.warehouse),
+            dbtable=bucketed,
+            partitionColumn="_bucket",
+            lowerBound="0",
+            upperBound=str(partitions),
+            numPartitions=str(partitions),
+            fetchsize=str(cfg.warehouse.get("fetch_size", 10_000)),
+        )
+        .load()
+        .drop("_bucket")
+    )
+
+
 def write(df: DataFrame, cfg: Config, table: str, *, mode: str = "overwrite") -> None:
     """Publish a gold mart to the serving database.
 

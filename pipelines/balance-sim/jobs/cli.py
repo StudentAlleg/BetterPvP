@@ -5,7 +5,13 @@
     python -m jobs.cli silver   --run-id 1
     python -m jobs.cli gold     --run-id 1 [--no-publish]
     python -m jobs.cli diff     --run-a 1 --run-b 4
+    python -m jobs.cli diff     --run-a -11 --run-b 15   # against the standing baseline
     python -m jobs.cli runs                      # what is available to process
+
+A NEGATIVE --run-a or --run-b names the standing baseline for a realm and scenario
+instead of a sweep: -11 is realm 1 one_way, which is runs 7, 12 and 14 unioned. The ids
+come from sim_gold_baseline_run. This is usually the side you want -- the baseline has
+never been a single run, so naming one compares against a third of it.
 
 One process per layer is the supported shape, because that is what the Airflow DAG
 submits and a layer that only works when the previous one is in the same JVM is a
@@ -33,8 +39,12 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="balance-sim", description=__doc__)
     parser.add_argument("layer", choices=["all", "bronze", "silver", "gold", "diff", "runs"])
     parser.add_argument("--run-id", type=int, help="sim_run.id to process")
-    parser.add_argument("--run-a", type=int, help="baseline run for diff")
-    parser.add_argument("--run-b", type=int, help="candidate run for diff")
+    parser.add_argument(
+        "--run-a", type=int,
+        help="baseline side for diff; negative means the standing baseline (see sim_gold_baseline_run)")
+    parser.add_argument(
+        "--run-b", type=int,
+        help="candidate side for diff; negative means the standing baseline")
     parser.add_argument("--conf", default=None, help="path to pipeline.yml")
     parser.add_argument(
         "--pipeline-run-id",

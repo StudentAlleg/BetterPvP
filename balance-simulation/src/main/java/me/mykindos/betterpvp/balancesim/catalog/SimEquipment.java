@@ -42,6 +42,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.function.UnaryOperator;
 
 /**
  * Resolves the loadout axes against the <em>live</em> {@code ItemRegistry}, never against a
@@ -136,6 +137,9 @@ public class SimEquipment {
     private WeaponOption defaultWeaponCache;
     @Nullable
     private List<WeaponOption> distinctMeleeWeaponCache;
+    /** Which reduction produced {@link #distinctMeleeWeaponCache} and {@link #aliasCache}. */
+    @Nullable
+    private Reduction activeReduction;
     private final Map<String, SkillType> skillTypeCache = new HashMap<>();
     /** Per role, every registered armour set keyed by set id, in ascending tier order. */
     private final Map<Role, Map<String, ArmorSet>> armorCache = new EnumMap<>(Role.class);
@@ -190,6 +194,7 @@ public class SimEquipment {
         meleeWeaponCache = null;
         defaultWeaponCache = null;
         distinctMeleeWeaponCache = null;
+        activeReduction = null;
         skillTypeCache.clear();
         armorCache.clear();
         runeCache.clear();
@@ -298,7 +303,71 @@ public class SimEquipment {
      * than only from this code.
      */
     public List<WeaponOption> distinctMeleeWeapons() {
+        return reduce(Reduction.SLOT_SENSITIVE);
+    }
+
+    /**
+     * One representative per distinct {@link SimWeaponProfile#slotAgnostic()} profile, ordered by key.
+     *
+     * <p>The same reduction as {@link #distinctMeleeWeapons()} over a shorter key: the skill slot and
+     * the booster flag are dropped, because a build that allocates no skills has nothing that can read
+     * either. {@link SimWeaponProfile#slotAgnostic()} states the argument and the code behind it in
+     * full, including why "no skills at all" is the condition rather than "no sword/axe/bow skills".
+     *
+     * <p>Only a scope whose skill axis is {@link SimScope.SkillAxis#NONE} may use it, which
+     * {@link BalanceCatalog} enforces by choosing between the two -- and the enforcement is the
+     * interesting part, not the reduction. A {@code SKILLS} sweep emits a skill-less baseline
+     * <em>beside</em> its single-skill rows so the audit can subtract one from the other, and
+     * {@code SkillRelevanceAudit.MatchupKey} joins them on {@code build.weaponKey()} exactly. Reducing
+     * the baseline harder than the rows it is subtracted from would re-key it onto a different
+     * representative, every lookup would miss, and the audit's null-baseline branch would quietly
+     * classify the whole sweep as unmeasured. So the two reductions are never mixed within a run; see
+     * {@link #reduce}.
+     */
+    public List<WeaponOption> slotAgnosticMeleeWeapons() {
+        return reduce(Reduction.SLOT_AGNOSTIC);
+    }
+
+    /**
+     * Which fields of a {@link SimWeaponProfile} the weapon axis was folded on.
+     *
+     * <p>Recorded rather than merely applied because {@link #aliasCache} is shared: the alias list a
+     * build carries has to have been produced by the reduction that chose that build's weapon, and the
+     * two disagree about which keys stand for which.
+     */
+    private enum Reduction {
+        /** The whole profile. A sword and an identical axe stay separate. */
+        SLOT_SENSITIVE(UnaryOperator.identity()),
+        /** {@link SimWeaponProfile#slotAgnostic()}: the profile minus the slot and the booster flag. */
+        SLOT_AGNOSTIC(SimWeaponProfile::slotAgnostic);
+
+        private final UnaryOperator<SimWeaponProfile> key;
+
+        Reduction(UnaryOperator<SimWeaponProfile> key) {
+            this.key = key;
+        }
+    }
+
+    /**
+     * Folds the melee weapon axis onto one representative per distinct key.
+     *
+     * <p>Mixing the two reductions inside one sweep is refused rather than served, because the failure
+     * it would cause is silent and total. {@link #aliasCache} holds one mapping, so the second
+     * reduction to run would overwrite the first's -- and every build already enumerated would keep an
+     * alias list describing a fold it was not part of. Those rows would reach {@code sim_build} looking
+     * exactly like correct ones, claiming to cover weapons they never measured; nothing on the row, in
+     * the run, or in the log would say otherwise. See {@link #slotAgnosticMeleeWeapons()} for the
+     * concrete case this guard catches.
+     */
+    private List<WeaponOption> reduce(Reduction reduction) {
         if (distinctMeleeWeaponCache != null) {
+            if (activeReduction != reduction) {
+                throw new IllegalStateException("Weapon axis already reduced by " + activeReduction
+                        + "; " + reduction + " cannot also be used in this sweep. The two disagree"
+                        + " about which weapons stand for which, and the alias list is per-run, so the"
+                        + " builds enumerated under the first would silently keep aliases describing"
+                        + " the second's folds.");
+            }
             return distinctMeleeWeaponCache;
         }
 
@@ -307,7 +376,7 @@ public class SimEquipment {
         final Map<String, List<String>> aliases = new HashMap<>();
         final List<WeaponOption> distinct = new ArrayList<>();
         for (WeaponOption weapon : meleeWeapons()) {
-            final SimWeaponProfile profile = profileOf(weapon.key());
+            final SimWeaponProfile profile = reduction.key.apply(profileOf(weapon.key()));
             final String existing = representatives.get(profile);
             if (existing == null) {
                 representatives.put(profile, weapon.key());
@@ -321,14 +390,17 @@ public class SimEquipment {
         aliasCache.clear();
         aliases.forEach((key, group) -> aliasCache.put(key, List.copyOf(group)));
         distinctMeleeWeaponCache = List.copyOf(distinct);
+        activeReduction = reduction;
 
         final int folded = meleeWeapons().size() - distinct.size();
         // Logged even at zero, for the reason the catalog logs its exclusion count: "0 folded" is the
         // only thing that distinguishes a registry of genuinely distinct weapons from a profile that
         // has stopped telling them apart, and neither is recoverable from a build total afterwards.
-        log.info("Weapon axis: {} registered melee weapons reduce to {} distinct profiles ({} folded"
-                + " into a representative and recorded as aliases)",
-                meleeWeapons().size(), distinct.size(), folded).submit();
+        // The reduction is named too, because the same registry folds to different totals under the
+        // two and a count on its own does not say which was applied.
+        log.info("Weapon axis ({}): {} registered melee weapons reduce to {} distinct profiles ({}"
+                + " folded into a representative and recorded as aliases)",
+                reduction, meleeWeapons().size(), distinct.size(), folded).submit();
         // Every fold is named rather than only counted. A weapon disappearing from the sweep is
         // exactly the kind of reduction that should be arguable from the log: if two weapons that a
         // designer considers different were folded, the profile behind it is printed beside them.

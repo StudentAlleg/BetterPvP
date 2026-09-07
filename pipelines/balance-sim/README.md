@@ -34,8 +34,21 @@ python -m jobs.cli runs                  # which sweeps exist and their status
 python -m jobs.cli all    --run-id 4     # bronze -> silver -> gold, publish
 python -m jobs.cli gold   --run-id 4     # rebuild marts only, no re-ingest
 python -m jobs.cli diff   --run-a 1 --run-b 4
+python -m jobs.cli diff   --run-a -11 --run-b 4   # against the standing baseline
 python -m pytest tests -q
 ```
+
+A **negative** `--run-a`/`--run-b` names the standing baseline for a realm and scenario
+rather than a sweep: `-11` is realm 1 `one_way`, `-12` is realm 1 `mutual`. The ids come
+from `sim_gold_baseline_run`. This is usually the side you want. The baseline has never
+been a single run -- realm 1 `one_way` is run 7 (EQUIPMENT, 93.5% of the cells) plus runs
+12 and 14 (SKILLS) -- so naming one run compares against a fraction of it.
+
+Diffs match on **canonical fight identity**, not on `sim_build.fingerprint`: a fingerprint
+hashes the weapon key, the literal allocated levels and the target role, none of which
+survives BASELINE's reductions, so it cannot tell a build that disappeared from one that is
+spelled differently. Both fingerprints are still carried and `spelling_changed` marks the
+rows that are one fight under two names.
 
 Then open the **Sim — Gold Balance Explorer** dashboard
 (`grafana/provisioning/dashboards/sim_gold_balance_explorer.json`, uid

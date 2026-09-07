@@ -9,6 +9,13 @@
 --   psql -h localhost -p 5002 -U user -d betterpvp -f sql/gold_ddl.sql
 --
 -- The pipeline is the only writer. Nothing in the Paper plugin touches sim_gold_*.
+--
+-- One ordering constraint on a fresh database: the canonical layer at the bottom of this file
+-- reads sim_skill_level_band, which is created by the PLUGIN's Flyway migrations
+-- (balancesim-migrations/postgres/V20260817_1__Create_skill_level_band_view.sql) rather than by
+-- this file. Applying this against a database the plugin has never migrated fails there. That is
+-- the right direction for the dependency -- a band is a statement about measurements, so it
+-- belongs beside the tables holding them -- but it means the plugin runs first.
 
 -- ---------------------------------------------------------------------------
 -- Run header. Every other mart is filtered by run_id, and every dashboard's first
@@ -344,23 +351,79 @@ CREATE INDEX IF NOT EXISTS idx_gold_skill_contribution_run
 
 -- ---------------------------------------------------------------------------
 -- Patch diff, materialised per pair rather than joined in a panel.
+--
+-- Keyed on CANONICAL FIGHT IDENTITY, not on sim_build.fingerprint. The fingerprint hashes
+-- the weapon KEY, the literal allocated levels and the target ROLE -- none of which
+-- survives BASELINE's three lossless reductions -- so a diff joined on it cannot tell
+-- "run B stopped enumerating this build" from "run B spells this build differently", and
+-- those are opposite conclusions. Both fingerprints are still carried, one per side, and
+-- `spelling_changed` marks the rows that are one fight under two names.
+--
+-- Either run_a or run_b may be a NEGATIVE pseudo-run id from sim_gold_baseline_run, which
+-- names the standing baseline for a (realm, scenario) instead of a sweep. That matters
+-- because the baseline is not one run: realm 1 one_way is runs 7, 12 and 14 unioned, and
+-- before this a diff could only name a single run and so could only ever compare against
+-- a third of it.
 -- ---------------------------------------------------------------------------
+-- The identity columns replaced `fingerprint` rather than joining it, so the old table
+-- cannot be widened into the new one -- its key columns are gone, not added to. Dropping
+-- is safe here in a way it would not be for a sweep mart: every diff is derived, holds no
+-- measurement of its own, and is rebuilt by re-running `diff` over two runs whose parquet
+-- is still on disk.
+--
+-- Guarded on the old column rather than run unconditionally, because this file is applied
+-- on every publish and an unguarded DROP would delete every materialised diff on each one.
+DO
+$$
+    BEGIN
+        IF EXISTS (SELECT 1
+                   FROM information_schema.columns
+                   WHERE table_name = 'sim_gold_run_diff'
+                     AND column_name = 'fingerprint') THEN
+            RAISE NOTICE 'sim_gold_run_diff: dropping the fingerprint-keyed table; re-run diff to rebuild';
+            DROP TABLE sim_gold_run_diff;
+        END IF;
+    END
+$$;
+
 CREATE TABLE IF NOT EXISTS sim_gold_run_diff
 (
-    fingerprint           TEXT,
-    target_role           TEXT,
-    target_armor          TEXT,
+    -- The identity. realm and scenario are IN it: runs 12 and 13 enumerate an identical
+    -- build space differing only in scenario and land on a different band for 85 of 252
+    -- levels, so a cross-scenario diff now reports no overlap rather than deltas.
+    realm                 INTEGER,
+    scenario              TEXT,
+    role                  TEXT,
+    canonical_weapon_key  TEXT,
+    rune_set_key          TEXT,
+    canonical_skill_key   TEXT,
+    -- The target folded to its health total where collapseByDurability's premise holds
+    -- (unarmoured, skill-less, ONE_WAY), and left as role/armour where it does not.
+    canonical_target_key  TEXT,
     provenance            TEXT,
     derived_skill         TEXT,
-    derived_skill_level   INTEGER,
+    -- The derived level banded by the same election as an allocated one. Falls back to
+    -- the raw level where no band was measured.
+    canonical_derived_level INTEGER,
     run_a                 BIGINT,
     run_b                 BIGINT,
+    -- The spelling each side used, kept for exactly one purpose: spelling_changed. NULL on
+    -- a row present on one side only -- there is no second spelling to differ from -- so a
+    -- COUNT of it stays honest.
+    fingerprint_a         TEXT,
+    fingerprint_b         TEXT,
+    spelling_changed      BOOLEAN,
     -- What the row IS, coalesced across both sides of the full outer join. Taking these
     -- from run A alone left every only_b row unidentifiable.
-    role                  TEXT,
     weapon_key            TEXT,
-    rune_set_key          TEXT,
     skill_set_key         TEXT,
+    target_role           TEXT,
+    target_armor          TEXT,
+    -- False where a level in this row's key fell back to its allocated value for want of a
+    -- measured band; true where every level was banded. A diff row is only as canonical as
+    -- the evidence behind its key, and this says which.
+    bands_known           BOOLEAN,
+    band_contested        BOOLEAN,
     dps_a                 DOUBLE PRECISION,
     dps_b                 DOUBLE PRECISION,
     ttk_a                 DOUBLE PRECISION,
@@ -376,10 +439,25 @@ CREATE TABLE IF NOT EXISTS sim_gold_run_diff
     dps_delta_pct         DOUBLE PRECISION,
     ttk_delta             DOUBLE PRECISION,
     rank_by_abs_dps_delta INTEGER,
+    -- TRUE on a row the BASELINE side could never have held: a derived (modelled) row on the
+    -- candidate side of a diff against a standing baseline. sim_gold_baseline_cell is
+    -- measured-only, so these cannot match however correct they are, and reading them as
+    -- "only in B" overstates the candidate's new coverage. Excluded from the overlap check's
+    -- denominator, kept in the table so the rows are visible rather than silently filtered.
+    baseline_incomparable BOOLEAN,
     diff_key              TEXT
 );
 
+-- Added after the table shipped. CREATE TABLE IF NOT EXISTS above leaves an existing table
+-- exactly as it is, so a warehouse built before this column would take a Spark write with a
+-- column the table does not have and fail the publish rather than the parse.
+ALTER TABLE sim_gold_run_diff ADD COLUMN IF NOT EXISTS baseline_incomparable BOOLEAN;
+
 CREATE INDEX IF NOT EXISTS idx_gold_run_diff_key ON sim_gold_run_diff (diff_key, overlap);
+-- The respelling audit is read as "how much of this diff is a scope change wearing the
+-- costume of a balance change", which is a scan of one pair filtered to one boolean.
+CREATE INDEX IF NOT EXISTS idx_gold_run_diff_respelled
+    ON sim_gold_run_diff (diff_key, spelling_changed);
 
 -- ---------------------------------------------------------------------------
 -- The audit log. Row counts per dataset per layer, plus every expectation and its
@@ -644,6 +722,14 @@ DROP MATERIALIZED VIEW IF EXISTS sim_gold_skill_damage;
 DROP MATERIALIZED VIEW IF EXISTS sim_gold_weapon_damage;
 DROP VIEW IF EXISTS sim_gold_baseline_matchup;
 DROP VIEW IF EXISTS sim_gold_baseline_run;
+-- The canonical fold reads sim_gold_baseline_cell, so it is deeper than the baseline and
+-- has to come down first. It is dropped HERE rather than beside its own CREATE further
+-- down, for the reason stated above: the second stack ran after this one, which meant
+-- re-running this file from the top failed on `cannot drop ... because other objects
+-- depend on it` the moment the canonical layer existed.
+DROP MATERIALIZED VIEW IF EXISTS sim_gold_canonical_cell;
+DROP MATERIALIZED VIEW IF EXISTS sim_gold_canonical_build;
+DROP VIEW IF EXISTS sim_skill_band_canon;
 DROP MATERIALIZED VIEW IF EXISTS sim_gold_baseline_lane;
 DROP MATERIALIZED VIEW IF EXISTS sim_gold_baseline_cell;
 CREATE MATERIALIZED VIEW sim_gold_baseline_cell AS
@@ -669,11 +755,22 @@ WITH ranked AS (
            b.role,
            b.weapon                                          AS weapon_key,
            -- Bronze stores runes and skills as jsonb; the '+'-joined set keys are a gold
-           -- construction and are not available this far upstream. Their text form is a
-           -- stable set identity here because builds.py emits both arrays sorted, and set
-           -- identity is all the lane view counts.
+           -- construction and are not available this far upstream. Their text form works as
+           -- a set identity here, and set identity is all the lane view counts -- but note
+           -- that NOTHING GUARANTEES THE ORDER. The previous comment credited builds.py with
+           -- emitting both arrays sorted; builds.py is the silver job and does not write this
+           -- column at all. The plugin does, and it sorts only inside SimConfigDigest and
+           -- SimSelection.sortedJoin when hashing a fingerprint, never on the way in.
+           -- Checked against the data: all 608,088 builds spell each rune set exactly one
+           -- way today, so this holds by habit rather than by construction. The canonical
+           -- layer does not rely on it -- it re-derives the key with an ORDER BY.
            b.runes::text                                     AS rune_set_key,
-           NULLIF(b.skills::text, '{}')                      AS skill_set_key,
+           -- '[]', not '{}'. sim_build.skills is a jsonb ARRAY on every one of the 608,088
+           -- rows, so an empty one renders '[]' and the old NULLIF against '{}' never once
+           -- fired: all 565,506 skill-less builds carried the literal string '[]' as their
+           -- skill_set_key instead of NULL. The consumer that cares is skill_set_aliases,
+           -- whose FILTER (WHERE skill_set_key IS NOT NULL) was excluding nothing.
+           NULLIF(b.skills::text, '[]')                      AS skill_set_key,
            r.dmg_per_hit,
            r.dps_sustained,
            r.ttk_s,
@@ -2398,3 +2495,782 @@ COMMENT ON MATERIALIZED VIEW sim_gold_damage_density IS
         'box hides bimodality and a sampled scatter cannot prove it: binning server-side '
         'computes the density over EVERY point and ships ~40 rows per category. `share` is '
         'normalised within a category for shape; `points` is the raw count for mass.';
+
+
+-- ---------------------------------------------------------------------------
+-- The composed multi-skill chain. Derived from single-skill measurements because the
+-- sweep that would measure these directly is 287,398 builds and ~3.7M duels.
+-- ---------------------------------------------------------------------------
+
+-- Per (role, skill, level) measured damage effect, as coefficients a composition can apply to any
+-- weapon. Materialised because the underlying scan is sim_trace-wide: 2.9M hits for run 13, four
+-- minutes of jsonb expansion. Nothing reads this live.
+DROP MATERIALIZED VIEW IF EXISTS sim_gold_skill_effect CASCADE;
+CREATE MATERIALIZED VIEW sim_gold_skill_effect AS
+WITH single AS (
+    SELECT b.id AS build_id, b.run_id, b.role,
+           b.skills->0->>'skill'                  AS skill_name,
+           b.skills->0->>'slot'                   AS skill_slot,
+           (b.skills->0->>'allocated_level')::int AS skill_level
+    FROM sim_build b
+    WHERE jsonb_typeof(b.skills) = 'array'
+      AND jsonb_array_length(b.skills) = 1
+),
+hits AS (
+    SELECT s.run_id, s.role, s.skill_name, s.skill_slot, s.skill_level,
+           t.id AS hit_id, t.modifiers
+    FROM sim_trace t
+    JOIN single s ON s.build_id = t.build_id AND s.run_id = t.run_id
+    WHERE t.actor = 'attacker'
+      AND t.modifiers IS NOT NULL
+),
+-- Only the skill's OWN modifier. The runes riding along on the same hit belong to the rune axis and
+-- are already carried by the weapon baseline this composition starts from; counting them here would
+-- credit every skill with whatever rune happened to be socketed when it was measured.
+own AS (
+    SELECT h.run_id, h.role, h.skill_name, h.skill_slot, h.skill_level, h.hit_id,
+           m->>'operator'          AS operator,
+           (m->>'operand')::float8 AS operand,
+           (m->>'reductive')::bool AS reductive
+    FROM hits h
+    CROSS JOIN LATERAL jsonb_array_elements(h.modifiers) AS m
+    WHERE m->>'source' = h.skill_name
+),
+totals AS (
+    SELECT run_id, role, skill_name, skill_slot, skill_level, COUNT(*) AS total_hits
+    FROM hits GROUP BY 1,2,3,4,5
+),
+energy AS (
+    -- What carrying this skill costs per duel. Net of nothing: the skill-less baseline spends zero
+    -- on skills by construction, so the figure is already the skill's own demand.
+    SELECT b.run_id, b.role,
+           b.skills->0->>'skill'                  AS skill_name,
+           (b.skills->0->>'allocated_level')::int AS skill_level,
+           AVG((r.extras->'energy'->>'spent_on_skills_per_duel')::float8) AS energy_per_duel,
+           AVG((r.extras->'energy'->>'max_energy')::float8)
+             + AVG((r.extras->'energy'->>'regen_custom_per_duel')::float8)
+             + AVG((r.extras->'energy'->>'regen_natural_per_duel')::float8) AS energy_budget
+    FROM sim_result r
+    JOIN sim_build b ON b.id = r.build_id
+    WHERE jsonb_typeof(b.skills) = 'array' AND jsonb_array_length(b.skills) = 1
+      AND (r.extras->'energy') IS NOT NULL
+    GROUP BY 1,2,3,4
+)
+SELECT t.run_id, t.role, t.skill_name, t.skill_slot, t.skill_level,
+       t.total_hits,
+       COUNT(o.hit_id)                                                    AS applied_hits,
+       -- Expected flat added per swing: the operand weighted by how often it actually landed. A
+       -- skill on a 30s cooldown that adds 10 damage is worth far less per hit than one adding 1
+       -- on every swing, and only the measured rate can say which is which.
+       COALESCE(SUM(o.operand) FILTER (WHERE o.operator='FLAT' AND NOT o.reductive), 0)
+           / t.total_hits                                                 AS exp_flat_per_hit,
+       -- Expected amplifying-multiplier excess, summed the way DamageEvent sums it:
+       -- final = (base * SUM(amplifiers) + SUM(flats)) * PROD(reductives), so multipliers ADD
+       -- their excess over 1 rather than multiplying together.
+       COALESCE(SUM(o.operand - 1) FILTER (WHERE o.operator='MULTIPLIER' AND NOT o.reductive), 0)
+           / t.total_hits                                                 AS exp_mult_excess,
+       -- Expected reductive factor on the skill's OWN outgoing damage. Symmetric skills (Fortify,
+       -- Blood Barrier) cut what their holder deals as well as what they take, so a composition
+       -- that ignored this would rank a turtling build as a damage build.
+       1 - COALESCE(SUM(1 - o.operand) FILTER (WHERE o.operator='MULTIPLIER' AND o.reductive), 0)
+           / t.total_hits                                                 AS exp_reductive_factor,
+       COALESCE(e.energy_per_duel, 0)                                     AS energy_per_duel,
+       COALESCE(e.energy_budget, 0)                                       AS energy_budget
+FROM totals t
+LEFT JOIN own o
+       ON o.run_id = t.run_id AND o.role = t.role
+      AND o.skill_name = t.skill_name AND o.skill_level = t.skill_level
+LEFT JOIN energy e
+       ON e.run_id = t.run_id AND e.role = t.role
+      AND e.skill_name = t.skill_name AND e.skill_level = t.skill_level
+GROUP BY t.run_id, t.role, t.skill_name, t.skill_slot, t.skill_level, t.total_hits,
+         e.energy_per_duel, e.energy_budget;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_gold_skill_effect_key
+    ON sim_gold_skill_effect (run_id, role, skill_name, skill_level);
+
+
+-- Every budget-feasible multi-skill allocation, with its damage effect composed arithmetically
+-- from single-skill measurements.
+--
+-- This exists because the sweep that would measure these directly is not affordable: BUDGET_VECTORS
+-- over the relevant skills is 287,398 builds and ~3.7M duels, tens of hours of wall clock. The
+-- design anticipated the alternative -- "the whole skill x weapon x rune cross becomes arithmetic
+-- over an existing sweep rather than duels nobody can afford to run" -- and this is that arithmetic.
+--
+-- WHAT MAKES IT LEGITIMATE. DamageEvent composes in closed form and order-independently:
+--     final = (base * SUM(amplifying multipliers) + SUM(flats)) * PROD(reductive multipliers)
+-- so a build's damage is a function of its parts, not of their arrangement. sim_trace stores the
+-- operands the game actually applied, so each part is MEASURED rather than modelled from config.
+-- What is modelled is only how often each part fires when several share a build.
+--
+-- WHAT IS ASSUMED, stated plainly because the ranking is only as good as these:
+--   1. A skill's measured per-hit application rate carries into a multi-skill build. Skills that
+--      compete for something other than energy -- the right-click button, a channel's hold -- will
+--      be overstated.
+--   2. Energy is shared, so demand above the budget scales the paid skills down proportionally.
+--      Void alone spends 151.5 against a 155 budget, so this term binds hard and often.
+--   3. Only skills with a MEASURED damage effect or energy cost are composed. The other 226 of the
+--      252 (role, skill, level) combinations in run 13 moved nothing this scenario can see, so a
+--      build carrying them is, to this ranking, the same build with an empty slot.
+--   4. Attack speed is the weapon baseline's, not the build's. No composed skill altered swings per
+--      second in run 13; a future one would need this revisited.
+--
+-- Scoped to the SKILL VECTOR, not the full weapon cross. Materialising vector x weapon x roll x rune
+-- set is ~15M rows for information that is one multiplication away, so the weapon side stays a join.
+DROP MATERIALIZED VIEW IF EXISTS sim_gold_composed_skillset CASCADE;
+CREATE MATERIALIZED VIEW sim_gold_composed_skillset AS
+WITH RECURSIVE
+eff AS (
+    SELECT run_id, role, skill_name, skill_slot, skill_level,
+           exp_flat_per_hit, exp_mult_excess,
+           1 - exp_reductive_factor AS reduction,
+           energy_per_duel, energy_budget
+    FROM sim_gold_skill_effect
+    WHERE exp_flat_per_hit > 0.0001
+       OR exp_mult_excess > 0.0001
+       OR exp_reductive_factor < 0.9999
+       OR energy_per_duel > 0
+),
+-- One row per slot the game has, in a fixed order, so the recursion visits each exactly once and a
+-- vector is generated in exactly one way.
+slots(slot, idx) AS (
+    VALUES ('SWORD',1),('AXE',2),('BOW',3),('PASSIVE_A',4),('PASSIVE_B',5),('GLOBAL',6)
+),
+-- Every choice for a slot INCLUDING leaving it empty. The empty option is a row rather than a second
+-- recursive branch because Postgres allows a recursive CTE only one self-reference.
+opt AS (
+    SELECT run_id, role, skill_slot AS slot, skill_name, skill_level,
+           exp_flat_per_hit, exp_mult_excess, reduction, energy_per_duel
+    FROM eff
+    UNION ALL
+    SELECT DISTINCT r.run_id, r.role, s.slot, NULL, 0, 0::float8, 0::float8, 0::float8, 0::float8
+    FROM (SELECT DISTINCT run_id, role FROM eff) r
+    CROSS JOIN slots s
+),
+walk AS (
+    SELECT run_id, role, 0 AS idx, 0 AS points,
+           ARRAY[]::text[] AS skills,
+           0::float8 AS flat_free,  0::float8 AS flat_paid,
+           0::float8 AS mult_free,  0::float8 AS mult_paid,
+           0::float8 AS red_free,   0::float8 AS red_paid,
+           0::float8 AS energy,
+           -- Carried rather than joined at the end: it is a property of the role's own energy pool
+           -- and every skill of a role reports the same figure.
+           MAX(energy_budget) AS budget
+    FROM eff GROUP BY run_id, role
+    UNION ALL
+    SELECT w.run_id, w.role, s.idx, w.points + o.skill_level,
+           CASE WHEN o.skill_name IS NULL THEN w.skills
+                ELSE w.skills || (o.skill_name || ':' || o.skill_level) END,
+           -- Free and paid contributions are kept apart all the way down, because only the paid ones
+           -- are scaled when the build outruns its energy.
+           w.flat_free + CASE WHEN o.energy_per_duel > 0 THEN 0 ELSE o.exp_flat_per_hit END,
+           w.flat_paid + CASE WHEN o.energy_per_duel > 0 THEN o.exp_flat_per_hit ELSE 0 END,
+           w.mult_free + CASE WHEN o.energy_per_duel > 0 THEN 0 ELSE o.exp_mult_excess END,
+           w.mult_paid + CASE WHEN o.energy_per_duel > 0 THEN o.exp_mult_excess ELSE 0 END,
+           w.red_free  + CASE WHEN o.energy_per_duel > 0 THEN 0 ELSE o.reduction END,
+           w.red_paid  + CASE WHEN o.energy_per_duel > 0 THEN o.reduction ELSE 0 END,
+           w.energy + o.energy_per_duel,
+           w.budget
+    FROM walk w
+    JOIN slots s ON s.idx = w.idx + 1
+    JOIN opt o ON o.run_id = w.run_id AND o.role = w.role AND o.slot = s.slot
+    WHERE w.idx < 6
+      -- RoleBuild.points. Generated feasible rather than generated and filtered, the same way
+      -- BalanceCatalog.fillSlots does it.
+      AND w.points + o.skill_level <= 12
+)
+SELECT run_id, role,
+       skills,
+       COALESCE(NULLIF(array_to_string(skills, ' + '), ''), 'none') AS skillset,
+       cardinality(skills)                                          AS skill_count,
+       points                                                       AS points_spent,
+       energy                                                       AS energy_demand,
+       budget                                                       AS energy_budget,
+       -- How far the build's actives have to be throttled to fit the pool. 1.0 when it fits.
+       LEAST(1.0, CASE WHEN energy > 0 THEN budget / energy ELSE 1 END) AS uptime_scale,
+       flat_free + flat_paid * LEAST(1.0, CASE WHEN energy > 0 THEN budget / energy ELSE 1 END)
+                                                                    AS flat_per_hit,
+       mult_free + mult_paid * LEAST(1.0, CASE WHEN energy > 0 THEN budget / energy ELSE 1 END)
+                                                                    AS mult_excess,
+       -- Clamped at zero: a stack of reductions cannot turn damage negative, and the linear form
+       -- above can go past 1.0 where several symmetric skills are carried together.
+       GREATEST(0.0, 1 - (red_free + red_paid * LEAST(1.0, CASE WHEN energy > 0 THEN budget / energy ELSE 1 END)))
+                                                                    AS reductive_factor
+FROM walk
+WHERE idx = 6;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_gold_composed_skillset_key
+    ON sim_gold_composed_skillset (run_id, role, skillset);
+CREATE INDEX IF NOT EXISTS idx_gold_composed_skillset_scan
+    ON sim_gold_composed_skillset (run_id, role, points_spent);
+
+
+-- How well the composition reproduces a skill the sweep ACTUALLY measured.
+--
+-- This is the honesty term. sim_gold_composed_skillset extrapolates from single-skill measurements
+-- to multi-skill builds, and the only check available without running the duels is whether the same
+-- arithmetic reproduces the single-skill rows it was derived from. Where it does, the extrapolation
+-- rests on something. Where it does not, the skill is carried anyway with its error attached rather
+-- than dropped, because "this skill cannot be composed" is a finding and a silently missing skill is
+-- not.
+--
+-- Run 13 splits cleanly into two populations rather than a spectrum, which is what makes the term
+-- useful. Fourteen skills land at 0.0%-6.2%: Swordsmanship, Fortify, Arctic Armour, Blizzard,
+-- Pestilence, Void, Soul Bonds and Overwhelm are exact or near it, then Riposte, Vengeance,
+-- Sacrifice, Frailty and Combo Attack. Four are badly wrong, all for reasons the composition model
+-- states as assumptions:
+--
+--   Defensive Stance  +47%  channel. Holding right-click is time not spent swinging, and nothing in
+--   Inferno           +37%  an outgoing damage modifier can express "this skill costs you hits".
+--   Tormented Soil    +20%  measured at 6.169 -- the bare baseline -- so its zone contributed
+--                           nothing on these rows while the modifier trace says +20%. This is the
+--                           ally-targeting contamination DASHBOARD_NOTES already flags for it.
+--   Immolate          -16%  understated: it deals damage the melee hit does not carry.
+DROP MATERIALIZED VIEW IF EXISTS sim_gold_composed_fit CASCADE;
+CREATE MATERIALIZED VIEW sim_gold_composed_fit AS
+WITH meas AS (
+    SELECT run_id, role, weapon_key, weapon_roll, rune_set_key, skill_set_key,
+           AVG(dmg_per_hit) AS measured
+    FROM sim_gold_matchup
+    WHERE skill_count = 1 AND dmg_per_hit IS NOT NULL
+    GROUP BY 1,2,3,4,5,6
+),
+base AS (
+    SELECT run_id, role, weapon_key, weapon_roll, rune_set_key, AVG(dmg_per_hit) AS base_dph
+    FROM sim_gold_matchup
+    WHERE skill_count = 0 AND dmg_per_hit IS NOT NULL
+    GROUP BY 1,2,3,4,5
+),
+pred AS (
+    SELECT run_id, role, skillset, flat_per_hit, mult_excess, reductive_factor
+    FROM sim_gold_composed_skillset
+    WHERE skill_count = 1
+),
+j AS (
+    SELECT m.run_id, m.role,
+           split_part(m.skill_set_key, ':', 1)                  AS skill_name,
+           NULLIF(split_part(m.skill_set_key, ':', 2), '')::int AS skill_level,
+           m.measured,
+           (b.base_dph * (1 + p.mult_excess) + p.flat_per_hit) * p.reductive_factor AS composed
+    FROM meas m
+    JOIN base b ON b.run_id = m.run_id AND b.role = m.role AND b.weapon_key = m.weapon_key
+               AND b.weapon_roll = m.weapon_roll AND b.rune_set_key = m.rune_set_key
+    JOIN pred p ON p.run_id = m.run_id AND p.role = m.role AND p.skillset = m.skill_set_key
+)
+SELECT run_id, role, skill_name, skill_level,
+       COUNT(*)                                                          AS loadouts_compared,
+       AVG(measured)                                                     AS avg_measured,
+       AVG(composed)                                                     AS avg_composed,
+       AVG(composed - measured)                                          AS bias,
+       AVG(ABS(composed - measured) / NULLIF(measured, 0))               AS rel_err,
+       -- The cut is drawn at 10% because run 13's populations are separated by a gap, not a
+       -- gradient: the worst composable skill sits at 6.2% and the best broken one at 15.8%.
+       (AVG(ABS(composed - measured) / NULLIF(measured, 0)) <= 0.10)     AS composable
+FROM j
+GROUP BY 1,2,3,4;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_gold_composed_fit_key
+    ON sim_gold_composed_fit (run_id, role, skill_name, skill_level);
+
+
+-- A composed allocation with the confidence of its weakest part attached.
+--
+-- A plain view rather than a materialised one: it joins 748 vectors to 119 fit rows and costs
+-- nothing, and materialising it would add a third thing to keep refreshed in the right order.
+--
+-- Separate from sim_gold_composed_skillset because the dependency would otherwise be circular --
+-- the fit is measured BY composing single-skill vectors, so it cannot also be an input to them.
+--
+-- A vector is only as trustworthy as its shakiest component, hence the MAX rather than an average:
+-- a four-skill build carrying Inferno is an Inferno-grade guess however exact the other three are.
+CREATE OR REPLACE VIEW sim_gold_composed_ranked AS
+SELECT c.run_id,
+       c.role,
+       c.skillset,
+       c.skill_count,
+       c.points_spent,
+       c.energy_demand,
+       c.energy_budget,
+       c.uptime_scale,
+       c.flat_per_hit,
+       c.mult_excess,
+       c.reductive_factor,
+       -- NULL for the empty allocation, which has no components and needs no caveat.
+       MAX(f.rel_err)                                   AS worst_component_rel_err,
+       COALESCE(bool_and(f.composable), TRUE)           AS fully_composable,
+       COUNT(f.*) FILTER (WHERE NOT f.composable)       AS uncomposable_components,
+       COALESCE(string_agg(f.skill_name || ' ' || f.skill_level, ', ')
+                FILTER (WHERE NOT f.composable), '')    AS uncomposable_names
+FROM sim_gold_composed_skillset c
+LEFT JOIN LATERAL unnest(c.skills) AS part(token) ON TRUE
+LEFT JOIN sim_gold_composed_fit f
+       ON f.run_id = c.run_id
+      AND f.role = c.role
+      AND f.skill_name = split_part(part.token, ':', 1)
+      AND f.skill_level = NULLIF(split_part(part.token, ':', 2), '')::int
+GROUP BY c.run_id, c.role, c.skillset, c.skill_count, c.points_spent, c.energy_demand,
+         c.energy_budget, c.uptime_scale, c.flat_per_hit, c.mult_excess, c.reductive_factor;
+
+
+-- ---------------------------------------------------------------------------
+-- The canonical layer: one row per fight the game can actually tell apart.
+--
+-- BASELINE is defined as FULL with every LOSSLESS reduction applied -- weapons deduplicated
+-- by stat profile, targets collapsed by health, skills limited to relevantSkills. Each of
+-- those is a claim that two permutations are ONE measurement, and the engine acts on all
+-- three at enumeration time so the duplicates are never fought.
+--
+-- The problem those reductions do not solve is that they happen INSIDE a run, while the
+-- standing baseline (sim_gold_baseline_cell) is a union ACROSS runs keyed on
+-- sim_build.fingerprint. A fingerprint is taken over the weapon KEY, the literal allocated
+-- levels and the target ROLE -- none of which are canonical under the reductions. So two runs
+-- that reduced differently, or that picked a different representative for the same
+-- equivalence class, file the same fight under two keys and the baseline holds it twice.
+--
+-- That is not hypothetical. Three live instances in this database:
+--
+--   1. Run 7 enumerated core:standard_sword, core:standard_axe, core:booster_sword,
+--      core:booster_axe and champions:thornfang as five separate builds. All five carry
+--      damage 6.000 [5.000-7.000] at speed 0.000 and none of them allocates a skill, so no
+--      code path reads the slot or the booster and all five duels are the same duel. The
+--      slot-agnostic fold now applied by SimEquipment.slotAgnosticMeleeWeapons collapses
+--      them -- which means the NEXT equipment sweep emits one fingerprint where run 7 emitted
+--      five, and without this layer the baseline keeps both spellings forever.
+--
+--   2. Run 7 folded RANGER, MAGE and WARLOCK onto one unarmoured target of equal health and
+--      filed it under target_role = 'RANGER'. Nothing pins that choice: collapseByDurability
+--      keeps whichever role it met first, so a catalog that registers roles in a different
+--      order relabels the same target and every cell keyed on it.
+--
+--   3. Runs 12 and 14 measured WARLOCK Tormented Soil under the same scenario across the same
+--      5,904 matchups and did not agree about it: run 12 could not separate any of its five
+--      levels, run 14 separates level 1 from 2-5. Five allocated levels, two to five real
+--      ones, and the fingerprint says five.
+--
+-- So this layer re-keys the baseline on what the measurements say a fight IS, applying the
+-- same three equivalences the enumerator applies plus the level bands the enumerator cannot
+-- know about. It does not replace sim_gold_baseline_cell -- that stays the record of what was
+-- actually run, and a diff needs both: the raw cell says which SWEEP to re-run, the canonical
+-- cell says which FIGHT changed.
+--
+-- WHAT IS DELIBERATELY NOT FOLDED. Runes stay a full term (their set key is already sorted, so
+-- it is canonical as it stands) and stat rolls stay in the weapon key. Neither has ever been
+-- measured for equivalence, and folding on an untested premise is how a reduction stops being
+-- lossless.
+-- Deepest-first, for the same reason the damage chain's drop stack is: Postgres refuses to drop
+-- a view something else depends on, and this file has to be re-runnable from the top. The cell
+-- view reads the build view, which reads the band view.
+
+-- ---------------------------------------------------------------------------
+-- sim_skill_band_canon -- the level a level counts as.
+--
+-- sim_skill_level_band measures bands PER RUN, because that is the honest grain: a band is a
+-- statement about what one sweep could separate. Applying bands needs the opposite -- one
+-- answer per (role, skill, level) that any run's builds can be keyed on -- so this view elects
+-- one band source per (realm, scenario, role, skill).
+--
+-- SCENARIO IS IN THE KEY and it has to be. Run 12 (one_way) and run 13 (mutual) enumerate an
+-- identical build space -- 20,910 builds and 250,920 cells each, differing in nothing but the
+-- scenario -- and land on a different band for 85 of their 252 levels. That is a third of the
+-- level axis, and it is not noise: a level that only pays off while its holder is being hit is
+-- flat under ONE_WAY and is CORRECTLY flat there, because under ONE_WAY it does nothing.
+-- Electing across scenarios would import a mutual band into a one-way key and hide a real
+-- difference, or the reverse and invent one.
+--
+-- Election is by evidence -- total matchups compared for that role x skill -- rather than by
+-- recency, for the reason sim_gold_baseline_lane already documents at length: newest is not
+-- widest, and the engine's own newest-wins rule would hand a 66-combo question to whichever
+-- run happened to finish last. Ties break on the newer run so the choice is deterministic.
+--
+-- band_contested is the honesty term. Where two runs of one scenario reached different bands
+-- for a level, the election picked one and this column says so, so a fold nobody would agree
+-- with is visible rather than silent.
+CREATE VIEW sim_skill_band_canon AS
+WITH scoped AS (SELECT run.realm,
+                       run.scenario ->> 'scenario' AS scenario,
+                       lb.run_id,
+                       lb.role,
+                       lb.skill,
+                       lb.allocated_level,
+                       lb.band_min_level,
+                       lb.band_label,
+                       lb.levels_in_band,
+                       lb.band_min_agreement,
+                       run.started_at,
+                       -- How much fight this run saw for this skill. Summed over its levels, so
+                       -- a run that measured more levels or more matchups outranks one that
+                       -- only glanced at it.
+                       SUM(lb.matchups_compared) OVER (
+                           PARTITION BY run.realm, run.scenario ->> 'scenario',
+                               lb.role, lb.skill, lb.run_id)          AS evidence,
+                       -- Whether any two runs of this scenario disagreed about this level.
+                       -- Written as MIN <> MAX rather than COUNT(DISTINCT ...) because Postgres
+                       -- does not implement DISTINCT for window functions -- the same limitation
+                       -- sim_skill_level_band works around for bands_for_skill. Two labels differ
+                       -- iff the smallest and largest do, so this is the same predicate.
+                       MIN(lb.band_label) OVER (
+                           PARTITION BY run.realm, run.scenario ->> 'scenario',
+                               lb.role, lb.skill, lb.allocated_level)
+                           <> MAX(lb.band_label) OVER (
+                           PARTITION BY run.realm, run.scenario ->> 'scenario',
+                               lb.role, lb.skill, lb.allocated_level) AS band_contested
+                FROM sim_skill_level_band lb
+                         JOIN sim_run run ON run.id = lb.run_id),
+
+     -- Elect per RUN rather than per row. Ranking rows individually would let level 3's band
+     -- come from one run and level 4's from another, and two halves of two different bandings
+     -- do not compose into a banding.
+     runs AS (SELECT DISTINCT realm, scenario, role, skill, run_id, evidence, started_at
+              FROM scoped),
+     best AS (SELECT runs.*,
+                     ROW_NUMBER() OVER (PARTITION BY realm, scenario, role, skill
+                         ORDER BY evidence DESC, started_at DESC, run_id DESC) AS rn
+              FROM runs)
+
+SELECT s.realm,
+       s.scenario,
+       s.role,
+       s.skill,
+       s.allocated_level,
+       -- The lowest level of the band, used as the band's name everywhere. Lowest rather than
+       -- any other member because it is the cheapest: a band is a set of levels that buy
+       -- nothing over each other, so the one costing fewest points is the one a build should be
+       -- read as having taken.
+       s.band_min_level                                               AS canonical_level,
+       s.band_label,
+       s.levels_in_band,
+       s.band_min_agreement,
+       s.band_contested,
+       s.run_id                                                       AS band_run_id,
+       b.evidence                                                     AS band_matchups
+FROM scoped s
+         JOIN best b ON b.realm = s.realm AND b.scenario = s.scenario
+    AND b.role = s.role AND b.skill = s.skill AND b.run_id = s.run_id
+WHERE b.rn = 1;
+
+COMMENT ON VIEW sim_skill_band_canon IS
+    'One canonical level per (realm, scenario, role, skill, allocated_level): the lowest level '
+        'of the band that level falls in. Elected per role x skill from whichever run measured '
+        'it across the most matchups, ties to the newer run. Scenario is in the key because a '
+        'level that only pays off while being hit is flat under ONE_WAY and not under MUTUAL. '
+        'band_contested marks the levels two runs of one scenario banded differently.';
+
+
+-- ---------------------------------------------------------------------------
+-- sim_gold_canonical_build -- the canonical identity of a build, at build grain.
+--
+-- Extracted from sim_gold_canonical_cell rather than inlined there because two things need
+-- it and a second copy of an identity rule is how two consumers quietly stop agreeing about
+-- identity. The cell view folds the standing baseline with it; the diff dashboard uses it to
+-- separate "run B stopped enumerating this build" from "run B spells this build differently",
+-- which look identical on a fingerprint join and mean opposite things.
+--
+-- That distinction is about to matter rather than being theoretical. sim_gold_run_diff matches
+-- on sim_build.fingerprint, and the slot-agnostic weapon fold changes the fingerprint of every
+-- skill-less build: run 7 enumerated five spellings of the 6.000 [5.000-7.000] profile and the
+-- next equipment sweep will enumerate one. A fingerprint diff of those two runs reports four
+-- fifths of the weapon axis as "only in A" -- a scope change, not a balance change, and nothing
+-- on the row would say so.
+--
+-- Build grain, not cell grain, because that is where the spelling lives: the target is a
+-- property of the measurement and is folded in sim_gold_canonical_cell instead. 608,088 builds
+-- across every run in the database, so this is cheap to materialise and cheap to join.
+CREATE MATERIALIZED VIEW sim_gold_canonical_build AS
+WITH build AS (SELECT b.id                                              AS build_id,
+                      b.run_id,
+                      run.realm,
+                      run.scenario ->> 'scenario'                       AS scenario,
+                      run.scenario ->> 'scope'                          AS measured_scope,
+                      b.fingerprint,
+                      b.role,
+                      b.weapon                                          AS weapon_key,
+                      -- The rune set spelled the way SILVER spells it -- array_sort then
+                      -- array_join on '+' -- and NOT as raw jsonb text.
+                      --
+                      -- This is a mirror of jobs/silver/builds.py, and it is here because
+                      -- the two spellings have to be one spelling: the diff joins a matchup
+                      -- fact (silver's 'core:scorching') against this view (jsonb's
+                      -- '["core:scorching"]'), and on the first run of that join NOTHING
+                      -- matched -- 2,381,265 only_a against 18,972 only_b between a baseline
+                      -- and one of its OWN contributing runs.
+                      --
+                      -- Sorting is not cosmetic either. jsonb preserves array order, so the
+                      -- raw text spelled one rune set two ways whenever the sockets were
+                      -- enumerated in a different order, and the baseline silently held both.
+                      COALESCE((SELECT string_agg(x, '+' ORDER BY x)
+                                FROM jsonb_array_elements_text(b.runes) AS x), '')
+                                                                        AS rune_set_key,
+                      b.runes::text                                     AS rune_set_raw,
+                      -- '[]', not '{}' -- see the note in sim_gold_baseline_cell. skills is
+                      -- always a jsonb array, so '{}' never matched.
+                      NULLIF(b.skills::text, '[]')                      AS skill_set_key,
+                      b.skills,
+                      b.weapon_roll,
+                      b.weapon_slot,
+                      b.booster,
+                      b.weapon_damage_base,
+                      b.weapon_damage_min,
+                      b.weapon_damage_max,
+                      b.weapon_attack_speed_base,
+                      b.weapon_attack_speed_min,
+                      b.weapon_attack_speed_max,
+                      -- sim_build.skills defaults to '{}', an OBJECT, so the type guard is not
+                      -- decoration -- jsonb_array_length raises on it.
+                      jsonb_typeof(b.skills) = 'array'
+                          AND jsonb_array_length(b.skills) > 0          AS reads_weapon
+               FROM sim_build b
+                        JOIN sim_run run ON run.id = b.run_id),
+
+     -- The banded skill set. Sorted by skill then canonical level so two allocations that band
+     -- to the same thing produce a byte-identical key.
+     --
+     -- The COALESCE is the "no band measured" path and it falls back to the ALLOCATED level,
+     -- which is the conservative direction: an unbanded level stays its own row rather than
+     -- being folded onto a neighbour on no evidence. bands_known says which rows took that
+     -- path, so a key that is only canonical in part is legible as such.
+     banded AS (SELECT build.build_id,
+                       string_agg(s.skill || ':' || COALESCE(bc.canonical_level, s.allocated_level),
+                                  ' + ' ORDER BY s.skill,
+                                  COALESCE(bc.canonical_level, s.allocated_level)) AS canonical_skill_key,
+                       bool_and(bc.canonical_level IS NOT NULL)                    AS bands_known,
+                       bool_or(COALESCE(bc.band_contested, FALSE))                 AS band_contested,
+                       SUM((bc.canonical_level IS DISTINCT FROM s.allocated_level)::int)
+                                                                                   AS levels_folded
+                FROM build
+                         CROSS JOIN LATERAL jsonb_to_recordset(build.skills)
+                    AS s(skill text, allocated_level int)
+                         LEFT JOIN sim_skill_band_canon bc
+                                   ON bc.realm = build.realm AND bc.scenario = build.scenario
+                                       AND bc.role = build.role AND bc.skill = s.skill
+                                       AND bc.allocated_level = s.allocated_level
+                WHERE jsonb_typeof(build.skills) = 'array'
+                GROUP BY 1)
+
+SELECT build.build_id,
+       build.run_id,
+       build.realm,
+       build.scenario,
+       build.measured_scope,
+       build.fingerprint,
+       build.role,
+       build.weapon_key,
+       build.rune_set_key,
+       build.rune_set_raw,
+       build.skill_set_key,
+       build.weapon_roll,
+       -- The weapon as a duel sees it: the stat profile and the roll, plus the slot and the
+       -- booster ONLY when the build allocates a skill that could read them.
+       --
+       -- The condition is "any skill at all" rather than "any SWORD/AXE/BOW skill", which looks
+       -- over-cautious and is not: Swordsmanship, GlacialBlade and MagmaBlade are PASSIVE_* and
+       -- still call SkillWeapons.isHolding(player, SkillType.SWORD); Cleave, CripplingBlow and
+       -- RootingAxe do it for AXE. A skill in any slot can read the held weapon.
+       --
+       -- One deliberate divergence from the enumerator, worth stating because it looks like a
+       -- bug. BalanceCatalog gates the fold on the SCOPE's skill axis; this gates it on the
+       -- BUILD's own allocation, so a SKILLS sweep's skill-less baseline folds here and does not
+       -- there. The enumerator's wider key exists for one in-run reason -- SkillRelevanceAudit
+       -- joins a sweep's single-skill rows onto their baseline on build.weaponKey() exactly, and
+       -- a baseline folded harder would miss every lookup -- and that reason does not survive the
+       -- run. Across runs the only question is whether two duels are the same duel, and for a
+       -- build allocating nothing they are. Folding them is the point: it is what lets run 7's
+       -- equipment half and run 12's skill-less baseline occupy one row.
+       build.weapon_damage_base || '/' || build.weapon_damage_min || '/' ||
+       build.weapon_damage_max || ' @' || build.weapon_attack_speed_base || '/' ||
+       build.weapon_attack_speed_min || '/' || build.weapon_attack_speed_max ||
+       ' ' || build.weapon_roll ||
+       CASE
+           WHEN build.reads_weapon THEN ' ' || build.weapon_slot ||
+                                        CASE WHEN build.booster THEN '+b' ELSE '' END
+           ELSE '' END                                                  AS canonical_weapon_key,
+       bd.canonical_skill_key,
+       -- A skill-less build has no bands to be ignorant of, so TRUE.
+       COALESCE(bd.bands_known, TRUE)                                   AS bands_known,
+       COALESCE(bd.band_contested, FALSE)                               AS band_contested,
+       COALESCE(bd.levels_folded, 0)                                    AS levels_folded
+FROM build
+         LEFT JOIN banded bd ON bd.build_id = build.build_id;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_gold_canonical_build_id
+    ON sim_gold_canonical_build (build_id);
+CREATE INDEX IF NOT EXISTS idx_gold_canonical_build_key
+    ON sim_gold_canonical_build (realm, scenario, run_id, role, canonical_weapon_key);
+
+COMMENT ON MATERIALIZED VIEW sim_gold_canonical_build IS
+    'The canonical identity of every sim_build: weapon folded to its stat profile and roll (slot '
+        'and booster kept only when the build allocates a skill that could read them), allocated '
+        'skill levels folded to their measured band. One definition shared by sim_gold_canonical_'
+        'cell and by the diff panels, which use it to tell "run B dropped this build" apart from '
+        '"run B spells this build differently" -- indistinguishable on a fingerprint join, and '
+        'opposite conclusions.';
+
+
+-- ---------------------------------------------------------------------------
+-- sim_gold_canonical_cell -- the standing baseline, folded onto canonical identity.
+--
+-- One row per distinct FIGHT rather than per distinct build spelling. Every reduction is
+-- recorded as an alias list beside the row, on the same discipline the weapon axis already
+-- follows: "never swept" and "swept under another key" are opposite conclusions, and a row
+-- that folded without saying what it folded cannot tell them apart.
+--
+-- THE THREE FOLDS. Two of them arrive already applied on sim_gold_canonical_build, which is
+-- where the weapon fold and the level fold are defined and documented -- they are properties of
+-- the BUILD, and the diff panels need them at that grain. This view adds the third, the target,
+-- because a target is a property of the MEASUREMENT: one build is measured against every
+-- defender in the sweep, so its fold cannot live on the build. The condition is on the CASE
+-- expression below.
+--
+-- Only the level fold is one the enumerator could not have done itself -- a band is a
+-- measurement, and the enumerator runs before there are measurements. The other two it does
+-- perform, within a run; this view is what makes them hold across runs as well.
+--
+-- WHY THE SPREAD COLUMNS EXIST. Folding cells means averaging numbers that are supposed to be
+-- equal, and an average is the one summary that cannot report its own disagreement. Each metric
+-- therefore carries max - min across the folded cells. A spread of 0 is the fold's premise
+-- holding; a spread that is not 0 is the fold saying two fights it just called identical did not
+-- measure identical, and is the first thing to read when a canonical row looks wrong.
+CREATE MATERIALIZED VIEW sim_gold_canonical_cell AS
+WITH cell AS (SELECT c.realm,
+                     c.scenario,
+                     c.fingerprint,
+                     c.role,
+                     c.weapon_key,
+                     -- From the canonical BUILD, not from the baseline cell. The baseline
+                     -- carries the raw jsonb spelling; this is the one the rest of the
+                     -- warehouse -- and every matchup fact a diff reads -- agrees on.
+                     ck.rune_set_key,
+                     c.rune_set_key                                     AS rune_set_raw,
+                     c.skill_set_key,
+                     c.target_role,
+                     c.target_armor,
+                     c.supplied_by_run_id,
+                     c.measured_scope,
+                     c.supplied_at,
+                     c.dmg_per_hit,
+                     c.dps_sustained,
+                     c.ttk_s,
+                     c.hits_to_kill,
+                     ck.canonical_weapon_key,
+                     ck.canonical_skill_key,
+                     ck.bands_known,
+                     ck.band_contested,
+                     ck.levels_folded,
+                     -- The target half of the key is computed here rather than on the build view
+                     -- because a target is a property of the MEASUREMENT, not of the build: one
+                     -- build is measured against every defender in the sweep.
+                     --
+                     -- All three conditions come straight from BalanceCatalog.collapseByDurability
+                     -- and each alone would break the fold: under MUTUAL the defender fights back
+                     -- and its role stops being a health total; armour contributes stats beyond the
+                     -- HEALTH sum that `durability` adds up, so two sets agreeing on health could
+                     -- still differ elsewhere; a defender carrying skills has DefensiveSkill
+                     -- passives that fire on being hit. Where the premise does not hold the target
+                     -- keeps its own key, so widening the sweep un-folds this rather than quietly
+                     -- producing wrong rows.
+                     CASE
+                         WHEN r.target_armor = 'none'
+                             AND COALESCE(jsonb_array_length(r.target_skills), 0) = 0
+                             AND c.scenario = 'one_way'
+                             -- to_char, not a bare concat. The Spark copy of this rule in
+                             -- marts._canonical_target_key renders the same 29 health as
+                             -- 'hp:29.0' where Postgres renders 'hp:29.00', and two keys
+                             -- that disagree in the last character join to nothing at all.
+                             -- Three decimals on both sides, chosen because that is the
+                             -- precision the sim records health at.
+                             --
+                             -- ...and the target ROLE is appended whenever the attacker
+                             -- carries skills. A class sets health and the pool of skills
+                             -- available, so a skill-less unarmoured defender ought to be
+                             -- fully described by the health already in this key -- and for
+                             -- 1,635,798 single-role groups of (build, target_hp) the sim
+                             -- agrees exactly: zero damage variation, it is deterministic.
+                             -- Across roles it does not: 1,029 of 86,568 multi-role groups
+                             -- measure a different dmg_per_hit at identical health, no
+                             -- armour and no defender skills, spreading up to 2.400. So the
+                             -- class is not purely a health total after all, and folding
+                             -- roles together averaged fights that measured differently --
+                             -- 618 canonical cells' worth, every one of them a build WITH
+                             -- skills. Skill-less attackers show no such disagreement, which
+                             -- is why they keep the fold and the reduction it buys.
+                             THEN 'hp:' || to_char(r.target_hp, 'FM9999999990.000')
+                                  || CASE WHEN ck.canonical_skill_key IS NOT NULL
+                                              THEN '@' || c.target_role
+                                          ELSE '' END
+                         ELSE c.target_role || '/' || c.target_armor
+                         END AS canonical_target_key
+              FROM sim_gold_baseline_cell c
+                       JOIN sim_build b
+                            ON b.run_id = c.supplied_by_run_id AND b.fingerprint = c.fingerprint
+                       JOIN sim_gold_canonical_build ck ON ck.build_id = b.id
+                       JOIN sim_result r
+                            ON r.run_id = c.supplied_by_run_id AND r.build_id = b.id
+                                AND r.target_role = c.target_role
+                                AND r.target_armor = c.target_armor)
+
+SELECT realm,
+       scenario,
+       role,
+       canonical_weapon_key,
+       rune_set_key,
+       canonical_skill_key,
+       canonical_target_key,
+       -- 1 means nothing folded onto this row. Greater than 1 is the count of baseline cells this
+       -- row now stands for, and the alias arrays below say which.
+       COUNT(*)                                                        AS cells_folded,
+       bool_and(bands_known)                                           AS bands_known,
+       bool_or(band_contested)                                         AS band_contested,
+       SUM(levels_folded)                                              AS levels_folded,
+       array_agg(DISTINCT weapon_key)                                  AS weapon_aliases,
+       -- The jsonb spellings that folded together. More than one means the sweep enumerated
+       -- one rune set in two socket orders.
+       array_agg(DISTINCT rune_set_raw)                                AS rune_set_aliases,
+       array_agg(DISTINCT target_role)                                 AS target_role_aliases,
+       array_agg(DISTINCT skill_set_key)
+                FILTER (WHERE skill_set_key IS NOT NULL)               AS skill_set_aliases,
+       array_agg(DISTINCT supplied_by_run_id)                          AS supplied_by_run_ids,
+       array_agg(DISTINCT measured_scope)                              AS measured_scopes,
+       MAX(supplied_at)                                                AS supplied_at,
+       AVG(dmg_per_hit)                                                AS dmg_per_hit,
+       MAX(dmg_per_hit) - MIN(dmg_per_hit)                             AS dmg_per_hit_spread,
+       -- Total damage over total time, NOT AVG(dps_sustained). dps is a rate, and the mean
+       -- of per-fight rates is a mean of ratios: it weights a fight that ended in a third of
+       -- the time equally with a long one, which is only correct when the folded fights share
+       -- a duration. They do not -- ttk_s_spread is non-zero on the very cells this was wrong
+       -- for. Checked before relying on it: dps_sustained = dmg_per_hit*hits_to_kill/ttk_s
+       -- holds on all 3,796,677 realm-1 one_way cells with a non-zero ttk_s, to a maximum
+       -- residual of 0.004 -- which is the 3-decimal rounding those columns are stored at.
+       -- The AVG fallback covers cells whose fights record no time at all (71,487 of them,
+       -- where the ratio has no denominator to reconstruct).
+       CASE WHEN SUM(ttk_s) > 0
+                THEN SUM(dmg_per_hit * hits_to_kill) / SUM(ttk_s)
+            ELSE AVG(dps_sustained) END                                 AS dps_sustained,
+       MAX(dps_sustained) - MIN(dps_sustained)                         AS dps_sustained_spread,
+       AVG(ttk_s)                                                      AS ttk_s,
+       MAX(ttk_s) - MIN(ttk_s)                                         AS ttk_s_spread,
+       AVG(hits_to_kill)                                               AS hits_to_kill,
+       -- One fingerprint that lands in this row, so a canonical row can always be taken back to a
+       -- real build in sim_build. MAX rather than any, because it has to be stable across
+       -- refreshes: a drifting sample would make every link built on it dead on the next publish.
+       MAX(fingerprint)                                                AS sample_fingerprint
+FROM cell
+GROUP BY 1, 2, 3, 4, 5, 6, 7;
+
+-- The unique index is what lets the pipeline refresh this CONCURRENTLY. canonical_skill_key is
+-- NULL for a skill-less build and NULL is not unique to itself, so it is COALESCEd here -- the
+-- empty string cannot collide with a real key, which always contains a ':'.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_gold_canonical_cell_key
+    ON sim_gold_canonical_cell (realm, scenario, role, canonical_weapon_key, rune_set_key,
+                                COALESCE(canonical_skill_key, ''), canonical_target_key);
+CREATE INDEX IF NOT EXISTS idx_gold_canonical_cell_folded
+    ON sim_gold_canonical_cell (realm, scenario, cells_folded);
+
+COMMENT ON MATERIALIZED VIEW sim_gold_canonical_cell IS
+    'The standing baseline re-keyed on fight identity rather than build spelling: weapons folded '
+        'to their stat profile (slot and booster kept only when the build allocates a skill that '
+        'could read them), unarmoured skill-less ONE_WAY targets folded to their health total, '
+        'and allocated skill levels folded to their measured band. The same three equivalences '
+        'BASELINE applies at enumeration, applied across runs instead of within one. Every fold '
+        'is recorded as an alias array; the _spread columns carry the disagreement an average '
+        'would otherwise hide. sim_gold_baseline_cell remains the record of what was run.';

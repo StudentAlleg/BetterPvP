@@ -73,9 +73,12 @@ CREATE TABLE IF NOT EXISTS sim_build
     weapon_attack_speed_base NUMERIC(10, 3),
     weapon_attack_speed_min  NUMERIC(10, 3),
     weapon_attack_speed_max  NUMERIC(10, 3),
-    -- The skill slot the weapon serves when held, or 'none'. Part of the dedupe key: a sword
-    -- and an axe with identical numbers drive different builds, because Skill.getLevel
-    -- requires isHolding.
+    -- The skill slot the weapon serves when held, or 'none'. Part of the dedupe key on any scope
+    -- that allocates skills: a sword and an axe with identical numbers drive different builds,
+    -- because a skill's activation path tests SkillWeapons.isHolding. On a scope with no skill
+    -- axis at all the slot and the booster flag are dropped from the key -- nothing in a
+    -- skill-less duel reads either -- so weapon_aliases on those rows spans slots. See
+    -- SimWeaponProfile.slotAgnostic.
     weapon_slot              TEXT,
     -- Every weapon key this row's measurement covers, this row's weapon first. The BASELINE
     -- and LOADOUT tiers deduplicate the weapon axis by stat profile, so one measured row can

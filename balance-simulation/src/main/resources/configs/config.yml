@@ -182,11 +182,28 @@ champions:
     # Refuse a scope that enumerates more builds than this rather than truncating it -- a
     # prefix of an enumeration is a biased sample and nothing on the row would say so.
     #
-    # 10,000 is sized for the tiers that predate the rune and stat-roll axes. EQUIPMENT and
-    # FULL cross both and run to six figures; raising this for them is the deliberate act it
-    # should be, because the duel count that follows is builds x targets x iterations and
-    # duels cost wall clock. Size it from the count the refusal prints, not upward in guesses.
-    maxBuilds: 10000
+    # 10,000 was sized for the tiers that predate the rune and stat-roll axes, and it refuses
+    # every tier that crosses them: EQUIPMENT, LOADOUT, BASELINE and FULL all run to six figures.
+    # That default is why no multi-skill sweep had ever been run -- BASELINE is not slow under it,
+    # it is refused outright, and the refusal reads as a scope problem rather than a knob.
+    #
+    # 400,000 admits BASELINE and EQUIPMENT and still refuses FULL. The numbers behind it, so the
+    # next person can re-derive rather than trust it:
+    #
+    #   BASELINE  287,398 builds  (BUDGET_VECTORS over the 48 relevantSkills below, six slots,
+    #                              12 points, weapons deduplicated, no runes). Enumerated per
+    #                              role: KNIGHT 147,793, MAGE 74,526, WARLOCK 28,865,
+    #                              BRUTE 28,696, ASSASSIN 5,703, RANGER 1,815.
+    #   EQUIPMENT ~290,000 builds  (run 1 enumerated 289,548).
+    #   FULL      tens of millions -- BASELINE multiplied by the rune axis. Still refused, which
+    #                              is correct: it exhausts the heap while being enumerated, at
+    #                              any cap.
+    #
+    # What follows from BASELINE is roughly 3.7M duels at 13 targets and one iteration, against
+    # run 1's 4.34M duels in 35 hours -- so it is a comparable sitting, not a new class of run.
+    # Raise this further only from a count a refusal actually printed, never upward in guesses:
+    # the duel count that follows is builds x targets x iterations and duels cost wall clock.
+    maxBuilds: 400000
     # Which skills may appear in an enumerated build. Skills occupy six independent slots,
     # so this is the lever with the most leverage on sweep size: FULL over every enabled
     # skill is ~60 million builds and cannot be enumerated at all.
@@ -231,7 +248,7 @@ champions:
     # a sweep with no skills in it completes normally and looks perfectly healthy.
     # Hashed into config_hash (sorted), so two runs of different lists are never diffed as
     # though they swept the same space, while reordering it during review is not a change.
-    relevantSkills: []
+    relevantSkills:
       - Combo Attack
       - Energy Pool
       - Sever

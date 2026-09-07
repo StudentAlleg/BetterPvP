@@ -25,8 +25,9 @@ import java.util.Locale;
  *       and {@code ItemFactory.create} rolls nothing -- but the range is part of what the item
  *       <em>is</em>, and two weapons with equal base and different envelopes must not be collapsed:
  *       they diverge the moment a reforge or a rolled instance enters the sweep.</li>
- *   <li><b>The skill slot.</b> {@code Skill.getLevel} requires {@code isHolding(player, type)}, so a
- *       sword and an axe with identical numbers drive different builds.</li>
+ *   <li><b>The skill slot.</b> A skill's activation path tests
+ *       {@code SkillWeapons.isHolding(player, getType())}, so a sword and an axe with identical
+ *       numbers drive different builds.</li>
  *   <li><b>Booster.</b> The {@code +1} is a property of the material, not of the stats.</li>
  *   <li><b>The applicable rune keys.</b> Two weapons with equal stats that accept different runes
  *       have different rune axes, and folding them would silently drop rune combinations from the
@@ -65,6 +66,38 @@ public record SimWeaponProfile(double damageBase,
 
     public SimWeaponProfile {
         runeKeys = List.copyOf(runeKeys);
+    }
+
+    /**
+     * This profile with the two fields a skill-less build cannot observe removed.
+     *
+     * <p>Both of the fields dropped here are in the key only because of a skill. The slot is in it
+     * because a skill's activation path tests {@code SkillWeapons.isHolding(player, getType())}, and
+     * {@code booster} is in it because {@code Skill.getLevel} adds its {@code +1} inside
+     * {@code if (SkillWeapons.isHolding(player, getType()) && SkillWeapons.hasBooster(player))} --
+     * both of which need a skill to be reading them. A build that allocates none has nothing that
+     * consults either, so a sword and an axe carrying identical numbers are, to that duel, one weapon:
+     * the fake player swings, {@code MeleeDamageStatHandler} reads {@code MELEE_DAMAGE} off the item,
+     * and nothing anywhere asks what the item is called or what slot it serves. That is exactly the
+     * case in the shipped config -- {@code standard_sword}, {@code standard_axe},
+     * {@code booster_sword} and {@code booster_axe} all carry damage 6.0 [5.0-7.0] at speed
+     * 0.0 [-0.25-0.25] -- so the full key measures one weapon four times.
+     *
+     * <p><b>"Skill-less" means no skills at all, not "no sword/axe/bow skills".</b> The narrower rule
+     * is the one that looks right and is wrong: several skills typed {@code PASSIVE_A}/{@code
+     * PASSIVE_B} test the held weapon themselves rather than through their own slot --
+     * {@code Swordsmanship}, {@code GlacialBlade} and {@code MagmaBlade} call
+     * {@code SkillWeapons.isHolding(player, SkillType.SWORD)}, and {@code Cleave},
+     * {@code CripplingBlow} and {@code RootingAxe} call it for {@code AXE} -- so a passive-only build
+     * can absolutely tell a sword from an axe. There is no field on a {@code Skill} that says whether
+     * it does, only the body of its handler, so the sound condition is the empty allocation.
+     *
+     * @see SimEquipment#slotAgnosticMeleeWeapons()
+     */
+    public SimWeaponProfile slotAgnostic() {
+        return new SimWeaponProfile(damageBase, damageMin, damageMax,
+                attackSpeedBase, attackSpeedMin, attackSpeedMax,
+                false, UNKNOWN_SLOT, runeKeys);
     }
 
     /**

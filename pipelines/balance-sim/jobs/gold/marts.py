@@ -678,25 +678,197 @@ def effect_interaction(effects: DataFrame) -> DataFrame:
     )
 
 
+# What a diff considers to be "the same fight". This is the canonical identity from
+# sql/gold_ddl.sql, not the build fingerprint, and the swap is the point of
+# `canonical_identity` below.
+#
+# `realm` and `scenario` are in the key, which the fingerprint version did not have, and
+# that changes what a cross-scenario diff reports. Deliberate: runs 12 and 13 enumerate an
+# IDENTICAL build space and differ in nothing but scenario, and they land on a different
+# measured band for 85 of 252 levels -- a MUTUAL defender fights back, so the same build
+# against the same target is not the same fight. Diffing across scenarios used to produce
+# deltas; it now produces no overlap, and the `diff_overlap` expectation warns about it.
+# No overlap is the correct answer to a comparison that was never valid.
+#
+# `rune_set_key` is unfolded on purpose. Nothing in BASELINE claims two rune sets are
+# equivalent, so folding them here would be inventing an equivalence rather than carrying
+# one through.
+CANONICAL_DIFF_KEY = [
+    "realm",
+    "scenario",
+    "role",
+    "canonical_weapon_key",
+    "rune_set_key",
+    "canonical_skill_key",
+    "canonical_target_key",
+    "provenance",
+    "derived_skill",
+    "canonical_derived_level",
+]
+
+# Carried across the join so a row that exists on one side only still says what it is.
+# `role` and `rune_set_key` are NOT here: they moved into the key, a column cannot be
+# both, and duplicating one is how the coalesce starts reading a column against itself.
+# The target columns moved the other way -- canonical_target_key identifies the
+# measurement, and target_role is what a reader wants to see on the row.
+_DIFF_DESCRIPTORS = [
+    "weapon_key",
+    "skill_set_key",
+    "target_role",
+    "target_armor",
+    "bands_known",
+    "band_contested",
+]
+
+
+def canonical_identity(fact: DataFrame, canon_build: DataFrame, band_canon: DataFrame) -> DataFrame:
+    """Attach the canonical fight identity to a matchup fact.
+
+    BASELINE is FULL with three lossless reductions applied -- weapons deduplicated by
+    stat profile, targets collapsed by health, skills limited to relevantSkills -- and each
+    is a claim that two permutations are ONE measurement. All three run at enumeration,
+    inside a single sweep. `sim_build.fingerprint` hashes the weapon KEY, the literal
+    allocated levels and the target ROLE, none of which survives those reductions, so it is
+    not canonical across sweeps and a diff joined on it compares spellings.
+
+    The weapon and level folds are NOT recomputed here. They are read from
+    `sim_gold_canonical_build`, the single definition of build identity: a second copy of an
+    identity rule is how two consumers quietly stop agreeing about identity, and the level
+    fold in particular is an election over every run in the database that Spark has no
+    business re-running per diff.
+
+    ONE rule is written twice, and it is named rather than hidden. The target fold is
+    expressed below in Spark and again in sql/gold_ddl.sql on sim_gold_canonical_cell,
+    because the SQL copy folds a cell of the standing baseline and this one folds a matchup
+    row, and there is no shape both can read. `_canonical_target_key` states its three
+    conditions; if the two drift, they disagree about how many cells exist, which the
+    canonical-fold panel reports directly.
+    """
+    canon = canon_build.select(
+        "build_id",
+        "canonical_weapon_key",
+        "canonical_skill_key",
+        F.col("bands_known").alias("_c_bands_known"),
+        F.col("band_contested").alias("_c_band_contested"),
+    )
+
+    # Derived rows carry their skill level in their own column rather than in
+    # sim_build.skills -- they are modelled, not enumerated, so there is no build to have
+    # banded -- and leaving them unbanded would key five spellings of one derived Backstab
+    # against a banded measured one. Same election, applied to the other column.
+    bands = band_canon.select(
+        F.col("realm").alias("_b_realm"),
+        F.col("scenario").alias("_b_scenario"),
+        F.col("role").alias("_b_role"),
+        F.col("skill").alias("_b_skill"),
+        F.col("allocated_level").alias("_b_level"),
+        F.col("canonical_level").alias("_b_canonical_level"),
+    )
+
+    joined = fact.join(canon, "build_id", "left").join(
+        bands,
+        F.col("realm").eqNullSafe(F.col("_b_realm"))
+        & F.col("scenario").eqNullSafe(F.col("_b_scenario"))
+        & F.col("role").eqNullSafe(F.col("_b_role"))
+        & F.col("derived_skill").eqNullSafe(F.col("_b_skill"))
+        & F.col("derived_skill_level").eqNullSafe(F.col("_b_level")),
+        "left",
+    )
+
+    return (
+        joined.withColumn("canonical_target_key", _canonical_target_key())
+        # Falls back to the ALLOCATED level when no band was measured, which is the
+        # conservative direction: an unbanded level stays its own row rather than being
+        # folded onto a neighbour on no evidence.
+        .withColumn(
+            "canonical_derived_level",
+            F.coalesce(F.col("_b_canonical_level"), F.col("derived_skill_level")),
+        )
+        .withColumn("bands_known", F.coalesce(F.col("_c_bands_known"), F.lit(True)))
+        .withColumn("band_contested", F.coalesce(F.col("_c_band_contested"), F.lit(False)))
+        .drop("_b_realm", "_b_scenario", "_b_role", "_b_skill", "_b_level", "_b_canonical_level")
+        .drop("_c_bands_known", "_c_band_contested")
+    )
+
+
+def _canonical_target_key() -> Column:
+    """The target folded to its health total, where BASELINE's premise for doing so holds.
+
+    Straight from BalanceCatalog.collapseByDurability, and each of the three conditions
+    alone would break the fold. Under MUTUAL the defender fights back and its role stops
+    being a health total. Armour contributes stats beyond the HEALTH sum that `durability`
+    adds up, so two sets agreeing on health could still differ elsewhere. A defender
+    carrying skills has DefensiveSkill passives that fire on being hit.
+
+    Where the premise does not hold the target keeps its own key, so widening the sweep
+    un-folds this rather than quietly producing wrong rows.
+    """
+    return F.when(
+        (F.col("target_armor") == F.lit("none"))
+        & (F.coalesce(F.col("target_skill_count"), F.lit(0)) == F.lit(0))
+        & (F.col("scenario") == F.lit("one_way")),
+        # format_string, not concat. A bare concat renders 29 health as 'hp:29.0' where the
+        # SQL copy of this rule renders 'hp:29.00', and two keys differing in the last
+        # character join to nothing -- which is exactly what the first baseline diff did,
+        # matching 0 rows between a baseline and one of its own contributing runs. Three
+        # decimals on both sides.
+        #
+        # The target ROLE is appended whenever the attacker carries skills -- the SQL copy of
+        # this rule in sql/gold_ddl.sql does the same, and the two must render byte-identical
+        # strings or the diff matches nothing. A class sets health and the available skill
+        # pool, so a skill-less unarmoured defender should be fully described by the health
+        # already in this key; measured at source grain the sim is exactly that deterministic
+        # for a fixed role (1,635,798 groups of (build, target_hp), zero damage variation).
+        # Across roles it is not -- 1,029 of 86,568 multi-role groups differ in dmg_per_hit at
+        # identical health with no armour and no defender skills. Only builds WITH skills
+        # showed the resulting disagreement, so skill-less ones keep the fold.
+        F.concat(
+            F.format_string("hp:%.3f", F.col("target_hp")),
+            F.when(
+                F.col("canonical_skill_key").isNotNull(),
+                # coalesce, because a concat with a null role yields a NULL KEY, and a null
+                # key silently drops the row out of every join it was meant to take part in.
+                F.concat(F.lit("@"), F.coalesce(F.col("target_role"), F.lit("?"))),
+            ).otherwise(F.lit("")),
+        ),
+    ).otherwise(F.concat_ws("/", F.col("target_role"), F.col("target_armor")))
+
+
 def run_diff(fact_a: DataFrame, fact_b: DataFrame) -> DataFrame:
-    """Run A against run B, matched on the build fingerprint and the target.
+    """Run A against run B, matched on canonical fight identity.
 
     Reports the three overlap classes separately rather than inner-joining and
     reporting the deltas. A build present in one run and not the other contributes no
     delta, and a large non-overlap means the deltas that remain are a biased sample --
     which is exactly the caveat an inner join deletes.
+
+    Both sides must have been through `canonical_identity` first (or be the standing
+    baseline, which is canonical by construction). Matching on `sim_build.fingerprint` --
+    which this did until now -- makes a re-spelling indistinguishable from a
+    disappearance, and those are opposite conclusions. The concrete case: the
+    slot-agnostic weapon fold changes the fingerprint of every skill-less build, run 7
+    enumerated five spellings of the 6.000 [5.000-7.000] profile and the next equipment
+    sweep enumerates one, so a fingerprint diff of that pair reports four fifths of the
+    weapon axis as "only in A" -- a scope change wearing the costume of a balance change,
+    with nothing on the row to say so.
+
+    Both fingerprints are still carried, one per side, and `spelling_changed` marks the
+    rows that are the same fight under two names. That column is the audit of this change:
+    on a pair of runs that enumerated identically it is false everywhere, and where it is
+    true it names exactly the rows the old key would have double-counted.
     """
-    key = ["fingerprint", "target_role", "target_armor", "provenance", "derived_skill", "derived_skill_level"]
+    key = CANONICAL_DIFF_KEY
     # What the row IS, as opposed to what it measured. Carried from both sides and
     # coalesced below, because this is a FULL OUTER join: taking them from the left alone
     # left every `only_b` row with a null role, weapon and rune set -- 4,312,263 of them on
     # the 1-vs-7 diff, every one an unidentifiable "run B added something". The overlap
     # classes are the point of this mart, so the class that exists only on one side has to
     # be the one that still describes itself.
-    descriptors = ["role", "weapon_key", "rune_set_key", "skill_set_key"]
+    descriptors = _DIFF_DESCRIPTORS
     left = fact_a.select(
         *key,
         *descriptors,
+        F.col("fingerprint").alias("fingerprint_a"),
         F.col("run_id").alias("run_a"),
         F.col("dps_sustained").alias("dps_a"),
         F.col("ttk_s").alias("ttk_a"),
@@ -706,6 +878,7 @@ def run_diff(fact_a: DataFrame, fact_b: DataFrame) -> DataFrame:
     right = fact_b.select(
         *key,
         *descriptors,
+        F.col("fingerprint").alias("fingerprint_b"),
         F.col("run_id").alias("run_b"),
         F.col("dps_sustained").alias("dps_b"),
         F.col("ttk_s").alias("ttk_b"),
@@ -723,6 +896,8 @@ def run_diff(fact_a: DataFrame, fact_b: DataFrame) -> DataFrame:
             *[F.coalesce(left[k], right[_RIGHT + k]).alias(k) for k in key],
             left["run_a"],
             right["run_b"],
+            left["fingerprint_a"],
+            right["fingerprint_b"],
             *[F.coalesce(left[k], right[_RIGHT + k]).alias(k) for k in descriptors],
             left["dps_a"],
             right["dps_b"],
@@ -738,6 +913,16 @@ def run_diff(fact_a: DataFrame, fact_b: DataFrame) -> DataFrame:
             F.when(left["run_a"].isNull(), F.lit("only_b"))
             .when(right["run_b"].isNull(), F.lit("only_a"))
             .otherwise(F.lit("both")),
+        )
+        # The same fight under two names. Only meaningful on an overlapping row -- a row
+        # present on one side has no second spelling to differ from -- so it is null
+        # rather than false there, which keeps a COUNT of it honest.
+        .withColumn(
+            "spelling_changed",
+            F.when(
+                F.col("fingerprint_a").isNotNull() & F.col("fingerprint_b").isNotNull(),
+                F.col("fingerprint_a") != F.col("fingerprint_b"),
+            ),
         )
         .withColumn("dps_delta", F.col("dps_b") - F.col("dps_a"))
         .withColumn(

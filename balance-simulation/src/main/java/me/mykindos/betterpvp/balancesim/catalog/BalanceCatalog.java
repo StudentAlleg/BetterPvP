@@ -637,7 +637,21 @@ public class BalanceCatalog {
             case ALL_MELEE -> equipment.meleeWeapons();
             // One representative per stat/rune profile. The duplicates it stands for are recorded on
             // the build row rather than dropped -- see SimEquipment.distinctMeleeWeapons.
-            case DISTINCT_MELEE -> equipment.distinctMeleeWeapons();
+            //
+            // On a scope that allocates no skills at all the profile is reduced further, dropping the
+            // slot and the booster flag: those are in the key only because a skill reads them, and a
+            // build with no skills has nothing that does. That folds standard_sword, standard_axe,
+            // booster_sword and booster_axe -- byte-identical at damage 6.0 [5.0-7.0] -- into one
+            // measured weapon rather than four.
+            //
+            // The condition is the SCOPE's skill axis, not the build's allocation, and deliberately so.
+            // The narrower rule would re-key only the skill-less builds, and a SKILLS sweep emits those
+            // as the baseline its single-skill rows are subtracted from -- SkillRelevanceAudit joins
+            // the two on build.weaponKey() exactly, so a baseline folded onto a different
+            // representative would miss every lookup and the audit would report an unmeasurable sweep.
+            case DISTINCT_MELEE -> scope.getSkillAxis() == SimScope.SkillAxis.NONE
+                    ? equipment.slotAgnosticMeleeWeapons()
+                    : equipment.distinctMeleeWeapons();
             case DEFAULT_AND_BOOSTER -> {
                 final List<WeaponOption> weapons = new ArrayList<>();
                 weapons.add(equipment.defaultWeapon());
