@@ -180,7 +180,7 @@ class ArgumentTypesTest {
         }
         assertEquals("Invalid boolean value: maybe, Expected true or false",
                 message(assertThrows(CommandSyntaxException.class, () -> type.convert("maybe"))));
-        assertEquals(List.of("true", "false"), texts(type.listSuggestions(context(source(visible)), new SuggestionsBuilder("", 0))));
+        assertEquals(List.of("false", "true"), texts(type.listSuggestions(context(source(visible)), new SuggestionsBuilder("", 0))));
     }
 
     @Test

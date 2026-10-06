@@ -20,6 +20,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
 import java.lang.reflect.Field;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.Set;
 
@@ -75,7 +76,7 @@ class BrigadierCommandLoaderTest {
     private RootCommand loadRoot(ExtendedYamlConfiguration... configs) {
         final RootCommand root = new RootCommand(fixtures.clientManager);
         when(injector.getInstance(RootCommand.class)).thenReturn(root);
-        when(plugin.getConfig("permissions/commands")).thenReturn(configs[0], configs);
+        when(plugin.getConfig("permissions/commands")).thenReturn(configs[0], Arrays.copyOfRange(configs, 1, configs.length));
         loader.load(RootCommand.class);
         runCommandsLifecycleEvent();
         return root;
