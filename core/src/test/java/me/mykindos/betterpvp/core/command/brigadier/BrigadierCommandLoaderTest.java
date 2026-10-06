@@ -13,6 +13,8 @@ import me.mykindos.betterpvp.core.command.brigadier.CommandFixtures.InfoCommand;
 import me.mykindos.betterpvp.core.command.brigadier.CommandFixtures.RootCommand;
 import me.mykindos.betterpvp.core.config.ExtendedYamlConfiguration;
 import me.mykindos.betterpvp.core.framework.BPvPPlugin;
+import me.mykindos.betterpvp.core.locale.Translations;
+import net.kyori.adventure.text.Component;
 import org.bukkit.plugin.Plugin;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -30,6 +32,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -51,6 +54,17 @@ class BrigadierCommandLoaderTest {
     static class AnnotatedInfoCommand extends InfoCommand {
         AnnotatedInfoCommand(CommandFixtures fixtures) {
             super(fixtures.clientManager);
+        }
+    }
+
+    static class TranslatedRootCommand extends RootCommand {
+        TranslatedRootCommand(CommandFixtures fixtures) {
+            super(fixtures.clientManager);
+        }
+
+        @Override
+        public Component getDescriptionComponent() {
+            return Translations.component("core.command.channel.description");
         }
     }
 
@@ -95,6 +109,20 @@ class BrigadierCommandLoaderTest {
         assertEquals(Set.of("r"), Set.copyOf(aliases.getValue()));
         assertSame(root, manager.getObject("root").orElseThrow());
         assertSame(root, manager.getObject("r").orElseThrow());
+    }
+
+    @Test
+    @DisplayName("AC28 a translatable description is registered as its English text")
+    void ac28_translatedDescriptionRegisteredInEnglish() {
+        EnglishCommandMessages.registerBundle();
+        final TranslatedRootCommand root = new TranslatedRootCommand(fixtures);
+        when(injector.getInstance(TranslatedRootCommand.class)).thenReturn(root);
+        when(plugin.getConfig("permissions/commands")).thenReturn(config("root.requiredRank=PLAYER"));
+
+        loader.load(TranslatedRootCommand.class);
+        runCommandsLifecycleEvent();
+
+        verify(registrar).register(any(LiteralCommandNode.class), eq("Change chat channel"), anyCollection());
     }
 
     @Test

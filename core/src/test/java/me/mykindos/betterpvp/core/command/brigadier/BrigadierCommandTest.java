@@ -16,12 +16,16 @@ import me.mykindos.betterpvp.core.command.brigadier.CommandFixtures.ConditionalC
 import me.mykindos.betterpvp.core.command.brigadier.CommandFixtures.InfoCommand;
 import me.mykindos.betterpvp.core.command.brigadier.CommandFixtures.PlayerOnlyCommand;
 import me.mykindos.betterpvp.core.command.brigadier.CommandFixtures.RootCommand;
+import me.mykindos.betterpvp.core.command.brigadier.arguments.ArgumentException;
 import me.mykindos.betterpvp.core.config.ExtendedYamlConfiguration;
 import me.mykindos.betterpvp.core.utilities.UtilMessage;
 import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.TranslatableComponent;
 import net.kyori.adventure.text.format.NamedTextColor;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -47,6 +51,17 @@ import static org.mockito.Mockito.when;
 class BrigadierCommandTest {
 
     private final CommandFixtures fixtures = new CommandFixtures();
+    private EnglishCommandMessages messages;
+
+    @BeforeEach
+    void openMessages() {
+        messages = EnglishCommandMessages.open();
+    }
+
+    @AfterEach
+    void closeMessages() {
+        messages.close();
+    }
 
     private boolean canUse(CommandDispatcher<CommandSourceStack> dispatcher, CommandSourceStack source, String... path) {
         var node = dispatcher.getRoot().getChild(path[0]);
@@ -215,6 +230,27 @@ class BrigadierCommandTest {
         verify(sender).sendMessage(sent.capture());
         assertEquals("<bold>boom</bold>", plain(sent.getValue()));
         assertEquals(NamedTextColor.RED, sent.getValue().color());
+    }
+
+    @Test
+    @DisplayName("AC27 a framework error reaches the sender as a translatable component, not flattened English")
+    void ac27_frameworkErrorStaysTranslatable() {
+        final CommandSender sender = mock(CommandSender.class);
+
+        UtilMessage.sendCommandSyntaxException(sender, ArgumentException.TARGET_MUST_BE_PLAYER.create("CONSOLE"));
+
+        final ArgumentCaptor<Component> sent = ArgumentCaptor.forClass(Component.class);
+        verify(sender).sendMessage(sent.capture());
+        assertTrue(containsKey(sent.getValue(), "core.command.error.not_a_player"), sent.getValue().toString());
+        assertEquals("CONSOLE is not a player", plain(sent.getValue()));
+        assertEquals(NamedTextColor.RED, sent.getValue().color());
+    }
+
+    private static boolean containsKey(Component component, String key) {
+        if (component instanceof TranslatableComponent translatable && translatable.key().equals(key)) {
+            return true;
+        }
+        return component.children().stream().anyMatch(child -> containsKey(child, key));
     }
 
     @Test

@@ -12,7 +12,6 @@ import me.mykindos.betterpvp.core.client.repository.ClientManager;
 import me.mykindos.betterpvp.core.config.ExtendedYamlConfiguration;
 import me.mykindos.betterpvp.core.utilities.search.SearchEngineBase;
 import net.kyori.adventure.text.Component;
-import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
 import org.bukkit.command.CommandSender;
 import org.bukkit.command.ConsoleCommandSender;
 import org.bukkit.entity.Player;
@@ -98,7 +97,7 @@ final class CommandFixtures {
     }
 
     static String plain(Component component) {
-        return PlainTextComponentSerializer.plainText().serialize(component);
+        return EnglishCommandMessages.english(component);
     }
 
     /**

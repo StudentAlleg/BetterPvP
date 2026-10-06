@@ -123,6 +123,14 @@ public interface IBrigadierCommand {
     String getDescription();
 
     /**
+     * Gets the description as a component, which may be translatable
+     * @return the description
+     */
+    default Component getDescriptionComponent() {
+        return Component.text(getDescription());
+    }
+
+    /**
      * Gets the aliases for this command, used in registration
      * @return the description
      */
