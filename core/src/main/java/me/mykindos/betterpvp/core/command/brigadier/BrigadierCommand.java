@@ -24,6 +24,7 @@ import me.mykindos.betterpvp.core.client.repository.ClientManager;
 import me.mykindos.betterpvp.core.command.brigadier.arguments.ArgumentException;
 import me.mykindos.betterpvp.core.command.brigadier.arguments.types.PlayerNameArgumentType;
 import me.mykindos.betterpvp.core.config.ExtendedYamlConfiguration;
+import me.mykindos.betterpvp.core.locale.Translations;
 import me.mykindos.betterpvp.core.utilities.UtilMessage;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
@@ -119,23 +120,21 @@ public abstract class BrigadierCommand implements IBrigadierCommand {
     }
 
     @Override
-    public Component getRequirementComponent(CommandContext<CommandSourceStack> context) {
-        boolean qualifies = senderHasCorrectRank(context.getSource());
-        Component component = Component.empty();
-        if (requirement(context.getSource())) {
-            component = component.append(UtilMessage.deserialize("<white>You <green>can</green> run this command"));
-        } else {
-            component = component.append(UtilMessage.deserialize("<white>You <red>cannot</red> run this command"));
-        }
-        component = component.appendNewline();
-        component = component.append(Component.text("Enabled: ", NamedTextColor.WHITE))
-                .append(Component.text(this.enabled, this.enabled ? NamedTextColor.GREEN : NamedTextColor.RED));
-        component = component.appendNewline();
-        component = component.append(Component.text("Rank: ", NamedTextColor.WHITE))
-                .append(Component.text(this.requiredRank.name(), this.requiredRank.getColor())).append(Component.text(" | ", NamedTextColor.GRAY))
-                .append((Component.text("You Qualify: ", NamedTextColor.WHITE))
-                        .append(Component.text(qualifies, qualifies ? NamedTextColor.GREEN : NamedTextColor.RED)));
-        return component;
+    public Component getRequirementComponent(CommandContext<CommandSourceStack> context) throws CommandSyntaxException {
+        final boolean canRun = requirement(context.getSource());
+        final boolean qualifies = senderHasCorrectRank(context.getSource());
+        return Component.empty()
+                .append(Translations.component(canRun ? "core.command.requirement.can_run" : "core.command.requirement.cannot_run")
+                        .color(canRun ? NamedTextColor.GREEN : NamedTextColor.RED))
+                .appendNewline()
+                .append(Translations.component("core.command.requirement.enabled",
+                        Component.text(this.enabled, this.enabled ? NamedTextColor.GREEN : NamedTextColor.RED)).color(NamedTextColor.WHITE))
+                .appendNewline()
+                .append(Translations.component("core.command.requirement.rank",
+                        Component.text(this.requiredRank.name(), this.requiredRank.getColor())).color(NamedTextColor.WHITE))
+                .append(Component.text(" | ", NamedTextColor.GRAY))
+                .append(Translations.component("core.command.requirement.qualifies",
+                        Component.text(qualifies, qualifies ? NamedTextColor.GREEN : NamedTextColor.RED)).color(NamedTextColor.WHITE));
     }
 
     //Helper Methods
@@ -252,9 +251,7 @@ public abstract class BrigadierCommand implements IBrigadierCommand {
     protected CompletableFuture<Optional<Client>> getOfflineClientByName(String name, CommandSender commandSender) {
         return clientManager.search().offline(name).thenApply(clientOptional -> {
                     if (clientOptional.isEmpty()) {
-                        commandSender
-                                .sendMessage(UtilMessage.deserialize("<red>" + PlayerNameArgumentType.UNKNOWN_PLAYER_EXCEPTION
-                                        .create(name).getMessage()));
+                        UtilMessage.sendCommandSyntaxException(commandSender, PlayerNameArgumentType.UNKNOWN_PLAYER_EXCEPTION.create(name));
                     }
                     return clientOptional;
                 }).exceptionally(throwable -> {
@@ -272,14 +269,12 @@ public abstract class BrigadierCommand implements IBrigadierCommand {
     public String getUsages(CommandSourceStack source, @Nullable String parentUsage) {
         LiteralCommandNode<CommandSourceStack> node = build();
         String prefix = parentUsage == null ? node.getUsageText() : parentUsage + " " + node.getUsageText();
-        List<String> usages = Arrays.stream(new CommandDispatcher<CommandSourceStack>().getAllUsage(node, source, true))
-                .filter(usage -> !usage.isEmpty())
-                .toList();
-        if (usages.isEmpty()) {
+        final String[] usages = new CommandDispatcher<CommandSourceStack>().getAllUsage(node, source, true);
+        if (usages.length == 0) {
             return prefix;
         }
-        return usages.stream()
-                .map(usage -> prefix + " " + usage)
+        return Arrays.stream(usages)
+                .map(usage -> usage.isEmpty() ? prefix : prefix + " " + usage)
                 .collect(Collectors.joining("\n"));
     }
 }

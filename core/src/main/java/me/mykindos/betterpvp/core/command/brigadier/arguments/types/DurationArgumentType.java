@@ -15,7 +15,7 @@ import org.jetbrains.annotations.NotNull;
 
 /**
  * A length of time typed as a number and a unit, such as {@code 30m} or {@code 2d}, or {@code perm}. Converts to
- * milliseconds, with {@code perm} as -1. Offers no suggestions, so the client shows the argument name as a hint.
+ * milliseconds, with {@code perm} as -1. Zero and lengths too long for a {@code long} are rejected. Offers no suggestions, so the client shows the argument name as a hint.
  */
 @Singleton
 public class DurationArgumentType extends BPvPArgumentType<Long, String> implements CustomArgumentType.Converted<@NotNull Long, @NotNull String> {
@@ -37,8 +37,12 @@ public class DurationArgumentType extends BPvPArgumentType<Long, String> impleme
             throw ArgumentException.INVALID_DURATION.create(nativeType);
         }
         try {
-            return UtilTime.parseTimeString(matcher.group(1), matcher.group(2));
-        } catch (NumberFormatException e) {
+            final long amount = Long.parseLong(matcher.group(1));
+            if (amount <= 0) {
+                throw ArgumentException.INVALID_DURATION.create(nativeType);
+            }
+            return Math.multiplyExact(amount, UtilTime.parseTimeString("1", matcher.group(2)));
+        } catch (NumberFormatException | ArithmeticException e) {
             throw ArgumentException.INVALID_DURATION.create(nativeType);
         }
     }

@@ -8,12 +8,15 @@ import io.papermc.paper.plugin.lifecycle.event.types.LifecycleEvents;
 import java.lang.reflect.Modifier;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import lombok.CustomLog;
 import me.mykindos.betterpvp.core.config.ExtendedYamlConfiguration;
 import me.mykindos.betterpvp.core.framework.BPvPPlugin;
 import me.mykindos.betterpvp.core.framework.Loader;
+import me.mykindos.betterpvp.core.locale.Translations;
+import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
 
 @Singleton
 @CustomLog
@@ -38,7 +41,10 @@ public class BrigadierCommandLoader extends Loader {
 
                 brigadierCommand.setConfig(plugin.getConfig("permissions/commands"));
                 LiteralCommandNode<CommandSourceStack> built = brigadierCommand.build();
-                commands.registrar().register(built, brigadierCommand.getDescription(), brigadierCommand.getAliases());
+                // Paper registers the description as plain text for every viewer, so it is resolved to English here.
+                final String description = PlainTextComponentSerializer.plainText()
+                        .serialize(Translations.render(brigadierCommand.getDescriptionComponent(), (Locale) null));
+                commands.registrar().register(built, description, brigadierCommand.getAliases());
                 log.info("Loaded brigadier command {}", brigadierCommand.getName()).submit();
                 plugin.saveConfig();
 
