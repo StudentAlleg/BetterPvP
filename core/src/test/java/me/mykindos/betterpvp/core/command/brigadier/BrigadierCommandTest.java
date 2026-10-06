@@ -277,13 +277,13 @@ class BrigadierCommandTest {
                 config("root.requiredRank=PLAYER", "root.create.requiredRank=PLAYER", "root.me.requiredRank=PLAYER"), create, me);
         final CommandSourceStack source = fixtures.source(fixtures.player("Alice", Rank.PLAYER, false));
 
-        assertEquals("root create\nroot me", root.getUsages(source, null));
+        assertEquals("root\nroot create\nroot me", root.getUsages(source, null));
         assertEquals("root me", me.getUsages(source, "root"));
     }
 
     @Test
     @DisplayName("AC24 the requirement summary shows whether the sender can run the command, enabled, rank and qualification")
-    void ac24_requirementSummary() {
+    void ac24_requirementSummary() throws CommandSyntaxException {
         final RootCommand root = rootWith(fixtures.clientManager, config("root.requiredRank=ADMIN"));
 
         final String admin = plain(root.getRequirementComponent(fixtures.context(fixtures.source(fixtures.player("Admin", Rank.ADMIN, false)))));
