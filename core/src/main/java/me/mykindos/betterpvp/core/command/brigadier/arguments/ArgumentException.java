@@ -42,4 +42,7 @@ public class ArgumentException {
     public static final DynamicCommandExceptionType INVALID_BOOLEAN = new DynamicCommandExceptionType(
             (input) -> new LiteralMessage("Invalid boolean value: " + input + ", Expected true or false")
     );
+    public static final DynamicCommandExceptionType INVALID_DURATION = new DynamicCommandExceptionType(
+            (input) -> new LiteralMessage("Invalid duration: " + input)
+    );
 }

@@ -6,7 +6,11 @@ import com.mojang.brigadier.arguments.ArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import io.papermc.paper.command.brigadier.argument.CustomArgumentType;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import me.mykindos.betterpvp.core.command.brigadier.arguments.ArgumentException;
 import me.mykindos.betterpvp.core.command.brigadier.arguments.BPvPArgumentType;
+import me.mykindos.betterpvp.core.utilities.UtilTime;
 import org.jetbrains.annotations.NotNull;
 
 /**
@@ -16,6 +20,8 @@ import org.jetbrains.annotations.NotNull;
 @Singleton
 public class DurationArgumentType extends BPvPArgumentType<Long, String> implements CustomArgumentType.Converted<@NotNull Long, @NotNull String> {
 
+    private static final Pattern DURATION = Pattern.compile("(\\d+)([ydhms])", Pattern.CASE_INSENSITIVE);
+
     @Inject
     protected DurationArgumentType() {
         super("Duration");
@@ -23,7 +29,18 @@ public class DurationArgumentType extends BPvPArgumentType<Long, String> impleme
 
     @Override
     public @NotNull Long convert(@NotNull String nativeType) throws CommandSyntaxException {
-        throw new UnsupportedOperationException("Not implemented yet");
+        if (nativeType.equalsIgnoreCase("perm")) {
+            return -1L;
+        }
+        final Matcher matcher = DURATION.matcher(nativeType);
+        if (!matcher.matches()) {
+            throw ArgumentException.INVALID_DURATION.create(nativeType);
+        }
+        try {
+            return UtilTime.parseTimeString(matcher.group(1), matcher.group(2));
+        } catch (NumberFormatException e) {
+            throw ArgumentException.INVALID_DURATION.create(nativeType);
+        }
     }
 
     @Override
