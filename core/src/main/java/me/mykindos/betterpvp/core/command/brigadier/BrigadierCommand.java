@@ -85,7 +85,7 @@ public abstract class BrigadierCommand implements IBrigadierCommand {
 
     /**
      * Builds the LiteralCommandNode<CommandSourceStack> from define()
-     * Requires sender to have required rank and executor to be a player
+     * Requires the command to be enabled and the sender to have the required rank
      * @return the build
      */
     @Override
@@ -107,19 +107,20 @@ public abstract class BrigadierCommand implements IBrigadierCommand {
 
     /**
      * Defines the requirements the root command needs to be runnable
-     * Default: Command is Enabled, Executor is a player, Sender has correct rank
+     * Default: Command is Enabled, Sender has correct rank. Console may run it.
+     * A command that needs a player executor adds {@link #executorIsPlayer(CommandSourceStack)} by overriding this.
      * <p>Used in {@link #build()}</p>
      * @param source the CommandSourceStack
      * @return whether the runner can use the command
      */
     @Override
     public boolean requirement(CommandSourceStack source) {
-            return commandIsEnabled() && executorIsPlayer(source) && senderHasCorrectRank(source);
+        return commandIsEnabled() && senderHasCorrectRank(source);
     }
 
     @Override
     public Component getRequirementComponent(CommandContext<CommandSourceStack> context) {
-        Client client = getClientFromExecutor(context);
+        boolean qualifies = senderHasCorrectRank(context.getSource());
         Component component = Component.empty();
         if (requirement(context.getSource())) {
             component = component.append(UtilMessage.deserialize("<white>You <green>can</green> run this command"));
@@ -133,7 +134,7 @@ public abstract class BrigadierCommand implements IBrigadierCommand {
         component = component.append(Component.text("Rank: ", NamedTextColor.WHITE))
                 .append(Component.text(this.requiredRank.name(), this.requiredRank.getColor())).append(Component.text(" | ", NamedTextColor.GRAY))
                 .append((Component.text("You Qualify: ", NamedTextColor.WHITE))
-                        .append(Component.text(client.hasRank(this.requiredRank), client.hasRank(this.requiredRank) ? NamedTextColor.GREEN : NamedTextColor.RED)));
+                        .append(Component.text(qualifies, qualifies ? NamedTextColor.GREEN : NamedTextColor.RED)));
         return component;
     }
 
@@ -164,12 +165,12 @@ public abstract class BrigadierCommand implements IBrigadierCommand {
      * @param source the {@link CommandSourceStack}
      * @param rank the {@link Rank} to check against
      * @return {@code false} if {@link CommandSourceStack#getSender()} is a {@link Player}
-     * but does not have the required {@link Rank},
+     * who is not op and does not have the required {@link Rank},
      * {@code true} otherwise (i.e. console)
      */
     protected boolean senderHasRank(CommandSourceStack source, Rank rank) {
         if (source.getSender() instanceof final Player sender) {
-            return clientManager.search().online(sender).hasRank(rank);
+            return sender.isOp() || clientManager.search().online(sender).hasRank(rank);
         }
         //CommandSender is not a player, always allow
         return true;
@@ -209,7 +210,11 @@ public abstract class BrigadierCommand implements IBrigadierCommand {
      */
     @NotNull
     protected Player getPlayerFromExecutor(@NotNull CommandContext<CommandSourceStack> context) throws CommandSyntaxException {
-        if (!(context.getSource().getExecutor() instanceof final Player player)) throw ArgumentException.TARGET_MUST_BE_PLAYER.create(context.getSource().getExecutor() == null ? null : (context.getSource().getExecutor().getName()));
+        final CommandSourceStack source = context.getSource();
+        if (!(source.getExecutor() instanceof final Player player)) {
+            final String name = source.getExecutor() == null ? source.getSender().getName() : source.getExecutor().getName();
+            throw ArgumentException.TARGET_MUST_BE_PLAYER.create(name);
+        }
         return player;
     }
 
@@ -221,7 +226,7 @@ public abstract class BrigadierCommand implements IBrigadierCommand {
      */
     @NotNull
     protected Player getPlayerFromSender(@NotNull CommandContext<CommandSourceStack> context) throws CommandSyntaxException {
-        if (!(context.getSource().getSender() instanceof final Player player)) throw ArgumentException.TARGET_MUST_BE_PLAYER.create(context.getSource().getExecutor() == null ? null : (context.getSource().getSender().getName()));
+        if (!(context.getSource().getSender() instanceof final Player player)) throw ArgumentException.TARGET_MUST_BE_PLAYER.create(context.getSource().getSender().getName());
         return player;
     }
 
@@ -229,14 +234,11 @@ public abstract class BrigadierCommand implements IBrigadierCommand {
      * Gets the {@link Client} of the {@link CommandSourceStack#getExecutor()}
      * @param context the {@link CommandContext<CommandSourceStack>}
      * @return the {@link Client}
-     * @throws ClassCastException if {@link CommandSourceStack#getExecutor()} is not instance of {@link Player}
+     * @throws CommandSyntaxException if {@link CommandSourceStack#getExecutor()} is not instance of {@link Player}
      */
     @NotNull
-    protected Client getClientFromExecutor(@NotNull CommandContext<CommandSourceStack> context) throws ClassCastException {
-        if (!(context.getSource().getExecutor() instanceof Player player)) {
-            throw new ClassCastException("Cannot get a client of a non-player");
-        }
-        return clientManager.search().online(player);
+    protected Client getClientFromExecutor(@NotNull CommandContext<CommandSourceStack> context) throws CommandSyntaxException {
+        return clientManager.search().online(getPlayerFromExecutor(context));
     }
 
     //Since we cannot throw a CommandSyntaxException in async contexts, this will pseudo throw on an empty optional.

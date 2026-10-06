@@ -67,7 +67,7 @@ public class BrigadierJoinSubCommand extends ClanBrigadierCommand {
                 .then(IBrigadierCommand.argument("Clan", BPvPClansArgumentTypes.clan(), this::senderIsAdministrating)
                                 .executes(context -> {
                                     final Clan target = context.getArgument("Clan", Clan.class);
-                                    if (!(context.getSource().getExecutor() instanceof final Player player)) return Command.SINGLE_SUCCESS;
+                                    final Player player = getPlayerFromExecutor(context);
                                     if (clanManager.getClanByPlayer(player).isPresent()) throw ClanArgumentException.MUST_NOT_BE_IN_A_CLAN_EXCEPTION.create(player.getName());
 
                                     final Component notification = UtilMessage.deserialize("<yellow>%s</yellow> had <yellow>%s</yellow> force join <aqua>%s</aqua>",
@@ -83,7 +83,7 @@ public class BrigadierJoinSubCommand extends ClanBrigadierCommand {
                                 .executes(context -> {
                                     final Clan target = context.getArgument("Joinable Clan", Clan.class);
 
-                                    if (!(context.getSource().getExecutor() instanceof final Player player)) return Command.SINGLE_SUCCESS;
+                                    final Player player = getPlayerFromExecutor(context);
 
                                     final Client client = getClientFromExecutor(context);
 
