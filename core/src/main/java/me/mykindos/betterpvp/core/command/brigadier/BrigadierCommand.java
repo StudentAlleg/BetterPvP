@@ -1,20 +1,20 @@
 package me.mykindos.betterpvp.core.command.brigadier;
 
+import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
-import com.mojang.brigadier.tree.CommandNode;
 import com.mojang.brigadier.tree.LiteralCommandNode;
 import io.papermc.paper.command.brigadier.CommandSourceStack;
-import io.papermc.paper.command.brigadier.PaperBrigadier;
-import io.papermc.paper.command.brigadier.PaperCommands;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashSet;
-import java.util.Map;
+import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.stream.Collectors;
 import lombok.CustomLog;
 import lombok.Getter;
 import lombok.Setter;
@@ -267,20 +267,19 @@ public abstract class BrigadierCommand implements IBrigadierCommand {
      * Get all the usages of this command
      * @param source the {@link CommandSourceStack}
      * @param parentUsage the usage of the parent to this command
-     * @return the formatted string of all usages
-     * @see PaperBrigadier#wrapNode(CommandNode)
+     * @return one line per usable path of this command, each prefixed with {@code parentUsage} when given
      */
     public String getUsages(CommandSourceStack source, @Nullable String parentUsage) {
-        //get the internal dispatcher, we do not care if it is valid, we are using a helper method
-        //copied from PaperBrigadier#wrapNode(CommandNode)
         LiteralCommandNode<CommandSourceStack> node = build();
-        Map<CommandNode<CommandSourceStack>, String> map = PaperCommands.INSTANCE.getDispatcherInternal()
-                .getSmartUsage(node, source);
-        map.replaceAll((key, value) -> node.getUsageText() + " " + value);
-        if (parentUsage == null) {
-            return map.isEmpty() ? node.getUsageText() :  String.join("\n" + node.getUsageText() + " ", map.values());
+        String prefix = parentUsage == null ? node.getUsageText() : parentUsage + " " + node.getUsageText();
+        List<String> usages = Arrays.stream(new CommandDispatcher<CommandSourceStack>().getAllUsage(node, source, true))
+                .filter(usage -> !usage.isEmpty())
+                .toList();
+        if (usages.isEmpty()) {
+            return prefix;
         }
-        return map.isEmpty() ? parentUsage + " " + node.getUsageText() : parentUsage + " " + String.join("\n" + parentUsage + " ", map.values());
-
+        return usages.stream()
+                .map(usage -> prefix + " " + usage)
+                .collect(Collectors.joining("\n"));
     }
 }
