@@ -1,6 +1,5 @@
 package me.mykindos.betterpvp.core.command.brigadier.arguments;
 
-import com.google.inject.Singleton;
 import lombok.AccessLevel;
 import lombok.CustomLog;
 import lombok.Getter;
@@ -25,7 +24,6 @@ import java.util.UUID;
 
 
 @CustomLog
-@Singleton
 @NoArgsConstructor(access = AccessLevel.PRIVATE)
 public class BPvPArgumentTypes {
     @Getter
@@ -37,6 +35,14 @@ public class BPvPArgumentTypes {
     private static final BooleanArgumentType BOOLEAN_ARGUMENT = (BooleanArgumentType) createArgumentType(JavaPlugin.getPlugin(Core.class), BooleanArgumentType.class);
     private static final CustomItemArgumentType CUSTOM_ITEM_ARGUMENT = (CustomItemArgumentType) createArgumentType(JavaPlugin.getPlugin(Core.class), CustomItemArgumentType.class);
     private static final DurationArgumentType DURATION_ARGUMENT = (DurationArgumentType) createArgumentType(JavaPlugin.getPlugin(Core.class), DurationArgumentType.class);
+
+    /**
+     * Loads this class, so every argument type registers while Core enables
+     */
+    public static void load() {
+        log.info("Loaded {} brigadier argument types", argumentTypes.size()).submit();
+    }
+
     public static BPvPArgumentType<?, ?> createArgumentType(BPvPPlugin plugin, Class<? extends BPvPArgumentType<?, ?>> clazz) {
 
         BPvPArgumentType<?, ?> argumentType = plugin.getInjector().getInstance(clazz);
