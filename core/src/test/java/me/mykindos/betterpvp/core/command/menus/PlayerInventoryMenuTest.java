@@ -19,8 +19,6 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 @DisplayName("Invsee menu")
 class PlayerInventoryMenuTest {
 
-    private static final List<String> LOCALES = List.of("ar", "de", "en", "es", "fr", "ja", "ko", "ms", "nl", "pl", "ru", "zh");
-
     private static Properties load(String locale) throws IOException {
         final String path = "/translations/core_" + locale + ".properties";
         try (InputStream stream = PlayerInventoryMenuTest.class.getResourceAsStream(path)) {
@@ -37,7 +35,7 @@ class PlayerInventoryMenuTest {
         final TranslatableComponent title = assertInstanceOf(TranslatableComponent.class, PlayerInventoryMenu.title("Steve"));
 
         assertEquals(Component.text("Steve"), title.arguments().getFirst().asComponent());
-        for (String locale : LOCALES) {
+        for (String locale : List.of("ar", "de", "en", "es", "fr", "ja", "ko", "ms", "nl", "pl", "ru", "zh")) {
             assertNotNull(load(locale).getProperty(title.key()), locale);
         }
     }
