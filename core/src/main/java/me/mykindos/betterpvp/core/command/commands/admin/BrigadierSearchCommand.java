@@ -67,7 +67,6 @@ public class BrigadierSearchCommand extends BrigadierCommand {
                             }
                         )
                     ).then(BrigadierNodes.argument("Player Name", BPvPArgumentTypes.playerName())
-                        .suggests(BPvPArgumentTypes.playerName()::suggestions)
                         .executes(context -> {
                             final String targetName = context.getArgument("Player Name", String.class);
                             final Player executor = getPlayerFromExecutor(context);

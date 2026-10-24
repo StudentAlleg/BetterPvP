@@ -22,7 +22,6 @@ import me.mykindos.betterpvp.core.client.Client;
 import me.mykindos.betterpvp.core.client.Rank;
 import me.mykindos.betterpvp.core.client.repository.ClientManager;
 import me.mykindos.betterpvp.core.command.brigadier.arguments.ArgumentException;
-import me.mykindos.betterpvp.core.command.brigadier.arguments.types.PlayerNameArgumentType;
 import me.mykindos.betterpvp.core.config.ExtendedYamlConfiguration;
 import me.mykindos.betterpvp.core.locale.Translations;
 import me.mykindos.betterpvp.core.utilities.UtilMessage;
@@ -101,10 +100,6 @@ public abstract class BrigadierCommand {
         }
         this.enabled = config.getOrSaveBoolean(getPath() + ".enabled", true);
         this.children.forEach(child -> child.setConfig(config));
-    }
-
-    public void loadConfig() {
-
     }
 
     public String getPath() {
@@ -289,7 +284,7 @@ public abstract class BrigadierCommand {
                 return Optional.empty();
             }
             if (clientOptional.isEmpty()) {
-                UtilMessage.sendCommandSyntaxException(commandSender, PlayerNameArgumentType.UNKNOWN_PLAYER_EXCEPTION.create(name));
+                UtilMessage.sendCommandSyntaxException(commandSender, ArgumentException.UNKNOWN_OFFLINE_PLAYER.create(name));
             }
             return clientOptional;
         });

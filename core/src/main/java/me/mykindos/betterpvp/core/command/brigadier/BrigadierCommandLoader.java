@@ -7,7 +7,6 @@ import io.papermc.paper.command.brigadier.CommandSourceStack;
 import io.papermc.paper.command.brigadier.Commands;
 import io.papermc.paper.plugin.lifecycle.event.types.LifecycleEvents;
 import java.lang.reflect.Modifier;
-import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
@@ -86,7 +85,6 @@ public class BrigadierCommandLoader extends Loader {
     }
 
     public void loadSubCommands(Set<Class<?>> classes) {
-        log.info(Arrays.toString(classes.toArray())).submit();
         classes.forEach(clazz -> {
                     BrigadierSubCommand subCommandAnnotation = clazz.getAnnotation(BrigadierSubCommand.class);
                     BrigadierCommand parent = plugin.getInjector().getInstance(subCommandAnnotation.value());

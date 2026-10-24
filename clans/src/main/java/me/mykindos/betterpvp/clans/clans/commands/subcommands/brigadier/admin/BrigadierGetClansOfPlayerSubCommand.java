@@ -45,7 +45,6 @@ public class BrigadierGetClansOfPlayerSubCommand extends ClanBrigadierCommand {
         return BrigadierNodes.literal(getName())
                 //must be before selector, selector fails without falling
                 .then(BrigadierNodes.argument("player", BPvPArgumentTypes.playerName())
-                        .suggests(BPvPArgumentTypes.playerName()::suggestions)
                         .executes(context -> {
                             final String targetName = context.getArgument("player", String.class);
                             final Player player = getPlayerFromExecutor(context);

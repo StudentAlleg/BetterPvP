@@ -13,14 +13,13 @@ import io.papermc.paper.command.brigadier.CommandSourceStack;
 import io.papermc.paper.command.brigadier.Commands;
 import io.papermc.paper.command.brigadier.PaperBrigadier;
 import java.util.function.Predicate;
-import java.util.logging.Level;
-import me.mykindos.betterpvp.core.Core;
-import org.bukkit.plugin.java.JavaPlugin;
+import lombok.CustomLog;
 import org.jetbrains.annotations.NotNull;
 
 /**
  * Builders for the nodes of a Brigadier command tree, typed to {@link CommandSourceStack}.
  */
+@CustomLog
 public final class BrigadierNodes {
 
     private BrigadierNodes() {
@@ -45,8 +44,7 @@ public final class BrigadierNodes {
         builder.suggests((context, suggestionsBuilder) -> {
             if (requirement.test(context.getSource())) {
                 return argumentType.listSuggestions(context, suggestionsBuilder).exceptionally(throwable -> {
-
-                    JavaPlugin.getPlugin(Core.class).getLogger().log(Level.SEVERE, "Error generating required suggestion: ", throwable);
+                    log.error("Error generating suggestions for argument {}", name, throwable).submit();
                     return Suggestions.empty().join();
                 });
             }

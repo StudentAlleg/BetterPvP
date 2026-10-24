@@ -28,8 +28,7 @@ import java.util.concurrent.CompletableFuture;
 @CustomLog
 @Singleton
 public class PlayerNameArgumentType extends BPvPArgumentType<String, String> implements CustomArgumentType.Converted<String, String> {
-    public static final DynamicCommandExceptionType UNKNOWN_PLAYER_EXCEPTION = new DynamicCommandExceptionType(name -> CommandMessages.translatable("core.command.error.unknown_offline_player", name));
-    public static final DynamicCommandExceptionType INVALID_PLAYER_NAME_EXCEPTION = new DynamicCommandExceptionType(name -> CommandMessages.translatable("core.command.error.invalid_player_name", name));
+    private static final DynamicCommandExceptionType INVALID_PLAYER_NAME_EXCEPTION = new DynamicCommandExceptionType(name -> CommandMessages.translatable("core.command.error.invalid_player_name", name));
 
     private final  EffectManager effectManager;
     private final ClientManager clientManager;
@@ -46,7 +45,7 @@ public class PlayerNameArgumentType extends BPvPArgumentType<String, String> imp
      * @param name the name to validate
      * @throws CommandSyntaxException if this is not a valid {@link Player} name
      */
-    public static void validatePlayerName(String name) throws CommandSyntaxException {
+    private static void validatePlayerName(String name) throws CommandSyntaxException {
         if (!name.matches("^[a-zA-Z0-9_]{1,16}$")) {
             throw INVALID_PLAYER_NAME_EXCEPTION.create(name);
         }
@@ -76,9 +75,11 @@ public class PlayerNameArgumentType extends BPvPArgumentType<String, String> imp
         return StringArgumentType.word();
     }
 
-
-    //This needs to be a static and manually added due to causing unknown conflicting problems with /c info and/or clan argument type
-    public <S> @NotNull CompletableFuture<Suggestions> suggestions(@NotNull CommandContext<S> context, SuggestionsBuilder builder) {
+    /**
+     * Suggests online players, hiding command-vanished ones from senders below {@link Rank#HELPER}.
+     */
+    @Override
+    public <S> @NotNull CompletableFuture<Suggestions> listSuggestions(@NotNull CommandContext<S> context, SuggestionsBuilder builder) {
         if (!(context.getSource() instanceof final CommandSourceStack sourceStack))
             return Suggestions.empty();
 
