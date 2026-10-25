@@ -71,7 +71,7 @@ public class BrigadierHelpSubCommand extends ClanBrigadierCommand {
                     doHelp(context, "", 1);
                     return Command.SINGLE_SUCCESS;
                 })
-                .then(BrigadierNodes.argument("page", IntegerArgumentType.integer(0))
+                .then(BrigadierNodes.argument("page", IntegerArgumentType.integer(1))
                         .executes(context -> {
                             int page = context.getArgument("page", Integer.class);
                             doHelp(context, "", page);
@@ -84,7 +84,7 @@ public class BrigadierHelpSubCommand extends ClanBrigadierCommand {
                             doHelp(context, filter, 1);
                             return Command.SINGLE_SUCCESS;
                         })
-                        .then(BrigadierNodes.argument("page", IntegerArgumentType.integer(0))
+                        .then(BrigadierNodes.argument("page", IntegerArgumentType.integer(1))
                                 .executes(context -> {
                                     String filter = context.getArgument("filter", String.class);
                                     int page = context.getArgument("page", Integer.class);
@@ -136,7 +136,7 @@ public class BrigadierHelpSubCommand extends ClanBrigadierCommand {
         commandComponent = commandComponent.appendNewline()
                 .append(Component.text(command.getName(), color)
                         .hoverEvent(HoverEvent.showText(command.getRequirementComponent(context)))
-                        .clickEvent(ClickEvent.suggestCommand("/" + command.getName()))
+                        .clickEvent(ClickEvent.suggestCommand("/c " + command.getName()))
                 ).appendSpace()
                 .append(command.getDescriptionComponent().color(NamedTextColor.WHITE)).appendNewline()
                 .append(Component.text("Usage", NamedTextColor.GOLD)).appendSpace();
