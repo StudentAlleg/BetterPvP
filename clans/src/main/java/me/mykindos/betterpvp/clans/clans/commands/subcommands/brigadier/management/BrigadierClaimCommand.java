@@ -21,6 +21,8 @@ import me.mykindos.betterpvp.core.utilities.UtilMessage;
 import me.mykindos.betterpvp.core.utilities.UtilServer;
 import org.bukkit.Chunk;
 import org.bukkit.entity.Player;
+import net.kyori.adventure.text.Component;
+import me.mykindos.betterpvp.core.locale.Translations;
 
 @Singleton
 @BrigadierSubCommand(BrigadierClansCommand.class)
@@ -49,6 +51,11 @@ public class BrigadierClaimCommand extends BrigadierClanSubCommand {
     @Override
     public String getDescription() {
         return "Claims the specified territory";
+    }
+
+    @Override
+    public Component getDescriptionComponent() {
+        return Translations.component("clans.command.claim.description");
     }
 
     @Override

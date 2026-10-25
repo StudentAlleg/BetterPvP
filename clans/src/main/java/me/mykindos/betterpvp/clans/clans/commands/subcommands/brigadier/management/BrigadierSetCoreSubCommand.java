@@ -16,6 +16,8 @@ import me.mykindos.betterpvp.core.command.brigadier.BrigadierNodes;
 import me.mykindos.betterpvp.core.components.clans.data.ClanMember;
 import me.mykindos.betterpvp.core.utilities.UtilServer;
 import org.bukkit.entity.Player;
+import net.kyori.adventure.text.Component;
+import me.mykindos.betterpvp.core.locale.Translations;
 
 @Singleton
 @BrigadierSubCommand(BrigadierClansCommand.class)
@@ -50,6 +52,11 @@ public class BrigadierSetCoreSubCommand extends BrigadierClanSubCommand {
     @Override
     public String getDescription() {
         return "Sets the clan core to your position";
+    }
+
+    @Override
+    public Component getDescriptionComponent() {
+        return Translations.component("clans.command.set-core.description");
     }
 
     /**
