@@ -36,8 +36,6 @@ import static org.mockito.Mockito.when;
 @DisplayName("Clan argument errors")
 class ClanArgumentExceptionTest {
 
-    private static final String PREFIX = "clans.command.error.";
-    private static final List<String> LOCALES = List.of("ar", "de", "en", "es", "fr", "ja", "ko", "ms", "nl", "pl", "ru", "zh");
 
     private EnglishClanCommandMessages messages;
 
@@ -83,7 +81,7 @@ class ClanArgumentExceptionTest {
             final EnglishClanCommandMessages.ComponentMessage message = assertInstanceOf(
                     EnglishClanCommandMessages.ComponentMessage.class, exception.getRawMessage(), field.getName());
             final TranslatableComponent component = assertInstanceOf(TranslatableComponent.class, message.component(), field.getName());
-            assertTrue(component.key().startsWith(PREFIX), field.getName() + " uses " + component.key());
+            assertTrue(component.key().startsWith("clans.command.error."), field.getName() + " uses " + component.key());
             keys.add(component.key());
         }
         return keys;
@@ -101,7 +99,7 @@ class ClanArgumentExceptionTest {
     private static Set<String> localeErrorKeys(Properties properties) {
         final Set<String> keys = new TreeSet<>();
         for (String key : properties.stringPropertyNames()) {
-            if (key.startsWith(PREFIX)) {
+            if (key.startsWith("clans.command.error.")) {
                 keys.add(key);
             }
         }
@@ -121,7 +119,7 @@ class ClanArgumentExceptionTest {
         final Set<String> keys = errorKeys();
         final Set<String> english = localeErrorKeys(load("en"));
         assertTrue(english.containsAll(keys), "missing from en: " + difference(keys, english));
-        for (String locale : LOCALES) {
+        for (String locale : List.of("ar", "de", "en", "es", "fr", "ja", "ko", "ms", "nl", "pl", "ru", "zh")) {
             final Properties properties = load(locale);
             assertEquals(english, localeErrorKeys(properties), locale);
             english.forEach(key -> assertFalse(properties.getProperty(key).isBlank(), locale + " " + key));
