@@ -25,7 +25,6 @@ import me.mykindos.betterpvp.core.utilities.SnowflakeIdGenerator;
 import me.mykindos.betterpvp.core.utilities.UtilMessage;
 import me.mykindos.betterpvp.core.utilities.UtilServer;
 import net.kyori.adventure.text.Component;
-import net.kyori.adventure.text.format.NamedTextColor;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.java.JavaPlugin;
 import me.mykindos.betterpvp.core.locale.Translations;
@@ -95,10 +94,7 @@ public class BrigadierCreateSubCommand extends ClanBrigadierCommand {
         Component component = super.getRequirementComponent(context);
         boolean inClan = executorHasAClan(context.getSource());
         component = component.appendNewline();
-        component = component.append(Component.text("Need a Clan: ", NamedTextColor.WHITE))
-                .append(Component.text(false, NamedTextColor.RED).append(Component.text(" | ", NamedTextColor.GRAY))
-                        .append((Component.text("You: ", NamedTextColor.WHITE))
-                                .append(Component.text(inClan, inClan ? NamedTextColor.GREEN : NamedTextColor.RED))));
+        component = component.append(clanRequirementLine(false, inClan));
         return component;
     }
 

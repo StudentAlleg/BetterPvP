@@ -83,7 +83,7 @@ public class BrigadierPromoteSubCommand extends BrigadierClanSubCommand {
 
 
                             if (executor.getRank() == ClanMember.MemberRank.LEADER && target.getRank() == ClanMember.MemberRank.ADMIN) {
-                                new ConfirmationMenu("Are you sure you want to promote " + target.getClientName() + " to leader?", success -> {
+                                new ConfirmationMenu(menuTitle(player, "clans.command.clan.promote.leader-confirmation", Component.text(target.getClientName())), success -> {
                                     if (success) {
                                         UtilServer.callEvent(new MemberDemoteEvent(player, origin, executor));
                                         UtilServer.callEvent(new MemberPromoteEvent(player, origin, target));
