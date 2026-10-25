@@ -207,11 +207,9 @@ public final class ClanTutorialBook {
     private static final Book book = Book.book(Component.text("Clans Tutorial", NamedTextColor.GOLD), Component.text("BetterPvP", NamedTextColor.GOLD), tutorialText);
 
     /**
-     * Builds a copy of the tutorial book with every (translatable) page resolved into the viewer's locale.
+     * Builds a copy of the tutorial book with every page rendered in the viewer's language.
      * <p>
-     * The static {@link #book} is a language-neutral template; book content is NOT run through the
-     * per-viewer {@code GlobalTranslator} on send (unlike chat/action bars), so opening it directly shows
-     * raw translation keys. Resolve server-side here for the recipient instead.
+     * The client does not translate book pages, so the server renders them for each reader.
      */
     public static Book localizedBook(Player player) {
         final Locale locale = player.locale();
