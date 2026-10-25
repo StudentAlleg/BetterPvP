@@ -83,7 +83,7 @@ public class PlayerInventoryMenu extends AbstractGui implements Windowed {
 
         updateInventories();
 
-        //TODO - describe relative elements (these are unused slots)
+        // Fill the slots the inventory layout leaves empty
         setItem(5, 4, Menu.BACKGROUND_GUI_ITEM);
         setItem(8, 4, Menu.BACKGROUND_GUI_ITEM);
 
