@@ -21,6 +21,7 @@ import me.mykindos.betterpvp.core.components.clans.data.ClanMember;
 import org.bukkit.entity.Player;
 import net.kyori.adventure.text.Component;
 import me.mykindos.betterpvp.core.locale.Translations;
+import net.kyori.adventure.text.format.NamedTextColor;
 
 @Singleton
 @CustomLog
@@ -87,7 +88,8 @@ public class BrigadierBankWithdrawSubCommand extends BrigadierClanSubCommand {
                             executorClan.saveProperty(ClanProperty.BALANCE, executorClan.getBalance() - amountToWithdraw);
                             gamer.saveProperty(GamerProperty.BALANCE, gamer.getBalance() + amountToWithdraw);
 
-                            executorClan.messageClan("<yellow>" + executor.getName() + " <gray>withdrew <green>$" + amountToWithdraw + " <gray>from the clan bank.", null, true);
+                            executorClan.messageClan("clans.command.clan.bank.withdraw.success", new Object[]{
+                                    Component.text(executor.getName(), NamedTextColor.YELLOW), Component.text("$" + amountToWithdraw, NamedTextColor.GREEN)}, null, true);
                             log.info("{} withdrew ${} from clan {}", executor.getName(), amountToWithdraw, executorClan.getId()).submit();
 
                             return Command.SINGLE_SUCCESS;

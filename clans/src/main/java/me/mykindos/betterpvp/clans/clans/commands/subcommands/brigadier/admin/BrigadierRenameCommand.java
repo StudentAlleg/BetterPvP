@@ -26,6 +26,7 @@ import org.bukkit.entity.Player;
 import org.bukkit.plugin.java.JavaPlugin;
 import net.kyori.adventure.text.Component;
 import me.mykindos.betterpvp.core.locale.Translations;
+import net.kyori.adventure.text.format.NamedTextColor;
 
 
 @Singleton
@@ -109,8 +110,9 @@ public class BrigadierRenameCommand extends ClanBrigadierCommand {
     private void renameClan(final Player player, final Clan clan, final String name){
         final String oldName = clan.getName();
         clan.setName(name);
-        clientManager.sendMessageToRank("Clans", UtilMessage.deserialize("<yellow>%s<gray> has renamed a clan from <yellow>%s<gray> to <yellow>%s<gray>!",
-                player.getName(), oldName, name), Rank.ADMIN);
+        clientManager.sendMessageToRank("clans.prefix", Translations.component("clans.command.clan.rename.notification",
+                Component.text(player.getName(), NamedTextColor.YELLOW), Component.text(oldName, NamedTextColor.YELLOW),
+                Component.text(name, NamedTextColor.YELLOW)), Rank.ADMIN);
         clanManager.updateClanName(clan);
 
         log.info("{} has renamed a clan from {} to {}!", player.getName(), oldName, name)

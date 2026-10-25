@@ -19,6 +19,7 @@ import me.mykindos.betterpvp.core.utilities.UtilMessage;
 import net.kyori.adventure.text.Component;
 import org.bukkit.command.CommandSender;
 import me.mykindos.betterpvp.core.locale.Translations;
+import net.kyori.adventure.text.format.NamedTextColor;
 
 
 @Singleton
@@ -77,24 +78,14 @@ public class BrigadierSetExpCommand extends ClanBrigadierCommand {
                                     double newExperience = target.getExperience();
                                     long newLevel = target.getLevel();
 
-                                    UtilMessage.message(sender,
-                                            "Clans",
-                                            "Set clan <alt>%s</alt>'s experience from <alt2>%,.1f (level %,d)</alt2> to <alt2>%,.1f (level %,d)</alt2>.",
-                                            target.getName(),
-                                            prevExperience,
-                                            prevLevel,
-                                            newExperience,
-                                            newLevel);
-
-
-                                    final Component alert = UtilMessage.deserialize("%s set clan <alt>%s</alt>'s experience from <alt2>%,.1f (level %,d)</alt2> to <alt2>%,.1f (level %,d)</alt2>.",
-                                            sender.getName(),
-                                            target.getName(),
-                                            prevExperience,
-                                            prevLevel,
-                                            newExperience,
-                                            newLevel);
-                                    clientManager.sendMessageToRank("Clans", alert, Rank.HELPER);
+                                    final Component targetName = Component.text(target.getName(), NamedTextColor.YELLOW);
+                                    final Component from = Component.text(String.format("%,.1f", prevExperience), NamedTextColor.GREEN);
+                                    final Component fromLevel = Component.text(String.format("%,d", prevLevel), NamedTextColor.GREEN);
+                                    final Component to = Component.text(String.format("%,.1f", newExperience), NamedTextColor.GREEN);
+                                    final Component toLevel = Component.text(String.format("%,d", newLevel), NamedTextColor.GREEN);
+                                    UtilMessage.message(sender, "clans.prefix", "clans.command.clan.set-exp.success", targetName, from, fromLevel, to, toLevel);
+                                    clientManager.sendMessageToRank("clans.prefix", Translations.component("clans.command.clan.set-exp.mod-notification",
+                                            Component.text(sender.getName(), NamedTextColor.YELLOW), targetName, from, fromLevel, to, toLevel), Rank.HELPER);
 
                                     return Command.SINGLE_SUCCESS;
                                 })
