@@ -79,7 +79,6 @@ public class BrigadierInviteSubCommand extends BrigadierClanSubCommand {
                             doInvite(player, origin, target);
                             return Command.SINGLE_SUCCESS;
                         })
-                        //TODO admin invite as separate argument
                         .requires(this::executorHasAClan)
                 );
     }

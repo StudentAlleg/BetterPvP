@@ -7,7 +7,6 @@ import com.mojang.brigadier.Command;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import com.mojang.brigadier.context.CommandContext;
 import io.papermc.paper.command.brigadier.CommandSourceStack;
-import lombok.CustomLog;
 import me.mykindos.betterpvp.clans.clans.Clan;
 import me.mykindos.betterpvp.clans.clans.ClanManager;
 import me.mykindos.betterpvp.clans.clans.commands.BrigadierClansCommand;
@@ -28,7 +27,6 @@ import org.bukkit.entity.Player;
 
 @Singleton
 @BrigadierSubCommand(BrigadierClansCommand.class)
-@CustomLog
 public class BrigadierJoinSubCommand extends ClanBrigadierCommand {
 
     @Inject

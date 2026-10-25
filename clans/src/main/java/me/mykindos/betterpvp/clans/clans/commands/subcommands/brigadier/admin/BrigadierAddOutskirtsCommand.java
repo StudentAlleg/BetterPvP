@@ -7,7 +7,6 @@ import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import io.papermc.paper.command.brigadier.CommandSourceStack;
 import java.util.Optional;
-import lombok.CustomLog;
 import me.mykindos.betterpvp.clans.clans.Clan;
 import me.mykindos.betterpvp.clans.clans.ClanManager;
 import me.mykindos.betterpvp.clans.clans.commands.BrigadierClansCommand;
@@ -26,7 +25,6 @@ import me.mykindos.betterpvp.core.utilities.UtilWorld;
 import org.bukkit.Chunk;
 import org.bukkit.entity.Player;
 
-@CustomLog
 @Singleton
 @BrigadierSubCommand(BrigadierClansCommand.class)
 public class BrigadierAddOutskirtsCommand extends ClanBrigadierCommand {
