@@ -24,6 +24,7 @@ import me.mykindos.betterpvp.core.utilities.UtilServer;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import org.bukkit.entity.Player;
+import me.mykindos.betterpvp.core.locale.Translations;
 
 @Singleton
 @BrigadierSubCommand(BrigadierClansCommand.class)
@@ -57,6 +58,11 @@ public class BrigadierLeaveSubCommand extends BrigadierClanSubCommand {
     @Override
     public String getDescription() {
         return "Leaves your current clan";
+    }
+
+    @Override
+    public Component getDescriptionComponent() {
+        return Translations.component("clans.command.leave.description");
     }
 
     /**

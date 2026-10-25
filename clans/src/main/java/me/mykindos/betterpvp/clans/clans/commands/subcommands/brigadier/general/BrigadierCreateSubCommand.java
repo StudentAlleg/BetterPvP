@@ -28,6 +28,7 @@ import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.java.JavaPlugin;
+import me.mykindos.betterpvp.core.locale.Translations;
 
 @Singleton
 @BrigadierSubCommand(BrigadierClansCommand.class)
@@ -105,6 +106,11 @@ public class BrigadierCreateSubCommand extends ClanBrigadierCommand {
     @Override
     public String getDescription() {
         return "Creates the specified Clan";
+    }
+
+    @Override
+    public Component getDescriptionComponent() {
+        return Translations.component("clans.command.create-clan.description");
     }
 
     private void createClan(Player creator, String name) {

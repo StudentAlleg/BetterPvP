@@ -19,6 +19,7 @@ import me.mykindos.betterpvp.core.utilities.UtilMessage;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import org.bukkit.command.CommandSender;
+import me.mykindos.betterpvp.core.locale.Translations;
 
 
 @Singleton
@@ -47,7 +48,12 @@ public class BrigadierSetEnergyCommand extends ClanBrigadierCommand {
      */
     @Override
     public String getDescription() {
-        return "Force sets the energy for your current clan";
+        return "Force set the energy of a clan";
+    }
+
+    @Override
+    public Component getDescriptionComponent() {
+        return Translations.component("clans.command.set-energy.description");
     }
 
     /**

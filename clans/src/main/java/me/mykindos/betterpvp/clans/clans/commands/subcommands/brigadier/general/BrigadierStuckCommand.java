@@ -21,6 +21,8 @@ import org.bukkit.Location;
 import org.bukkit.entity.Player;
 
 import java.util.Optional;
+import net.kyori.adventure.text.Component;
+import me.mykindos.betterpvp.core.locale.Translations;
 
 @Singleton
 @BrigadierSubCommand(BrigadierClansCommand.class)
@@ -51,6 +53,11 @@ public class BrigadierStuckCommand extends ClanBrigadierCommand {
     @Override
     public String getDescription() {
         return "Teleport out of a claim if you are stuck";
+    }
+
+    @Override
+    public Component getDescriptionComponent() {
+        return Translations.component("clans.command.stuck.description");
     }
 
     /**

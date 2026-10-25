@@ -19,6 +19,8 @@ import me.mykindos.betterpvp.core.logging.menu.CachedLogMenu;
 import me.mykindos.betterpvp.core.logging.repository.LogRepository;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.java.JavaPlugin;
+import net.kyori.adventure.text.Component;
+import me.mykindos.betterpvp.core.locale.Translations;
 
 @Singleton
 @BrigadierSubCommand(BrigadierClansCommand.class)
@@ -49,6 +51,11 @@ public class BrigadierLogsCommand extends ClanBrigadierCommand {
     @Override
     public String getDescription() {
         return "Get logs associated with your clan";
+    }
+
+    @Override
+    public Component getDescriptionComponent() {
+        return Translations.component("clans.command.logs.description");
     }
 
     /**
