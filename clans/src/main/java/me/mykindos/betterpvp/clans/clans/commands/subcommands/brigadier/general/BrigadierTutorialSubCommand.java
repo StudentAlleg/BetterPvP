@@ -1,4 +1,4 @@
-package me.mykindos.betterpvp.clans.clans.commands.subcommands.brigadier.general.bank;
+package me.mykindos.betterpvp.clans.clans.commands.subcommands.brigadier.general;
 
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
@@ -7,7 +7,7 @@ import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import io.papermc.paper.command.brigadier.CommandSourceStack;
 import me.mykindos.betterpvp.clans.clans.ClanManager;
 import me.mykindos.betterpvp.clans.clans.commands.BrigadierClansCommand;
-import me.mykindos.betterpvp.clans.clans.commands.subcommands.TutorialSubCommand;
+import me.mykindos.betterpvp.clans.clans.tutorial.ClanTutorialBook;
 import me.mykindos.betterpvp.clans.commands.commands.ClanBrigadierCommand;
 import me.mykindos.betterpvp.core.client.repository.ClientManager;
 import me.mykindos.betterpvp.core.command.brigadier.BrigadierSubCommand;
@@ -54,7 +54,7 @@ public class BrigadierTutorialSubCommand extends ClanBrigadierCommand {
         return BrigadierNodes.literal(getName())
                 .executes(context -> {
                     final Player executor = getPlayerFromExecutor(context);
-                    executor.openBook(TutorialSubCommand.localizedBook(executor));
+                    executor.openBook(ClanTutorialBook.localizedBook(executor));
                     return Command.SINGLE_SUCCESS;
                 });
     }
