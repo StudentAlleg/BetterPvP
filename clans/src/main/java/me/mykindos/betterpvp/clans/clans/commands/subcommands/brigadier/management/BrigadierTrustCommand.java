@@ -13,7 +13,6 @@ import me.mykindos.betterpvp.clans.clans.commands.BrigadierClansCommand;
 import me.mykindos.betterpvp.clans.clans.commands.subcommands.brigadier.BrigadierClanSubCommand;
 import me.mykindos.betterpvp.clans.clans.events.ClanRequestTrustEvent;
 import me.mykindos.betterpvp.clans.commands.arguments.BPvPClansArgumentTypes;
-import me.mykindos.betterpvp.clans.commands.arguments.exceptions.ClanArgumentException;
 import me.mykindos.betterpvp.core.client.repository.ClientManager;
 import me.mykindos.betterpvp.core.command.brigadier.BrigadierSubCommand;
 import me.mykindos.betterpvp.core.command.brigadier.BrigadierNodes;
@@ -68,7 +67,7 @@ public class BrigadierTrustCommand extends BrigadierClanSubCommand {
                             final Clan target = context.getArgument("Trustable Clan", Clan.class);
                             final Player player = getPlayerFromExecutor(context);
 
-                            final Clan origin = clanManager.getClanByPlayer(player).orElseThrow(() -> ClanArgumentException.NOT_IN_A_CLAN_EXCEPTION.create(player.getName()));
+                            final Clan origin = getClanByExecutor(context);
 
                             doTrust(player, origin, target);
                             return Command.SINGLE_SUCCESS;

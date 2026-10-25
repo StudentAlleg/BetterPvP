@@ -9,7 +9,6 @@ import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import com.mojang.brigadier.context.CommandContext;
 import io.papermc.paper.command.brigadier.CommandSourceStack;
 import io.papermc.paper.command.brigadier.Commands;
-import lombok.CustomLog;
 import me.mykindos.betterpvp.clans.Clans;
 import me.mykindos.betterpvp.clans.clans.Clan;
 import me.mykindos.betterpvp.clans.clans.ClanManager;
@@ -31,11 +30,9 @@ import org.bukkit.entity.Player;
 import org.bukkit.plugin.java.JavaPlugin;
 
 @Singleton
-@CustomLog
 @BrigadierSubCommand(BrigadierClansCommand.class)
 public class BrigadierCreateSubCommand extends ClanBrigadierCommand {
     private final IFilterService filterService;
-    private final SnowflakeIdGenerator ID_GENERATOR = SnowflakeIdGenerator.ID_GENERATOR;
     @Inject
     protected BrigadierCreateSubCommand(ClientManager clientManager, ClanManager clanManager, IFilterService filterService) {
         super(clientManager, clanManager);
@@ -61,10 +58,6 @@ public class BrigadierCreateSubCommand extends ClanBrigadierCommand {
                             final String name = context.getArgument("Clan Name", String.class);
                             final Player player = getPlayerFromExecutor(context);
                             filterService.isFiltered(name)
-                                    .exceptionally(throwable -> {
-                                        log.error("Error filtering Clan", throwable).submit();
-                                        return true;
-                                    })
                                     .thenAccept((filtered) -> {
                                         if (filtered) {
                                             UtilMessage.sendCommandSyntaxException(context.getSource().getSender(), ClanArgumentException.NAME_IS_FILTERED.create(name));
@@ -116,7 +109,7 @@ public class BrigadierCreateSubCommand extends ClanBrigadierCommand {
 
     private void createClan(Player creator, String name) {
         UtilServer.runTask(JavaPlugin.getPlugin(Clans.class), () -> {
-            Clan clan = new Clan(ID_GENERATOR.nextId());
+            Clan clan = new Clan(SnowflakeIdGenerator.ID_GENERATOR.nextId());
             clan.setName(name);
             clan.setOnline(true);
             clan.getProperties().registerListener(clan);

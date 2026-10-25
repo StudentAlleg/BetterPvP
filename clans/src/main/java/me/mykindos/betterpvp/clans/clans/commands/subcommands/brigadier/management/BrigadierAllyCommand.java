@@ -13,7 +13,6 @@ import me.mykindos.betterpvp.clans.clans.commands.BrigadierClansCommand;
 import me.mykindos.betterpvp.clans.clans.commands.subcommands.brigadier.BrigadierClanSubCommand;
 import me.mykindos.betterpvp.clans.clans.events.ClanRequestAllianceEvent;
 import me.mykindos.betterpvp.clans.commands.arguments.BPvPClansArgumentTypes;
-import me.mykindos.betterpvp.clans.commands.arguments.exceptions.ClanArgumentException;
 import me.mykindos.betterpvp.core.client.repository.ClientManager;
 import me.mykindos.betterpvp.core.command.brigadier.BrigadierSubCommand;
 import me.mykindos.betterpvp.core.command.brigadier.BrigadierNodes;
@@ -68,7 +67,7 @@ public class BrigadierAllyCommand extends BrigadierClanSubCommand {
                             final Clan target = context.getArgument("Allyable Clan", Clan.class);
                             final Player player = getPlayerFromExecutor(context);
 
-                            final Clan origin = clanManager.getClanByPlayer(player).orElseThrow(() -> ClanArgumentException.NOT_IN_A_CLAN_EXCEPTION.create(player.getName()));
+                            final Clan origin = getClanByExecutor(context);
 
                             doAlly(player, origin, target);
                             return Command.SINGLE_SUCCESS;

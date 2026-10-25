@@ -64,15 +64,7 @@ public class BrigadierLogsCommand extends ClanBrigadierCommand {
                     final Player executor = getPlayerFromExecutor(context);
                     final Clan executorClan = getClanByExecutor(context);
 
-                    new CachedLogMenu(executorClan.getName(),
-                            LogContext.CLAN,
-                            Long.toString(executorClan.getId()),
-                            null,
-                            CachedLogMenu.CLANS,
-                            JavaPlugin.getPlugin(Clans.class),
-                            logRepository,
-                            null)
-                                .show(executor);
+                    openLogs(executor, executorClan);
 
                     return Command.SINGLE_SUCCESS;
                 })
@@ -82,15 +74,7 @@ public class BrigadierLogsCommand extends ClanBrigadierCommand {
                         .executes(context -> {
                             final Clan target = context.getArgument("Clan", Clan.class);
                             final Player executor = getPlayerFromExecutor(context);
-                            new CachedLogMenu(target.getName(),
-                                    LogContext.CLAN,
-                                    Long.toString(target.getId()),
-                                    null,
-                                    CachedLogMenu.CLANS,
-                                    JavaPlugin.getPlugin(Clans.class),
-                                    logRepository,
-                                    null)
-                                    .show(executor);
+                            openLogs(executor, target);
                             return Command.SINGLE_SUCCESS;
                         })
                 );
@@ -99,5 +83,10 @@ public class BrigadierLogsCommand extends ClanBrigadierCommand {
     @Override
     public boolean requirement(CommandSourceStack source) {
         return super.requirement(source) && (executorHasAClan(source) || senderIsAdministrating(source));
+    }
+
+    private void openLogs(Player executor, Clan clan) {
+        new CachedLogMenu(clan.getName(), LogContext.CLAN, Long.toString(clan.getId()), null, CachedLogMenu.CLANS,
+                JavaPlugin.getPlugin(Clans.class), logRepository, null).show(executor);
     }
 }

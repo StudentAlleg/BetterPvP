@@ -3,6 +3,7 @@ package me.mykindos.betterpvp.clans.commands.commands;
 import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import io.papermc.paper.command.brigadier.CommandSourceStack;
+import java.util.List;
 import java.util.Optional;
 import me.mykindos.betterpvp.clans.Clans;
 import me.mykindos.betterpvp.clans.clans.Clan;
@@ -69,5 +70,23 @@ public abstract class ClanBrigadierCommand extends BrigadierCommand {
                 UtilMessage.sendCommandSyntaxException(commandSender, ClanArgumentException.NOT_IN_A_CLAN_EXCEPTION.create(client.getName()));
             }
             return clanOptional;
+    }
+
+    /**
+     * @param items   every entry, in order
+     * @param page    the page number, starting at 1
+     * @param perPage entries on a full page
+     * @return the entries on that page, empty past the last page
+     */
+    protected static <T> List<T> page(List<T> items, int page, int perPage) {
+        final int start = (page - 1) * perPage;
+        if (start >= items.size()) {
+            return List.of();
+        }
+        return items.subList(start, Math.min(start + perPage, items.size()));
+    }
+
+    protected static int pageCount(int size, int perPage) {
+        return (size + perPage - 1) / perPage;
     }
 }

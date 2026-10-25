@@ -107,24 +107,10 @@ public class BrigadierHelpSubCommand extends ClanBrigadierCommand {
                 .toList();
 
 
-        int count = 0;
-        final int start = (page - 1) * NUMPERPAGE;
-        int end = start + NUMPERPAGE;
-        final int size = childCommands.size();
-        int totalPages = size / NUMPERPAGE;
-        if (size % NUMPERPAGE > 0) {
-            totalPages++;
-        }
+        final int totalPages = pageCount(childCommands.size(), NUMPERPAGE);
         Component component = UtilMessage.deserialize("<yellow>Help<gray>: <white>" + page + "<gray> / <white>" + totalPages);
-
-        if (start <= size) {
-            if (end > size) end = size;
-            for (BrigadierCommand subCommand : childCommands.subList(start, end)) {
-                if (count == NUMPERPAGE) break;
-                component = component.append(addHelpCommandComponent(context, subCommand));
-
-                count++;
-            }
+        for (BrigadierCommand subCommand : page(childCommands, page, NUMPERPAGE)) {
+            component = component.append(addHelpCommandComponent(context, subCommand));
         }
         UtilMessage.message(player, "Clans", component);
 
