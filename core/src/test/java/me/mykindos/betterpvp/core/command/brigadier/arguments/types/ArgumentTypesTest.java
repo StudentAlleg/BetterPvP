@@ -1,6 +1,7 @@
 package me.mykindos.betterpvp.core.command.brigadier.arguments.types;
 
 import com.google.inject.Injector;
+import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import com.mojang.brigadier.suggestion.Suggestion;
@@ -10,6 +11,7 @@ import io.papermc.paper.command.brigadier.CommandSourceStack;
 import me.mykindos.betterpvp.core.client.Client;
 import me.mykindos.betterpvp.core.client.Rank;
 import me.mykindos.betterpvp.core.client.repository.ClientManager;
+import me.mykindos.betterpvp.core.command.brigadier.BrigadierNodes;
 import me.mykindos.betterpvp.core.command.brigadier.EnglishCommandMessages;
 import me.mykindos.betterpvp.core.effects.EffectManager;
 import me.mykindos.betterpvp.core.effects.EffectTypes;
@@ -151,10 +153,20 @@ class ArgumentTypesTest {
         final CommandContext<CommandSourceStack> asPlayer = context(source(player("Alice", Rank.PLAYER)));
         final CommandContext<CommandSourceStack> asHelper = context(source(player("Helper", Rank.HELPER)));
 
-        assertEquals(List.of("Visible"), texts(playerName.suggestions(asPlayer, new SuggestionsBuilder("", 0))));
-        assertEquals(List.of("Ghost", "Visible"), texts(playerName.suggestions(asHelper, new SuggestionsBuilder("", 0))));
+        assertEquals(List.of("Visible"), texts(playerName.listSuggestions(asPlayer, new SuggestionsBuilder("", 0))));
+        assertEquals(List.of("Ghost", "Visible"), texts(playerName.listSuggestions(asHelper, new SuggestionsBuilder("", 0))));
         assertEquals(List.of("Visible"), texts(onlinePlayer.listSuggestions(asPlayer, new SuggestionsBuilder("", 0))));
         assertEquals(List.of("Ghost", "Visible"), texts(onlinePlayer.listSuggestions(asHelper, new SuggestionsBuilder("", 0))));
+    }
+
+    @Test
+    @DisplayName("CLANS-54 AC1 a player name argument suggests online players without the command adding .suggests")
+    void clans54_ac1_playerNameSuggestsWithoutSuggests() {
+        final CommandDispatcher<CommandSourceStack> dispatcher = new CommandDispatcher<>();
+        dispatcher.register(BrigadierNodes.literal("who")
+                .then(BrigadierNodes.argument("player", new PlayerNameArgumentType(effectManager, clientManager))));
+
+        assertEquals(List.of("Visible"), texts(dispatcher.getCompletionSuggestions(dispatcher.parse("who ", source(visible)))));
     }
 
     @Test
@@ -189,7 +201,7 @@ class ArgumentTypesTest {
 
         assertSame(ghost, onlinePlayer.convert("Ghost", console));
         assertEquals(List.of("Ghost", "Visible"), texts(onlinePlayer.listSuggestions(context(console), new SuggestionsBuilder("", 0))));
-        assertEquals(List.of("Ghost", "Visible"), texts(playerName.suggestions(context(console), new SuggestionsBuilder("", 0))));
+        assertEquals(List.of("Ghost", "Visible"), texts(playerName.listSuggestions(context(console), new SuggestionsBuilder("", 0))));
     }
 
     @Test

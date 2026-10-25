@@ -2,7 +2,6 @@ package me.mykindos.betterpvp.core.command.brigadier.arguments;
 
 import lombok.AccessLevel;
 import lombok.CustomLog;
-import lombok.Getter;
 import lombok.NoArgsConstructor;
 import me.mykindos.betterpvp.core.Core;
 import me.mykindos.betterpvp.core.command.brigadier.arguments.types.BooleanArgumentType;
@@ -18,17 +17,12 @@ import me.mykindos.betterpvp.core.item.ItemRegistry;
 import me.mykindos.betterpvp.core.item.component.impl.uuid.UUIDItem;
 import org.bukkit.plugin.java.JavaPlugin;
 
-import java.util.ArrayList;
-import java.util.List;
 import java.util.UUID;
 
 
 @CustomLog
 @NoArgsConstructor(access = AccessLevel.PRIVATE)
 public class BPvPArgumentTypes {
-    @Getter
-    private static final List<BPvPArgumentType<?, ?>> argumentTypes = new ArrayList<>();
-
     private static final UUIDItemArgumentType UUIDITEM_ARGUMENT = (UUIDItemArgumentType) createArgumentType(JavaPlugin.getPlugin(Core.class), UUIDItemArgumentType.class);
     private static final PlayerNameArgumentType PLAYER_NAME_ARGUMENT = (PlayerNameArgumentType) createArgumentType(JavaPlugin.getPlugin(Core.class), PlayerNameArgumentType.class);
     private static final CustomEffectArgumentType CUSTOM_EFFECT_ARGUMENT = (CustomEffectArgumentType) createArgumentType(JavaPlugin.getPlugin(Core.class), CustomEffectArgumentType.class);
@@ -40,7 +34,7 @@ public class BPvPArgumentTypes {
      * Loads this class, so every argument type registers while Core enables
      */
     public static void load() {
-        log.info("Loaded {} brigadier argument types", argumentTypes.size()).submit();
+        log.info("Loaded brigadier argument types").submit();
     }
 
     public static BPvPArgumentType<?, ?> createArgumentType(BPvPPlugin plugin, Class<? extends BPvPArgumentType<?, ?>> clazz) {
@@ -48,7 +42,6 @@ public class BPvPArgumentTypes {
         BPvPArgumentType<?, ?> argumentType = plugin.getInjector().getInstance(clazz);
         plugin.getInjector().injectMembers(argumentType);
         log.info("Added custom brigadier argument type: {}", argumentType.getName()).submit();
-        argumentTypes.add(argumentType);
         return argumentType;
     }
 

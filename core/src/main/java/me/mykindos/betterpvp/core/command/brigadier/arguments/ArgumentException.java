@@ -31,6 +31,9 @@ public class ArgumentException {
     public static final DynamicCommandExceptionType UNKNOWN_PLAYER = new DynamicCommandExceptionType(
             playerName -> translatable("core.command.error.unknown_player", playerName)
     );
+    public static final DynamicCommandExceptionType UNKNOWN_OFFLINE_PLAYER = new DynamicCommandExceptionType(
+            playerName -> translatable("core.command.error.unknown_offline_player", playerName)
+    );
     public static final DynamicCommandExceptionType OFFLINE_LOOKUP_FAILED = new DynamicCommandExceptionType(
             playerName -> translatable("core.command.error.offline_lookup_failed", playerName)
     );

@@ -10,6 +10,7 @@ import me.mykindos.betterpvp.core.inventory.inventory.event.ItemPostUpdateEvent;
 import me.mykindos.betterpvp.core.inventory.window.Window;
 import me.mykindos.betterpvp.core.item.ItemRegistry;
 import me.mykindos.betterpvp.core.item.service.ComponentLookupService;
+import me.mykindos.betterpvp.core.locale.Translations;
 import me.mykindos.betterpvp.core.menu.Menu;
 import me.mykindos.betterpvp.core.menu.Windowed;
 import me.mykindos.betterpvp.core.menu.button.CursorButton;
@@ -157,7 +158,11 @@ public class PlayerInventoryMenu extends AbstractGui implements Windowed {
 
     @Override
     public @NotNull Component getTitle() {
-        return Component.text(name + "'s inventory");
+        return title(name);
+    }
+
+    static Component title(String name) {
+        return Translations.component("core.menu.invsee.title", Component.text(name));
     }
 
     @Override

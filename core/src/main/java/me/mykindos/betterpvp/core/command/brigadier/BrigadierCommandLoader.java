@@ -7,7 +7,6 @@ import io.papermc.paper.command.brigadier.CommandSourceStack;
 import io.papermc.paper.command.brigadier.Commands;
 import io.papermc.paper.plugin.lifecycle.event.types.LifecycleEvents;
 import java.lang.reflect.Modifier;
-import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
@@ -21,6 +20,8 @@ import me.mykindos.betterpvp.core.framework.Loader;
 import me.mykindos.betterpvp.core.locale.Translations;
 import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
 import org.reflections.Reflections;
+import org.reflections.util.ConfigurationBuilder;
+import org.reflections.util.FilterBuilder;
 
 @Singleton
 @CustomLog
@@ -37,10 +38,15 @@ public class BrigadierCommandLoader extends Loader {
 
     /**
      * Loads every top-level Brigadier command in {@code packageName} and attaches the subcommands annotated with
-     * {@link BrigadierSubCommand} to their parents.
+     * {@link BrigadierSubCommand} to their parents. The package is scanned through the owning plugin's class loader,
+     * because core's own loader can't see another plugin's classes.
      */
     public void loadCommands(String packageName) {
-        final Reflections reflections = new Reflections(packageName);
+        final ClassLoader classLoader = plugin.getClass().getClassLoader();
+        final Reflections reflections = new Reflections(new ConfigurationBuilder()
+                .forPackage(packageName, classLoader)
+                .filterInputsBy(new FilterBuilder().includePackage(packageName))
+                .addClassLoaders(classLoader));
         loadAll(reflections.getSubTypesOf(BrigadierCommand.class));
         loadSubCommands(reflections.getTypesAnnotatedWith(BrigadierSubCommand.class));
     }
@@ -86,7 +92,6 @@ public class BrigadierCommandLoader extends Loader {
     }
 
     public void loadSubCommands(Set<Class<?>> classes) {
-        log.info(Arrays.toString(classes.toArray())).submit();
         classes.forEach(clazz -> {
                     BrigadierSubCommand subCommandAnnotation = clazz.getAnnotation(BrigadierSubCommand.class);
                     BrigadierCommand parent = plugin.getInjector().getInstance(subCommandAnnotation.value());
