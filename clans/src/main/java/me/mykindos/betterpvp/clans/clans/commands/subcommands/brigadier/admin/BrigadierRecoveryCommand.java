@@ -14,9 +14,9 @@ import me.mykindos.betterpvp.core.client.Rank;
 import me.mykindos.betterpvp.core.client.repository.ClientManager;
 import me.mykindos.betterpvp.core.command.brigadier.BrigadierSubCommand;
 import me.mykindos.betterpvp.core.command.brigadier.BrigadierNodes;
-import me.mykindos.betterpvp.core.utilities.UtilMessage;
 import net.kyori.adventure.text.Component;
 import me.mykindos.betterpvp.core.locale.Translations;
+import net.kyori.adventure.text.format.NamedTextColor;
 
 
 @Singleton
@@ -65,7 +65,9 @@ public class BrigadierRecoveryCommand extends ClanBrigadierCommand {
                 .then(BrigadierNodes.argument("Clan", BPvPClansArgumentTypes.clan())
                         .executes(context -> {
                             final Clan target = context.getArgument("Clan", Clan.class);
-                            clientManager.sendMessageToRank("Clans", UtilMessage.deserialize("<yellow>%s<gray> triggered clan recovery for <yellow>%s", context.getSource().getSender().getName(), target.getName()), Rank.HELPER);
+                            clientManager.sendMessageToRank("clans.prefix", Translations.component("clans.command.clan.recovery.notification",
+                                    Component.text(context.getSource().getSender().getName(), NamedTextColor.YELLOW),
+                                    Component.text(target.getName(), NamedTextColor.YELLOW)), Rank.HELPER);
 
                             clanManager.startInsuranceRollback(target);
                             return Command.SINGLE_SUCCESS;

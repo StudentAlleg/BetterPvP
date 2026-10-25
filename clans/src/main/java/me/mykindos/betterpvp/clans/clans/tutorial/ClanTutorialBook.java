@@ -49,33 +49,31 @@ public final class ClanTutorialBook {
                     .append(Translations.component("clans.tutorial.reopen").color(NamedTextColor.BLACK).append(Component.text(" ")))
                     .append(UtilMessage.copyCommand("/c tutorial")),
             bold(Translations.component("clans.tutorial.toc-title")).color(NamedTextColor.BLACK).appendNewline()
-                    // SKIPPED: tableOfContentsEntry takes a plain String embedded into a clickable
-                    // changePage() component; cannot accept a translatable key. Entry labels left literal.
-                    .append(UtilMessage.tableOfContentsEntry("Overview", 4)).appendNewline()
-                    .append(UtilMessage.tableOfContentsEntry("Clan", 6)).appendNewline()
-                    .append(UtilMessage.tableOfContentsEntry("Territory", 7)).appendNewline()
-                    .append(UtilMessage.tableOfContentsEntry("Alliances", 8)).appendNewline()
-                    .append(UtilMessage.tableOfContentsEntry("Map", 10)).appendNewline()
-                    .append(UtilMessage.tableOfContentsEntry("Shops", 11)).appendNewline()
-                    .append(UtilMessage.tableOfContentsEntry("Fields", 12)).appendNewline()
-                    .append(UtilMessage.tableOfContentsEntry("Events/Bosses", 13)).appendNewline()
-                    .append(UtilMessage.tableOfContentsEntry("Classes/Kits", 14)).appendNewline()
-                    .append(UtilMessage.tableOfContentsEntry("Assassin", 15)).appendNewline()
-                    .append(UtilMessage.tableOfContentsEntry("Knight", 16)).appendNewline()
-                    .append(UtilMessage.tableOfContentsEntry("Brute", 17)).appendNewline()
-                    .append(UtilMessage.tableOfContentsEntry("Ranger", 18)).appendNewline()
+                    .append(UtilMessage.tableOfContentsEntry(Translations.component("clans.tutorial.toc.overview"), 4)).appendNewline()
+                    .append(UtilMessage.tableOfContentsEntry(Translations.component("clans.tutorial.toc.clan"), 6)).appendNewline()
+                    .append(UtilMessage.tableOfContentsEntry(Translations.component("clans.tutorial.toc.territory"), 7)).appendNewline()
+                    .append(UtilMessage.tableOfContentsEntry(Translations.component("clans.tutorial.toc.alliances"), 8)).appendNewline()
+                    .append(UtilMessage.tableOfContentsEntry(Translations.component("clans.tutorial.toc.map"), 10)).appendNewline()
+                    .append(UtilMessage.tableOfContentsEntry(Translations.component("clans.tutorial.toc.shops"), 11)).appendNewline()
+                    .append(UtilMessage.tableOfContentsEntry(Component.text("Fields"), 12)).appendNewline()
+                    .append(UtilMessage.tableOfContentsEntry(Translations.component("clans.tutorial.toc.events-bosses"), 13)).appendNewline()
+                    .append(UtilMessage.tableOfContentsEntry(Translations.component("clans.tutorial.toc.classes-kits"), 14)).appendNewline()
+                    .append(UtilMessage.tableOfContentsEntry(Component.text("Assassin"), 15)).appendNewline()
+                    .append(UtilMessage.tableOfContentsEntry(Component.text("Knight"), 16)).appendNewline()
+                    .append(UtilMessage.tableOfContentsEntry(Component.text("Brute"), 17)).appendNewline()
+                    .append(UtilMessage.tableOfContentsEntry(Component.text("Ranger"), 18)).appendNewline()
 
             ,
             bold(Translations.component("clans.tutorial.toc-title")).color(NamedTextColor.BLACK).appendNewline()
-                    .append(UtilMessage.tableOfContentsEntry("Mage", 19)).appendNewline()
-                    .append(UtilMessage.tableOfContentsEntry("Warlock", 20)).appendNewline()
-                    .append(UtilMessage.tableOfContentsEntry("Custom Items", 21)).appendNewline()
-                    .append(UtilMessage.tableOfContentsEntry("Reinforced", 23)).appendNewline()
-                    .append(UtilMessage.tableOfContentsEntry("Upgraded Weapons", 24)).appendNewline()
-                    .append(UtilMessage.tableOfContentsEntry("Progression", 25)).appendNewline()
-                    .append(UtilMessage.tableOfContentsEntry("Fishing", 26)).appendNewline()
-                    .append(UtilMessage.tableOfContentsEntry("Mining", 27)).appendNewline()
-                    .append(UtilMessage.tableOfContentsEntry("Woodcutting", 28)).appendNewline()
+                    .append(UtilMessage.tableOfContentsEntry(Component.text("Mage"), 19)).appendNewline()
+                    .append(UtilMessage.tableOfContentsEntry(Component.text("Warlock"), 20)).appendNewline()
+                    .append(UtilMessage.tableOfContentsEntry(Translations.component("clans.tutorial.toc.custom-items"), 21)).appendNewline()
+                    .append(UtilMessage.tableOfContentsEntry(Component.text("Reinforced"), 23)).appendNewline()
+                    .append(UtilMessage.tableOfContentsEntry(Translations.component("clans.tutorial.toc.upgraded-weapons"), 24)).appendNewline()
+                    .append(UtilMessage.tableOfContentsEntry(Translations.component("clans.tutorial.toc.progression"), 25)).appendNewline()
+                    .append(UtilMessage.tableOfContentsEntry(Translations.component("clans.tutorial.fishing-title"), 26)).appendNewline()
+                    .append(UtilMessage.tableOfContentsEntry(Translations.component("clans.tutorial.mining-title"), 27)).appendNewline()
+                    .append(UtilMessage.tableOfContentsEntry(Translations.component("clans.tutorial.woodcutting-title"), 28)).appendNewline()
             ,
             /*4*/ Translations.component("clans.tutorial.difficulty",
                             clans(),
@@ -204,7 +202,7 @@ public final class ClanTutorialBook {
             /*29*/ Translations.component("clans.tutorial.good-luck").color(NamedTextColor.BLACK)
     ));
 
-    private static final Book book = Book.book(Component.text("Clans Tutorial", NamedTextColor.GOLD), Component.text("BetterPvP", NamedTextColor.GOLD), tutorialText);
+    private static final Book book = Book.book(Translations.component("clans.tutorial.book-title").color(NamedTextColor.GOLD), Component.text("BetterPvP", NamedTextColor.GOLD), tutorialText);
 
     /**
      * Builds a copy of the tutorial book with every page rendered in the viewer's language.

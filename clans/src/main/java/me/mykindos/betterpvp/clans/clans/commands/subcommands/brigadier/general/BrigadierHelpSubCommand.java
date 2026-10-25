@@ -114,11 +114,12 @@ public class BrigadierHelpSubCommand extends ClanBrigadierCommand {
 
 
         final int totalPages = pageCount(childCommands.size(), NUMPERPAGE);
-        Component component = UtilMessage.deserialize("<yellow>Help<gray>: <white>" + page + "<gray> / <white>" + totalPages);
+        Component component = Translations.component("clans.command.clan.help.header").color(NamedTextColor.YELLOW)
+                .append(Component.text(page + " / " + totalPages, NamedTextColor.WHITE));
         for (BrigadierCommand subCommand : page(childCommands, page, NUMPERPAGE)) {
             component = component.append(addHelpCommandComponent(context, subCommand));
         }
-        UtilMessage.message(player, "Clans", component);
+        UtilMessage.message(player, "clans.prefix", component);
 
     }
 
@@ -131,13 +132,13 @@ public class BrigadierHelpSubCommand extends ClanBrigadierCommand {
                         .clickEvent(ClickEvent.suggestCommand("/c " + command.getName()))
                 ).appendSpace()
                 .append(command.getDescriptionComponent().color(NamedTextColor.WHITE)).appendNewline()
-                .append(Component.text("Usage", NamedTextColor.GOLD)).appendSpace();
+                .append(Translations.component("clans.command.clan.help.usage-prefix").color(NamedTextColor.GOLD));
 
                 if (command.requirement(context.getSource())) {
                     commandComponent = commandComponent.append(Component.text(command.getUsages(context.getSource(), "c"), NamedTextColor.WHITE));
                 } else {
                     commandComponent = commandComponent.append(Component.text(command.getUsages(context.getSource(), "c"), NamedTextColor.WHITE)
-                            .hoverEvent(HoverEvent.showText(Component.text("Usage may be incomplete for commands you do not meet the requirements of", NamedTextColor.WHITE)))
+                            .hoverEvent(HoverEvent.showText(Translations.component("clans.command.clan.help.usage-incomplete").color(NamedTextColor.WHITE)))
                     );
                 }
 

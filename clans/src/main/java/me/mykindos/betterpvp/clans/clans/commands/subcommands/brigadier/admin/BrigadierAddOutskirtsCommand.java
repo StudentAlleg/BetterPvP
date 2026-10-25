@@ -26,6 +26,7 @@ import org.bukkit.Chunk;
 import org.bukkit.entity.Player;
 import net.kyori.adventure.text.Component;
 import me.mykindos.betterpvp.core.locale.Translations;
+import net.kyori.adventure.text.format.NamedTextColor;
 
 @Singleton
 @BrigadierSubCommand(BrigadierClansCommand.class)
@@ -101,10 +102,9 @@ public class BrigadierAddOutskirtsCommand extends ClanBrigadierCommand {
                                         }
                                     }
                                 }
-                                String message = "Added <yellow>%s<gray> claims to the outskirts";
-
-                                UtilMessage.simpleMessage(player, "Clans", message, claims);
-                                clientManager.sendMessageToRank("Clans", UtilMessage.deserialize("<yellow>%s<gray> " + message.toLowerCase(), player.getName(), claims), Rank.HELPER);
+                                UtilMessage.message(player, "clans.prefix", "clans.command.clan.add-outskirts.success", Component.text(claims, NamedTextColor.YELLOW));
+                                clientManager.sendMessageToRank("clans.prefix", Translations.component("clans.command.clan.add-outskirts.notification",
+                                        Component.text(player.getName(), NamedTextColor.YELLOW), Component.text(claims, NamedTextColor.YELLOW)), Rank.HELPER);
                                 return Command.SINGLE_SUCCESS;
                             })
                         )

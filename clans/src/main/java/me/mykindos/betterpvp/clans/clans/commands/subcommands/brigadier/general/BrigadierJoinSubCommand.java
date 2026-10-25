@@ -19,11 +19,11 @@ import me.mykindos.betterpvp.core.client.Rank;
 import me.mykindos.betterpvp.core.client.repository.ClientManager;
 import me.mykindos.betterpvp.core.command.brigadier.BrigadierSubCommand;
 import me.mykindos.betterpvp.core.command.brigadier.BrigadierNodes;
-import me.mykindos.betterpvp.core.utilities.UtilMessage;
 import me.mykindos.betterpvp.core.utilities.UtilServer;
 import net.kyori.adventure.text.Component;
 import org.bukkit.entity.Player;
 import me.mykindos.betterpvp.core.locale.Translations;
+import net.kyori.adventure.text.format.NamedTextColor;
 
 @Singleton
 @BrigadierSubCommand(BrigadierClansCommand.class)
@@ -74,9 +74,11 @@ public class BrigadierJoinSubCommand extends ClanBrigadierCommand {
                                     final Player player = getPlayerFromExecutor(context);
                                     if (clanManager.getClanByPlayer(player).isPresent()) throw ClanArgumentException.MUST_NOT_BE_IN_A_CLAN_EXCEPTION.create(player.getName());
 
-                                    final Component notification = UtilMessage.deserialize("<yellow>%s</yellow> had <yellow>%s</yellow> force join <aqua>%s</aqua>",
-                                            context.getSource().getSender().getName(), player.getName(), target.getName());
-                                    clientManager.sendMessageToRank("Clans", notification, Rank.HELPER);
+                                    final Component notification = Translations.component("clans.command.clan.join.forced-mod-notification",
+                                            Component.text(context.getSource().getSender().getName(), NamedTextColor.YELLOW),
+                                            Component.text(player.getName(), NamedTextColor.YELLOW),
+                                            Component.text(target.getName(), NamedTextColor.AQUA));
+                                    clientManager.sendMessageToRank("clans.prefix", notification, Rank.HELPER);
 
                                     doJoin(player, target);
                                     return Command.SINGLE_SUCCESS;

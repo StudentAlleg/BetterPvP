@@ -18,9 +18,9 @@ import me.mykindos.betterpvp.core.client.repository.ClientManager;
 import me.mykindos.betterpvp.core.command.brigadier.BrigadierSubCommand;
 import me.mykindos.betterpvp.core.command.brigadier.BrigadierNodes;
 import me.mykindos.betterpvp.core.components.clans.data.ClanEnemy;
-import org.bukkit.entity.Player;
 import net.kyori.adventure.text.Component;
 import me.mykindos.betterpvp.core.locale.Translations;
+import net.kyori.adventure.text.format.NamedTextColor;
 
 
 @Singleton
@@ -99,10 +99,10 @@ public class BrigadierSetDominanceCommand extends ClanBrigadierCommand {
         clanManager.getRepository().updateDominance(applyClan, applyClanEnemy);
         clanManager.getRepository().updateDominance(zeroClan, zeroClanEnemy);
 
-        zeroClan.messageClan("<gray>Your dominance against <red>" + applyClan.getName()
-                + " <gray>has been set to <green>" + actualDominance + "%", null, true);
-        applyClan.messageClan("<gray>Your dominance against <red>" + zeroClan.getName()
-                + " <gray>has been set to <red>-" + actualDominance + "%", null, true);
+        zeroClan.messageClan("clans.command.clan.set-dominance.clan-notification", new Object[]{
+                Component.text(applyClan.getName(), NamedTextColor.RED), Component.text(actualDominance + "%", NamedTextColor.GREEN)}, null, true);
+        applyClan.messageClan("clans.command.clan.set-dominance.target-notification", new Object[]{
+                Component.text(zeroClan.getName(), NamedTextColor.RED), Component.text("-" + actualDominance + "%", NamedTextColor.RED)}, null, true);
 
     }
 
