@@ -12,7 +12,6 @@ import me.mykindos.betterpvp.clans.clans.commands.BrigadierClansCommand;
 import me.mykindos.betterpvp.clans.clans.commands.subcommands.brigadier.BrigadierClanSubCommand;
 import me.mykindos.betterpvp.clans.clans.events.ClanInviteMemberEvent;
 import me.mykindos.betterpvp.clans.commands.arguments.BPvPClansArgumentTypes;
-import me.mykindos.betterpvp.clans.commands.arguments.exceptions.ClanArgumentException;
 import me.mykindos.betterpvp.core.client.Client;
 import me.mykindos.betterpvp.core.client.repository.ClientManager;
 import me.mykindos.betterpvp.core.command.brigadier.BrigadierSubCommand;
@@ -70,7 +69,7 @@ public class BrigadierInviteSubCommand extends BrigadierClanSubCommand {
 
                             final Player player = getPlayerFromExecutor(context);
 
-                            final Clan origin = clanManager.getClanByPlayer(player).orElseThrow(() -> ClanArgumentException.NOT_IN_A_CLAN_EXCEPTION.create(player.getName()));
+                            final Clan origin = getClanByExecutor(context);
 
                             final Client executorClient = clientManager.search().online(player);
                             final Client targetClient = clientManager.search().online(target);
