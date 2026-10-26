@@ -2,6 +2,17 @@ package me.mykindos.betterpvp.core.command.commands;
 
 import com.mojang.brigadier.tree.CommandNode;
 import me.mykindos.betterpvp.core.command.brigadier.BrigadierCommand;
+import me.mykindos.betterpvp.core.command.commands.admin.AdminMessageCommand;
+import me.mykindos.betterpvp.core.command.commands.admin.AdminReplyCommand;
+import me.mykindos.betterpvp.core.command.commands.admin.AdminVanishCommand;
+import me.mykindos.betterpvp.core.command.commands.admin.BroadcastCommand;
+import me.mykindos.betterpvp.core.command.commands.admin.FreezeCommand;
+import me.mykindos.betterpvp.core.command.commands.admin.InvSeeCommand;
+import me.mykindos.betterpvp.core.command.commands.admin.ItemInfoCommand;
+import me.mykindos.betterpvp.core.command.commands.admin.KickCommand;
+import me.mykindos.betterpvp.core.command.commands.admin.LogPurgeCommand;
+import me.mykindos.betterpvp.core.command.commands.admin.SetSpawnCommand;
+import me.mykindos.betterpvp.core.command.commands.admin.StaffChatCommand;
 import me.mykindos.betterpvp.core.command.commands.general.DailyCommand;
 import me.mykindos.betterpvp.core.command.commands.general.DiscordCommand;
 import me.mykindos.betterpvp.core.command.commands.general.IgnoreCommand;
@@ -88,7 +99,18 @@ class CoreCommandsParityTest {
                 Map.entry(TeleportHereCommand.class, new Object[]{"teleporthere", Set.of("tphere"), "ADMIN"}),
                 Map.entry(TeleportPositionCommand.class, new Object[]{"teleportposition", Set.of("tppos"), "ADMIN"}),
                 Map.entry(TeleportWorldCommand.class, new Object[]{"teleportworld", Set.of("tpworld", "tpw"), "ADMIN"}),
-                Map.entry(WorldCommand.class, new Object[]{"world", Set.of(), "ADMIN"}));
+                Map.entry(WorldCommand.class, new Object[]{"world", Set.of(), "ADMIN"}),
+                Map.entry(AdminMessageCommand.class, new Object[]{"messageadmin", Set.of("ma"), "HELPER"}),
+                Map.entry(AdminReplyCommand.class, new Object[]{"replyadmin", Set.of("ra"), "HELPER"}),
+                Map.entry(AdminVanishCommand.class, new Object[]{"vanish", Set.of("v"), "ADMIN"}),
+                Map.entry(BroadcastCommand.class, new Object[]{"broadcast", Set.of("bc"), "ADMIN"}),
+                Map.entry(FreezeCommand.class, new Object[]{"freeze", Set.of("unfreeze"), "ADMIN"}),
+                Map.entry(InvSeeCommand.class, new Object[]{"invsee", Set.of("openinv"), "ADMIN"}),
+                Map.entry(ItemInfoCommand.class, new Object[]{"iteminfo", Set.of(), "ADMIN"}),
+                Map.entry(KickCommand.class, new Object[]{"kick", Set.of(), "ADMIN"}),
+                Map.entry(LogPurgeCommand.class, new Object[]{"logpurge", Set.of(), "DEVELOPER"}),
+                Map.entry(SetSpawnCommand.class, new Object[]{"setspawn", Set.of(), "ADMIN"}),
+                Map.entry(StaffChatCommand.class, new Object[]{"staffchat", Set.of("sc"), "TRIAL_MOD"}));
 
         for (Map.Entry<Class<? extends BrigadierCommand>, Object[]> entry : expected.entrySet()) {
             final BrigadierCommand command = instantiate(entry.getKey());
