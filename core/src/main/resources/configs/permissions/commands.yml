@@ -7,3 +7,42 @@ search:
 customeffect:
   requiredRank: ADMIN
   enabled: true
+daily:
+  requiredRank: PLAYER
+  enabled: true
+discord:
+  requiredRank: PLAYER
+  enabled: true
+ignore:
+  requiredRank: PLAYER
+  enabled: true
+kill:
+  requiredRank: PLAYER
+  enabled: true
+list:
+  requiredRank: ADMIN
+  enabled: true
+message:
+  requiredRank: PLAYER
+  enabled: true
+ping:
+  requiredRank: PLAYER
+  enabled: true
+playtime:
+  requiredRank: PLAYER
+  enabled: true
+admin:
+  requiredRank: PLAYER
+  enabled: true
+reply:
+  requiredRank: PLAYER
+  enabled: true
+showeffects:
+  requiredRank: PLAYER
+  enabled: true
+showitem:
+  requiredRank: PLAYER
+  enabled: true
+spawn:
+  requiredRank: ADMIN
+  enabled: true
