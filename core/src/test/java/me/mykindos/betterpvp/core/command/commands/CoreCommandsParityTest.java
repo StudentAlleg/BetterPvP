@@ -66,6 +66,7 @@ import me.mykindos.betterpvp.core.cutscene.command.CutsceneCommand;
 import me.mykindos.betterpvp.core.item.command.AttunementCommand;
 import me.mykindos.betterpvp.core.quest.command.QuestCommand;
 import me.mykindos.betterpvp.core.tracking.command.HeatmapCommand;
+import me.mykindos.betterpvp.core.world.logger.commands.WorldLoggerCommand;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -204,7 +205,8 @@ class CoreCommandsParityTest {
                 Map.entry(CutsceneCommand.class, new Object[]{"cutscene", Set.of(), "ADMIN"}),
                 Map.entry(QuestCommand.class, new Object[]{"quest", Set.of(), "ADMIN"}),
                 Map.entry(HeatmapCommand.class, new Object[]{"heatmap", Set.of(), "ADMIN"}),
-                Map.entry(AttunementCommand.class, new Object[]{"attune", Set.of(), "ADMIN"}));
+                Map.entry(AttunementCommand.class, new Object[]{"attune", Set.of(), "ADMIN"}),
+                Map.entry(WorldLoggerCommand.class, new Object[]{"worldlogger", Set.of("wl", "co"), "MODERATOR"}));
 
         for (Map.Entry<Class<? extends BrigadierCommand>, Object[]> entry : expected.entrySet()) {
             final BrigadierCommand command = instantiate(entry.getKey());
@@ -216,9 +218,12 @@ class CoreCommandsParityTest {
         }
         for (String child : new String[]{"site.list", "site.create", "site.tp", "site.delete", "structure.save",
                 "structure.paste", "structure.layers", "structure.undo", "display.summon", "display.transform.rotate",
-                "chatfilter.add", "chatfilter.list", "shadowfilter.remove", "shadowfilter.reload", "npc.spawn", "npc.remove", "npc.list", "heatmap.top", "heatmap.here"}) {
+                "chatfilter.add", "chatfilter.list", "shadowfilter.remove", "shadowfilter.reload", "npc.spawn", "npc.remove", "npc.list", "heatmap.top", "heatmap.here",
+                "worldlogger.rollback", "worldlogger.restore", "worldlogger.restorechunk"}) {
             assertEquals("ADMIN", config.getString(child + ".requiredRank"), child);
         }
+        assertEquals("MODERATOR", config.getString("worldlogger.inspect.requiredRank"));
+        assertEquals("MODERATOR", config.getString("worldlogger.page.requiredRank"));
     }
 
     @Test
