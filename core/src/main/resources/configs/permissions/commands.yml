@@ -286,3 +286,21 @@ profile:
 rules:
   requiredRank: PLAYER
   enabled: true
+cutscene:
+  requiredRank: ADMIN
+  enabled: true
+quest:
+  requiredRank: ADMIN
+  enabled: true
+heatmap:
+  requiredRank: ADMIN
+  enabled: true
+  top:
+    requiredRank: ADMIN
+    enabled: true
+  here:
+    requiredRank: ADMIN
+    enabled: true
+attune:
+  requiredRank: ADMIN
+  enabled: true
