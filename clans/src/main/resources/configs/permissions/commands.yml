@@ -127,3 +127,18 @@ map:
 treerespawn:
   requiredRank: ADMIN
   enabled: true
+ship:
+  requiredRank: ADMIN
+  enabled: true
+  list:
+    requiredRank: ADMIN
+    enabled: true
+  disable:
+    requiredRank: ADMIN
+    enabled: true
+  enable:
+    requiredRank: ADMIN
+    enabled: true
+terrain:
+  requiredRank: ADMIN
+  enabled: true
