@@ -109,3 +109,27 @@ setspawn:
 staffchat:
   requiredRank: TRIAL_MOD
   enabled: true
+core:
+  requiredRank: ADMIN
+  enabled: true
+zone:
+  requiredRank: ADMIN
+  enabled: true
+  list:
+    requiredRank: ADMIN
+    enabled: true
+  discovery:
+    requiredRank: ADMIN
+    enabled: true
+    add:
+      requiredRank: ADMIN
+      enabled: true
+    list:
+      requiredRank: ADMIN
+      enabled: true
+    remove:
+      requiredRank: ADMIN
+      enabled: true
+    reset:
+      requiredRank: ADMIN
+      enabled: true
