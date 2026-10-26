@@ -117,8 +117,7 @@ public class TreeCompactorCommand extends BrigadierCommand {
             }
             if (logType == null) {
                 UtilMessage.message(player, "core.prefix.command", Translations.component("progression.command.treecompactor.usage",
-                        Component.text("Usage", NamedTextColor.YELLOW),
-                        Component.text("treecompactor <logType>", NamedTextColor.GREEN)));
+                        Component.text("treecompactor <logType>", NamedTextColor.GREEN)).color(NamedTextColor.YELLOW));
                 return;
             }
 
