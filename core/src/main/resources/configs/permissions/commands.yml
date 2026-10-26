@@ -322,3 +322,36 @@ worldlogger:
   restorechunk:
     requiredRank: ADMIN
     enabled: true
+protection:
+  requiredRank: PLAYER
+  enabled: true
+setprotection:
+  requiredRank: MODERATOR
+  enabled: true
+offlinemessages:
+  requiredRank: PLAYER
+  enabled: true
+adminofflinemessages:
+  requiredRank: ADMIN
+  enabled: true
+rewards:
+  requiredRank: PLAYER
+  enabled: true
+rewardstest:
+  requiredRank: ADMIN
+  enabled: true
+statsmenu:
+  requiredRank: ADMIN
+  enabled: true
+balance:
+  requiredRank: PLAYER
+  enabled: true
+  give:
+    requiredRank: ADMIN
+    enabled: true
+  set:
+    requiredRank: ADMIN
+    enabled: true
+  get:
+    requiredRank: ADMIN
+    enabled: true
