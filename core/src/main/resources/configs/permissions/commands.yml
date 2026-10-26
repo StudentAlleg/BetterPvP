@@ -133,3 +133,66 @@ zone:
     reset:
       requiredRank: ADMIN
       enabled: true
+site:
+  requiredRank: ADMIN
+  enabled: true
+  list:
+    requiredRank: ADMIN
+    enabled: true
+  create:
+    requiredRank: ADMIN
+    enabled: true
+  tp:
+    requiredRank: ADMIN
+    enabled: true
+  delete:
+    requiredRank: ADMIN
+    enabled: true
+leavesite:
+  requiredRank: PLAYER
+  enabled: true
+structure:
+  requiredRank: ADMIN
+  enabled: true
+  save:
+    requiredRank: ADMIN
+    enabled: true
+  paste:
+    requiredRank: ADMIN
+    enabled: true
+  layers:
+    requiredRank: ADMIN
+    enabled: true
+  undo:
+    requiredRank: ADMIN
+    enabled: true
+display:
+  requiredRank: ADMIN
+  enabled: true
+  summon:
+    requiredRank: ADMIN
+    enabled: true
+  select:
+    requiredRank: ADMIN
+    enabled: true
+  deselect:
+    requiredRank: ADMIN
+    enabled: true
+  remove:
+    requiredRank: ADMIN
+    enabled: true
+  interpolation:
+    requiredRank: ADMIN
+    enabled: true
+  transform:
+    requiredRank: ADMIN
+    enabled: true
+    rotate:
+      requiredRank: ADMIN
+      enabled: true
+    scale:
+      requiredRank: ADMIN
+      enabled: true
+    translate:
+      requiredRank: ADMIN
+      enabled: true
