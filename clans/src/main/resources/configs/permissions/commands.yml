@@ -106,3 +106,24 @@ clan:
   killlogs:
     requiredRank: PLAYER
     enabled: true
+allychat:
+  requiredRank: PLAYER
+  enabled: true
+clanchat:
+  requiredRank: PLAYER
+  enabled: true
+chunkpdc:
+  requiredRank: ADMIN
+  enabled: true
+transport:
+  requiredRank: ADMIN
+  enabled: true
+clans:
+  requiredRank: ADMIN
+  enabled: true
+map:
+  requiredRank: PLAYER
+  enabled: true
+treerespawn:
+  requiredRank: ADMIN
+  enabled: true
