@@ -26,8 +26,6 @@ import org.bukkit.entity.Player;
 @Singleton
 public class DailyCommand extends BrigadierCommand {
 
-    private static final String DAILY = "Daily";
-
     @Inject
     @Config(path = "daily.coinsAmount", defaultValue = "5000")
     private int coinsAmount;
@@ -61,7 +59,7 @@ public class DailyCommand extends BrigadierCommand {
                 .executes(context -> {
                     final Player player = getPlayerFromExecutor(context);
                     final Client client = getClientFromExecutor(context);
-                    if (!cooldownManager.use(player, DAILY, 86400000, false, false)) {
+                    if (!cooldownManager.use(player, "Daily", 86400000, false, false)) {
                         UtilMessage.message(player, "core.prefix.command", "core.command.daily.already");
                         return Command.SINGLE_SUCCESS;
                     }

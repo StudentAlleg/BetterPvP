@@ -6,6 +6,7 @@ import me.mykindos.betterpvp.core.command.commands.admin.AdminMessageCommand;
 import me.mykindos.betterpvp.core.command.commands.admin.AdminReplyCommand;
 import me.mykindos.betterpvp.core.command.commands.admin.AdminVanishCommand;
 import me.mykindos.betterpvp.core.command.commands.admin.BroadcastCommand;
+import me.mykindos.betterpvp.core.command.commands.admin.CoreCommand;
 import me.mykindos.betterpvp.core.command.commands.admin.FreezeCommand;
 import me.mykindos.betterpvp.core.command.commands.admin.InvSeeCommand;
 import me.mykindos.betterpvp.core.command.commands.admin.ItemInfoCommand;
@@ -13,6 +14,7 @@ import me.mykindos.betterpvp.core.command.commands.admin.KickCommand;
 import me.mykindos.betterpvp.core.command.commands.admin.LogPurgeCommand;
 import me.mykindos.betterpvp.core.command.commands.admin.SetSpawnCommand;
 import me.mykindos.betterpvp.core.command.commands.admin.StaffChatCommand;
+import me.mykindos.betterpvp.core.command.commands.admin.zone.ZoneCommand;
 import me.mykindos.betterpvp.core.command.commands.general.DailyCommand;
 import me.mykindos.betterpvp.core.command.commands.general.DiscordCommand;
 import me.mykindos.betterpvp.core.command.commands.general.IgnoreCommand;
@@ -100,6 +102,8 @@ class CoreCommandsParityTest {
                 Map.entry(TeleportPositionCommand.class, new Object[]{"teleportposition", Set.of("tppos"), "ADMIN"}),
                 Map.entry(TeleportWorldCommand.class, new Object[]{"teleportworld", Set.of("tpworld", "tpw"), "ADMIN"}),
                 Map.entry(WorldCommand.class, new Object[]{"world", Set.of(), "ADMIN"}),
+                Map.entry(CoreCommand.class, new Object[]{"core", Set.of(), "ADMIN"}),
+                Map.entry(ZoneCommand.class, new Object[]{"zone", Set.of(), "ADMIN"}),
                 Map.entry(AdminMessageCommand.class, new Object[]{"messageadmin", Set.of("ma"), "HELPER"}),
                 Map.entry(AdminReplyCommand.class, new Object[]{"replyadmin", Set.of("ra"), "HELPER"}),
                 Map.entry(AdminVanishCommand.class, new Object[]{"vanish", Set.of("v"), "ADMIN"}),
@@ -129,5 +133,14 @@ class CoreCommandsParityTest {
                 .map(CommandNode::getName)
                 .collect(Collectors.toSet());
         assertEquals(Set.of("survival", "s", "0", "creative", "c", "1", "adventure", "a", "2", "spectator", "sp", "3"), literals);
+    }
+
+    @Test
+    @DisplayName("CLANS-44 /core keeps reload and publishmanifest")
+    void coreLiterals() throws Exception {
+        final Set<String> literals = instantiate(CoreCommand.class).define().build().getChildren().stream()
+                .map(CommandNode::getName)
+                .collect(Collectors.toSet());
+        assertEquals(Set.of("reload", "publishmanifest"), literals);
     }
 }

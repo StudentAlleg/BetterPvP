@@ -25,8 +25,6 @@ import org.bukkit.entity.Player;
 @Singleton
 public class AdminVanishCommand extends BrigadierCommand {
 
-    private static final String EFFECT_NAME = "commandVanish";
-
     private final Set<UUID> vanished = new HashSet<>();
     private final EffectManager effectManager;
 
@@ -58,12 +56,12 @@ public class AdminVanishCommand extends BrigadierCommand {
                 .executes(context -> {
                     final Player player = getPlayerFromExecutor(context);
                     if (vanished.remove(player.getUniqueId())) {
-                        effectManager.removeEffect(player, EffectTypes.VANISH, EFFECT_NAME);
+                        effectManager.removeEffect(player, EffectTypes.VANISH, "commandVanish");
                         UtilMessage.message(player, "core.prefix.vanish", Translations.component("core.command.vanish.disabled").color(NamedTextColor.RED));
                         UtilMessage.broadcast(fakeJoinMessage(player));
                     } else {
                         vanished.add(player.getUniqueId());
-                        effectManager.addEffect(player, player, EffectTypes.VANISH, EFFECT_NAME, 1, 100L, true, true, false, null);
+                        effectManager.addEffect(player, player, EffectTypes.VANISH, "commandVanish", 1, 100L, true, true, false, null);
                         UtilMessage.message(player, "core.prefix.vanish", Translations.component("core.command.vanish.enabled").color(NamedTextColor.GREEN));
                         UtilMessage.broadcast(fakeLeaveMessage(player));
                     }
