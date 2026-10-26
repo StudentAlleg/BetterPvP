@@ -127,11 +127,11 @@ public class GameCommand extends BrigadierCommand {
     private int start(CommandContext<CommandSourceStack> context) throws CommandSyntaxException {
         final Player player = getPlayerFromExecutor(context);
         if (serverController.getCurrentState() == GameState.IN_GAME || serverController.getCurrentState() == GameState.ENDING) {
-            UtilMessage.message(player, "core.prefix.game", "game.command.start.error-in-game", Component.text("Error:", NamedTextColor.DARK_RED));
+            UtilMessage.message(player, "core.prefix.game", "game.command.start.error-in-game", errorLabel());
             return Command.SINGLE_SUCCESS;
         }
         if (!transitionHandler.checkStateRequirements(true)) {
-            UtilMessage.message(player, "core.prefix.game", "game.command.start.error-not-enough-players", Component.text("Error:", NamedTextColor.DARK_RED));
+            UtilMessage.message(player, "core.prefix.game", "game.command.start.error-not-enough-players", errorLabel());
             return Command.SINGLE_SUCCESS;
         }
         serverController.transitionTo(GameState.IN_GAME);
@@ -141,7 +141,7 @@ public class GameCommand extends BrigadierCommand {
     private int end(CommandContext<CommandSourceStack> context) throws CommandSyntaxException {
         final Player player = getPlayerFromExecutor(context);
         if (serverController.getCurrentState() != GameState.IN_GAME) {
-            UtilMessage.message(player, "core.prefix.game", "game.command.end.error-not-in-game", Component.text("Error:", NamedTextColor.DARK_RED));
+            UtilMessage.message(player, "core.prefix.game", "game.command.end.error-not-in-game", errorLabel());
             return Command.SINGLE_SUCCESS;
         }
         serverController.getCurrentGame().forceEnd();
@@ -151,7 +151,7 @@ public class GameCommand extends BrigadierCommand {
 
     private int setGame(Player player, String gameName) {
         if (serverController.getCurrentState() != GameState.WAITING) {
-            UtilMessage.message(player, "core.prefix.game", "game.command.set.error-only-waiting", Component.text("Error:", NamedTextColor.DARK_RED));
+            UtilMessage.message(player, "core.prefix.game", "game.command.set.error-only-waiting", errorLabel());
             return Command.SINGLE_SUCCESS;
         }
         final Optional<AbstractGame<?, ?>> foundOpt = gameRegistry.getRegisteredGames().stream()
@@ -159,19 +159,19 @@ public class GameCommand extends BrigadierCommand {
                 .findFirst();
         if (foundOpt.isEmpty()) {
             UtilMessage.message(player, "core.prefix.game", "game.command.set.error-unknown-game",
-                    Component.text("Error:", NamedTextColor.DARK_RED), Component.text(gameName, NamedTextColor.GREEN));
+                    errorLabel(), Component.text(gameName, NamedTextColor.GREEN));
             return Command.SINGLE_SUCCESS;
         }
         final AbstractGame<?, ?> game = foundOpt.get();
         final Optional<MappedWorld> mapOpt = mapManager.selectRandomMap(game);
         if (mapOpt.isEmpty()) {
             UtilMessage.message(player, "core.prefix.game", "game.command.set.error-no-maps",
-                    Component.text("Error:", NamedTextColor.DARK_RED), Component.text(gameName, NamedTextColor.GREEN));
+                    errorLabel(), Component.text(gameName, NamedTextColor.GREEN));
             return Command.SINGLE_SUCCESS;
         }
         if (serverController.getCurrentGame() == game) {
             UtilMessage.message(player, "core.prefix.game", "game.command.set.error-already-set",
-                    Component.text("Error:", NamedTextColor.DARK_RED), Component.text(gameName, NamedTextColor.GREEN));
+                    errorLabel(), Component.text(gameName, NamedTextColor.GREEN));
             return Command.SINGLE_SUCCESS;
         }
         serverController.setGame(game);
@@ -233,7 +233,7 @@ public class GameCommand extends BrigadierCommand {
             SoundEffect.HIGH_PITCH_PLING.play(player);
         } else {
             UtilMessage.message(player, "core.prefix.game", "game.command.attribute.error-reset-failed",
-                    Component.text("Error:", NamedTextColor.DARK_RED), Component.text(attribute.getKey(), NamedTextColor.GREEN));
+                    errorLabel(), Component.text(attribute.getKey(), NamedTextColor.GREEN));
         }
     }
 
@@ -245,7 +245,7 @@ public class GameCommand extends BrigadierCommand {
         final T value = attribute.parseValue(valueString);
         if (value == null || !attribute.isValidValue(value)) {
             UtilMessage.message(player, "core.prefix.game", "game.command.attribute.error-invalid-value",
-                    Component.text("Error:", NamedTextColor.DARK_RED), Component.text(attribute.getKey(), NamedTextColor.GREEN));
+                    errorLabel(), Component.text(attribute.getKey(), NamedTextColor.GREEN));
             return;
         }
         if (attribute.setValue(value)) {
@@ -254,7 +254,11 @@ public class GameCommand extends BrigadierCommand {
             SoundEffect.HIGH_PITCH_PLING.play(player);
         } else {
             UtilMessage.message(player, "core.prefix.game", "game.command.attribute.error-set-failed",
-                    Component.text("Error:", NamedTextColor.DARK_RED), Component.text(attribute.getKey(), NamedTextColor.GREEN));
+                    errorLabel(), Component.text(attribute.getKey(), NamedTextColor.GREEN));
         }
+    }
+
+    private static Component errorLabel() {
+        return Translations.component("game.command.error-label").color(NamedTextColor.DARK_RED);
     }
 }
