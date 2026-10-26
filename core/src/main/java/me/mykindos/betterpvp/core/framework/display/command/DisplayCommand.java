@@ -44,9 +44,12 @@ public class DisplayCommand extends BrigadierCommand {
         return BrigadierNodes.literal(getName())
                 .executes(context -> {
                     final CommandSender sender = context.getSource().getSender();
-                    for (String line : new String[]{"header", "summon", "select", "deselect", "remove", "transform"}) {
-                        UtilMessage.message(sender, "core.prefix.display", "core.display.help." + line);
-                    }
+                    UtilMessage.message(sender, "core.prefix.display", "core.display.help.header");
+                    UtilMessage.message(sender, "core.prefix.display", "core.display.help.summon");
+                    UtilMessage.message(sender, "core.prefix.display", "core.display.help.select");
+                    UtilMessage.message(sender, "core.prefix.display", "core.display.help.deselect");
+                    UtilMessage.message(sender, "core.prefix.display", "core.display.help.remove");
+                    UtilMessage.message(sender, "core.prefix.display", "core.display.help.transform");
                     return Command.SINGLE_SUCCESS;
                 });
     }
