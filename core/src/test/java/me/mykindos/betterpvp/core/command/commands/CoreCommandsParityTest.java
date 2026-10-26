@@ -38,6 +38,11 @@ import me.mykindos.betterpvp.core.command.commands.qol.TeleportHereCommand;
 import me.mykindos.betterpvp.core.command.commands.qol.TeleportPositionCommand;
 import me.mykindos.betterpvp.core.command.commands.qol.TeleportWorldCommand;
 import me.mykindos.betterpvp.core.command.commands.qol.WorldCommand;
+import me.mykindos.betterpvp.core.framework.display.command.DisplayCommand;
+import me.mykindos.betterpvp.core.framework.display.command.DisplayRotateSubCommand;
+import me.mykindos.betterpvp.core.world.schematic.command.StructureCommand;
+import me.mykindos.betterpvp.core.world.site.command.SiteCommand;
+import me.mykindos.betterpvp.core.world.site.command.SiteLeaveCommand;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -142,5 +147,42 @@ class CoreCommandsParityTest {
                 .map(CommandNode::getName)
                 .collect(Collectors.toSet());
         assertEquals(Set.of("reload", "publishmanifest"), literals);
+    }
+
+    @Test
+    @DisplayName("CLANS-45 the migrated site, structure and display commands keep their legacy name, aliases and rank")
+    void featureNamesAliasesAndRanks() throws Exception {
+        final YamlConfiguration config = commandsConfig();
+        // The legacy name, aliases and effective rank of each command
+        final Map<Class<? extends BrigadierCommand>, Object[]> expected = Map.ofEntries(
+                Map.entry(SiteCommand.class, new Object[]{"site", Set.of(), "ADMIN"}),
+                Map.entry(SiteLeaveCommand.class, new Object[]{"leavesite", Set.of(), "PLAYER"}),
+                Map.entry(StructureCommand.class, new Object[]{"structure", Set.of("struct"), "ADMIN"}),
+                Map.entry(DisplayCommand.class, new Object[]{"display", Set.of(), "ADMIN"}));
+
+        for (Map.Entry<Class<? extends BrigadierCommand>, Object[]> entry : expected.entrySet()) {
+            final BrigadierCommand command = instantiate(entry.getKey());
+            final String name = (String) entry.getValue()[0];
+            assertEquals(name, command.getName());
+            assertEquals(entry.getValue()[1], command.getAliases(), name);
+            assertTrue(config.isSet(name + ".requiredRank"), name + " has no commands.yml entry");
+            assertEquals(entry.getValue()[2], config.getString(name + ".requiredRank"), name);
+        }
+        for (String child : new String[]{"site.list", "site.create", "site.tp", "site.delete", "structure.save",
+                "structure.paste", "structure.layers", "structure.undo", "display.summon", "display.transform.rotate"}) {
+            assertEquals("ADMIN", config.getString(child + ".requiredRank"), child);
+        }
+    }
+
+    @Test
+    @DisplayName("CLANS-45 /display transform rotate keeps both rotation sides and both modes")
+    void displayRotateLiterals() throws Exception {
+        final CommandNode<?> rotate = instantiate(DisplayRotateSubCommand.class).define().build();
+        for (String side : new String[]{"left", "right"}) {
+            final Set<String> modes = rotate.getChild(side).getChildren().stream()
+                    .map(CommandNode::getName)
+                    .collect(Collectors.toSet());
+            assertEquals(Set.of("set", "add"), modes, side);
+        }
     }
 }
