@@ -89,6 +89,7 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.lang.reflect.Constructor;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -100,6 +101,41 @@ import static org.mockito.Mockito.mock;
 @DisplayName("Core commands on Brigadier")
 class CoreCommandsParityTest {
 
+    /** Subcommands whose commands.yml entry must be ADMIN, as dotted paths. */
+    private static final List<String> ADMIN_SUBCOMMANDS = List.of(
+            "site.list",
+            "site.create",
+            "site.tp",
+            "site.delete",
+            "structure.save",
+            "structure.paste",
+            "structure.layers",
+            "structure.undo",
+            "display.summon",
+            "display.transform.rotate",
+            "chatfilter.add",
+            "chatfilter.list",
+            "shadowfilter.remove",
+            "shadowfilter.reload",
+            "npc.spawn",
+            "npc.remove",
+            "npc.list",
+            "heatmap.top",
+            "heatmap.here",
+            "worldlogger.rollback",
+            "worldlogger.restore",
+            "worldlogger.restorechunk",
+            "balance.give",
+            "balance.set",
+            "balance.get",
+            "client.admin",
+            "client.promote",
+            "client.demote",
+            "legacypunish.add",
+            "legacypunish.custom",
+            "legacypunish.history",
+            "legacypunish.remove");
+
     private static BrigadierCommand instantiate(Class<? extends BrigadierCommand> type) throws ReflectiveOperationException {
         final Constructor<?> constructor = type.getDeclaredConstructors()[0];
         final Object[] args = new Object[constructor.getParameterCount()];
@@ -107,6 +143,12 @@ class CoreCommandsParityTest {
             args[i] = mock(constructor.getParameterTypes()[i], Answers.RETURNS_DEEP_STUBS);
         }
         return (BrigadierCommand) constructor.newInstance(args);
+    }
+
+    private static Set<String> childNames(CommandNode<?> node) {
+        return node.getChildren().stream()
+                .map(CommandNode::getName)
+                .collect(Collectors.toSet());
     }
 
     private static YamlConfiguration commandsConfig() throws Exception {
@@ -242,12 +284,7 @@ class CoreCommandsParityTest {
             assertTrue(config.isSet(name + ".requiredRank"), name + " has no commands.yml entry");
             assertEquals(entry.getValue()[2], config.getString(name + ".requiredRank"), name);
         }
-        for (String child : new String[]{"site.list", "site.create", "site.tp", "site.delete", "structure.save",
-                "structure.paste", "structure.layers", "structure.undo", "display.summon", "display.transform.rotate",
-                "chatfilter.add", "chatfilter.list", "shadowfilter.remove", "shadowfilter.reload", "npc.spawn", "npc.remove", "npc.list", "heatmap.top", "heatmap.here",
-                "worldlogger.rollback", "worldlogger.restore", "worldlogger.restorechunk",
-                "balance.give", "balance.set", "balance.get", "client.admin", "client.promote", "client.demote",
-                "legacypunish.add", "legacypunish.custom", "legacypunish.history", "legacypunish.remove"}) {
+        for (String child : ADMIN_SUBCOMMANDS) {
             assertEquals("ADMIN", config.getString(child + ".requiredRank"), child);
         }
         assertEquals("MODERATOR", config.getString("worldlogger.inspect.requiredRank"));
@@ -258,12 +295,8 @@ class CoreCommandsParityTest {
     @DisplayName("CLANS-45 /display transform rotate keeps both rotation sides and both modes")
     void displayRotateLiterals() throws Exception {
         final CommandNode<?> rotate = instantiate(DisplayRotateSubCommand.class).define().build();
-        for (String side : new String[]{"left", "right"}) {
-            final Set<String> modes = rotate.getChild(side).getChildren().stream()
-                    .map(CommandNode::getName)
-                    .collect(Collectors.toSet());
-            assertEquals(Set.of("set", "add"), modes, side);
-        }
+        assertEquals(Set.of("set", "add"), childNames(rotate.getChild("left")));
+        assertEquals(Set.of("set", "add"), childNames(rotate.getChild("right")));
     }
 
     @Test
