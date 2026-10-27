@@ -67,6 +67,19 @@ import me.mykindos.betterpvp.core.item.command.AttunementCommand;
 import me.mykindos.betterpvp.core.quest.command.QuestCommand;
 import me.mykindos.betterpvp.core.tracking.command.HeatmapCommand;
 import me.mykindos.betterpvp.core.world.logger.commands.WorldLoggerCommand;
+import me.mykindos.betterpvp.core.client.commands.ClientCommand;
+import me.mykindos.betterpvp.core.client.gamer.commands.BalanceCommand;
+import me.mykindos.betterpvp.core.client.gamer.commands.ProtectionCommand;
+import me.mykindos.betterpvp.core.client.gamer.commands.SetProtectionCommand;
+import me.mykindos.betterpvp.core.client.offlinemessages.commands.AdminOfflineMessagesCommand;
+import me.mykindos.betterpvp.core.client.offlinemessages.commands.OfflineMessagesCommand;
+import me.mykindos.betterpvp.core.client.punishments.commands.LegacyPunishmentCommand;
+import me.mykindos.betterpvp.core.client.punishments.commands.PlayerPunishmentHistoryCommand;
+import me.mykindos.betterpvp.core.client.punishments.commands.PunishCommand;
+import me.mykindos.betterpvp.core.client.rewards.RewardsCommand;
+import me.mykindos.betterpvp.core.client.rewards.RewardsTestCommand;
+import me.mykindos.betterpvp.core.client.stats.commands.ProfileStatsCommand;
+import me.mykindos.betterpvp.core.client.stats.commands.TestStatsCommand;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -206,7 +219,20 @@ class CoreCommandsParityTest {
                 Map.entry(QuestCommand.class, new Object[]{"quest", Set.of(), "ADMIN"}),
                 Map.entry(HeatmapCommand.class, new Object[]{"heatmap", Set.of(), "ADMIN"}),
                 Map.entry(AttunementCommand.class, new Object[]{"attune", Set.of(), "ADMIN"}),
-                Map.entry(WorldLoggerCommand.class, new Object[]{"worldlogger", Set.of("wl", "co"), "MODERATOR"}));
+                Map.entry(WorldLoggerCommand.class, new Object[]{"worldlogger", Set.of("wl", "co"), "MODERATOR"}),
+                Map.entry(BalanceCommand.class, new Object[]{"balance", Set.of("bal", "money"), "PLAYER"}),
+                Map.entry(ProtectionCommand.class, new Object[]{"protection", Set.of(), "PLAYER"}),
+                Map.entry(SetProtectionCommand.class, new Object[]{"setprotection", Set.of(), "MODERATOR"}),
+                Map.entry(OfflineMessagesCommand.class, new Object[]{"offlinemessages", Set.of("om"), "PLAYER"}),
+                Map.entry(AdminOfflineMessagesCommand.class, new Object[]{"adminofflinemessages", Set.of(), "ADMIN"}),
+                Map.entry(RewardsCommand.class, new Object[]{"rewards", Set.of("inventory"), "PLAYER"}),
+                Map.entry(RewardsTestCommand.class, new Object[]{"rewardstest", Set.of(), "ADMIN"}),
+                Map.entry(TestStatsCommand.class, new Object[]{"statsmenu", Set.of(), "ADMIN"}),
+                Map.entry(ClientCommand.class, new Object[]{"client", Set.of(), "ADMIN"}),
+                Map.entry(PunishCommand.class, new Object[]{"punish", Set.of(), "TRIAL_MOD"}),
+                Map.entry(LegacyPunishmentCommand.class, new Object[]{"legacypunish", Set.of("lp"), "ADMIN"}),
+                Map.entry(PlayerPunishmentHistoryCommand.class, new Object[]{"punishmenthistory", Set.of("punishhistory", "ph"), "PLAYER"}),
+                Map.entry(ProfileStatsCommand.class, new Object[]{"profilestats", Set.of("seedprofilestats", "profilestatsload"), "DEVELOPER"}));
 
         for (Map.Entry<Class<? extends BrigadierCommand>, Object[]> entry : expected.entrySet()) {
             final BrigadierCommand command = instantiate(entry.getKey());
@@ -219,7 +245,9 @@ class CoreCommandsParityTest {
         for (String child : new String[]{"site.list", "site.create", "site.tp", "site.delete", "structure.save",
                 "structure.paste", "structure.layers", "structure.undo", "display.summon", "display.transform.rotate",
                 "chatfilter.add", "chatfilter.list", "shadowfilter.remove", "shadowfilter.reload", "npc.spawn", "npc.remove", "npc.list", "heatmap.top", "heatmap.here",
-                "worldlogger.rollback", "worldlogger.restore", "worldlogger.restorechunk"}) {
+                "worldlogger.rollback", "worldlogger.restore", "worldlogger.restorechunk",
+                "balance.give", "balance.set", "balance.get", "client.admin", "client.promote", "client.demote",
+                "legacypunish.add", "legacypunish.custom", "legacypunish.history", "legacypunish.remove"}) {
             assertEquals("ADMIN", config.getString(child + ".requiredRank"), child);
         }
         assertEquals("MODERATOR", config.getString("worldlogger.inspect.requiredRank"));
