@@ -114,7 +114,6 @@ class CoreCommandsParityTest {
             "display.summon",
             "display.transform.rotate",
             "chatfilter.add",
-            "chatfilter.list",
             "shadowfilter.remove",
             "shadowfilter.reload",
             "npc.spawn",
@@ -239,7 +238,7 @@ class CoreCommandsParityTest {
                 Map.entry(StructureCommand.class, new Object[]{"structure", Set.of("struct"), "ADMIN"}),
                 Map.entry(DisplayCommand.class, new Object[]{"display", Set.of(), "ADMIN"}),
                 Map.entry(SilenceChatCommand.class, new Object[]{"silencechat", Set.of(), "MODERATOR"}),
-                Map.entry(ChatFilterCommand.class, new Object[]{"chatfilter", Set.of(), "ADMIN"}),
+                Map.entry(ChatFilterCommand.class, new Object[]{"chatfilter", Set.of(), "MODERATOR"}),
                 Map.entry(ShadowFilterCommand.class, new Object[]{"shadowfilter", Set.of(), "ADMIN"}),
                 Map.entry(LogoutCommand.class, new Object[]{"logout", Set.of(), "PLAYER"}),
                 Map.entry(SettingsCommand.class, new Object[]{"settings", Set.of("prefs"), "PLAYER"}),
@@ -287,6 +286,8 @@ class CoreCommandsParityTest {
         for (String child : ADMIN_SUBCOMMANDS) {
             assertEquals("ADMIN", config.getString(child + ".requiredRank"), child);
         }
+        // Moderators keep the read-only filter list, as the legacy per-subcommand rank allowed
+        assertEquals("MODERATOR", config.getString("chatfilter.list.requiredRank"));
         assertEquals("MODERATOR", config.getString("worldlogger.inspect.requiredRank"));
         assertEquals("MODERATOR", config.getString("worldlogger.page.requiredRank"));
     }

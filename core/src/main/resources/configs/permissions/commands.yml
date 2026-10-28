@@ -200,7 +200,7 @@ silencechat:
   requiredRank: MODERATOR
   enabled: true
 chatfilter:
-  requiredRank: ADMIN
+  requiredRank: MODERATOR
   enabled: true
   add:
     requiredRank: ADMIN
@@ -209,7 +209,7 @@ chatfilter:
     requiredRank: ADMIN
     enabled: true
   list:
-    requiredRank: ADMIN
+    requiredRank: MODERATOR
     enabled: true
   reload:
     requiredRank: ADMIN
