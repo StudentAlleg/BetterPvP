@@ -67,6 +67,19 @@ import me.mykindos.betterpvp.core.item.command.AttunementCommand;
 import me.mykindos.betterpvp.core.quest.command.QuestCommand;
 import me.mykindos.betterpvp.core.tracking.command.HeatmapCommand;
 import me.mykindos.betterpvp.core.world.logger.commands.WorldLoggerCommand;
+import me.mykindos.betterpvp.core.client.commands.ClientCommand;
+import me.mykindos.betterpvp.core.client.gamer.commands.BalanceCommand;
+import me.mykindos.betterpvp.core.client.gamer.commands.ProtectionCommand;
+import me.mykindos.betterpvp.core.client.gamer.commands.SetProtectionCommand;
+import me.mykindos.betterpvp.core.client.offlinemessages.commands.AdminOfflineMessagesCommand;
+import me.mykindos.betterpvp.core.client.offlinemessages.commands.OfflineMessagesCommand;
+import me.mykindos.betterpvp.core.client.punishments.commands.LegacyPunishmentCommand;
+import me.mykindos.betterpvp.core.client.punishments.commands.PlayerPunishmentHistoryCommand;
+import me.mykindos.betterpvp.core.client.punishments.commands.PunishCommand;
+import me.mykindos.betterpvp.core.client.rewards.RewardsCommand;
+import me.mykindos.betterpvp.core.client.rewards.RewardsTestCommand;
+import me.mykindos.betterpvp.core.client.stats.commands.ProfileStatsCommand;
+import me.mykindos.betterpvp.core.client.stats.commands.TestStatsCommand;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -76,6 +89,7 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.lang.reflect.Constructor;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -87,6 +101,40 @@ import static org.mockito.Mockito.mock;
 @DisplayName("Core commands on Brigadier")
 class CoreCommandsParityTest {
 
+    /** Subcommands whose commands.yml entry must be ADMIN, as dotted paths. */
+    private static final List<String> ADMIN_SUBCOMMANDS = List.of(
+            "site.list",
+            "site.create",
+            "site.tp",
+            "site.delete",
+            "structure.save",
+            "structure.paste",
+            "structure.layers",
+            "structure.undo",
+            "display.summon",
+            "display.transform.rotate",
+            "chatfilter.add",
+            "shadowfilter.remove",
+            "shadowfilter.reload",
+            "npc.spawn",
+            "npc.remove",
+            "npc.list",
+            "heatmap.top",
+            "heatmap.here",
+            "worldlogger.rollback",
+            "worldlogger.restore",
+            "worldlogger.restorechunk",
+            "balance.give",
+            "balance.set",
+            "balance.get",
+            "client.admin",
+            "client.promote",
+            "client.demote",
+            "legacypunish.add",
+            "legacypunish.custom",
+            "legacypunish.history",
+            "legacypunish.remove");
+
     private static BrigadierCommand instantiate(Class<? extends BrigadierCommand> type) throws ReflectiveOperationException {
         final Constructor<?> constructor = type.getDeclaredConstructors()[0];
         final Object[] args = new Object[constructor.getParameterCount()];
@@ -94,6 +142,12 @@ class CoreCommandsParityTest {
             args[i] = mock(constructor.getParameterTypes()[i], Answers.RETURNS_DEEP_STUBS);
         }
         return (BrigadierCommand) constructor.newInstance(args);
+    }
+
+    private static Set<String> childNames(CommandNode<?> node) {
+        return node.getChildren().stream()
+                .map(CommandNode::getName)
+                .collect(Collectors.toSet());
     }
 
     private static YamlConfiguration commandsConfig() throws Exception {
@@ -184,7 +238,7 @@ class CoreCommandsParityTest {
                 Map.entry(StructureCommand.class, new Object[]{"structure", Set.of("struct"), "ADMIN"}),
                 Map.entry(DisplayCommand.class, new Object[]{"display", Set.of(), "ADMIN"}),
                 Map.entry(SilenceChatCommand.class, new Object[]{"silencechat", Set.of(), "MODERATOR"}),
-                Map.entry(ChatFilterCommand.class, new Object[]{"chatfilter", Set.of(), "ADMIN"}),
+                Map.entry(ChatFilterCommand.class, new Object[]{"chatfilter", Set.of(), "MODERATOR"}),
                 Map.entry(ShadowFilterCommand.class, new Object[]{"shadowfilter", Set.of(), "ADMIN"}),
                 Map.entry(LogoutCommand.class, new Object[]{"logout", Set.of(), "PLAYER"}),
                 Map.entry(SettingsCommand.class, new Object[]{"settings", Set.of("prefs"), "PLAYER"}),
@@ -206,7 +260,20 @@ class CoreCommandsParityTest {
                 Map.entry(QuestCommand.class, new Object[]{"quest", Set.of(), "ADMIN"}),
                 Map.entry(HeatmapCommand.class, new Object[]{"heatmap", Set.of(), "ADMIN"}),
                 Map.entry(AttunementCommand.class, new Object[]{"attune", Set.of(), "ADMIN"}),
-                Map.entry(WorldLoggerCommand.class, new Object[]{"worldlogger", Set.of("wl", "co"), "MODERATOR"}));
+                Map.entry(WorldLoggerCommand.class, new Object[]{"worldlogger", Set.of("wl", "co"), "MODERATOR"}),
+                Map.entry(BalanceCommand.class, new Object[]{"balance", Set.of("bal", "money"), "PLAYER"}),
+                Map.entry(ProtectionCommand.class, new Object[]{"protection", Set.of(), "PLAYER"}),
+                Map.entry(SetProtectionCommand.class, new Object[]{"setprotection", Set.of(), "MODERATOR"}),
+                Map.entry(OfflineMessagesCommand.class, new Object[]{"offlinemessages", Set.of("om"), "PLAYER"}),
+                Map.entry(AdminOfflineMessagesCommand.class, new Object[]{"adminofflinemessages", Set.of(), "ADMIN"}),
+                Map.entry(RewardsCommand.class, new Object[]{"rewards", Set.of("inventory"), "PLAYER"}),
+                Map.entry(RewardsTestCommand.class, new Object[]{"rewardstest", Set.of(), "ADMIN"}),
+                Map.entry(TestStatsCommand.class, new Object[]{"statsmenu", Set.of(), "ADMIN"}),
+                Map.entry(ClientCommand.class, new Object[]{"client", Set.of(), "ADMIN"}),
+                Map.entry(PunishCommand.class, new Object[]{"punish", Set.of(), "TRIAL_MOD"}),
+                Map.entry(LegacyPunishmentCommand.class, new Object[]{"legacypunish", Set.of("lp"), "ADMIN"}),
+                Map.entry(PlayerPunishmentHistoryCommand.class, new Object[]{"punishmenthistory", Set.of("punishhistory", "ph"), "PLAYER"}),
+                Map.entry(ProfileStatsCommand.class, new Object[]{"profilestats", Set.of("seedprofilestats", "profilestatsload"), "DEVELOPER"}));
 
         for (Map.Entry<Class<? extends BrigadierCommand>, Object[]> entry : expected.entrySet()) {
             final BrigadierCommand command = instantiate(entry.getKey());
@@ -216,12 +283,11 @@ class CoreCommandsParityTest {
             assertTrue(config.isSet(name + ".requiredRank"), name + " has no commands.yml entry");
             assertEquals(entry.getValue()[2], config.getString(name + ".requiredRank"), name);
         }
-        for (String child : new String[]{"site.list", "site.create", "site.tp", "site.delete", "structure.save",
-                "structure.paste", "structure.layers", "structure.undo", "display.summon", "display.transform.rotate",
-                "chatfilter.add", "chatfilter.list", "shadowfilter.remove", "shadowfilter.reload", "npc.spawn", "npc.remove", "npc.list", "heatmap.top", "heatmap.here",
-                "worldlogger.rollback", "worldlogger.restore", "worldlogger.restorechunk"}) {
+        for (String child : ADMIN_SUBCOMMANDS) {
             assertEquals("ADMIN", config.getString(child + ".requiredRank"), child);
         }
+        // Moderators keep the read-only filter list, as the legacy per-subcommand rank allowed
+        assertEquals("MODERATOR", config.getString("chatfilter.list.requiredRank"));
         assertEquals("MODERATOR", config.getString("worldlogger.inspect.requiredRank"));
         assertEquals("MODERATOR", config.getString("worldlogger.page.requiredRank"));
     }
@@ -230,12 +296,8 @@ class CoreCommandsParityTest {
     @DisplayName("CLANS-45 /display transform rotate keeps both rotation sides and both modes")
     void displayRotateLiterals() throws Exception {
         final CommandNode<?> rotate = instantiate(DisplayRotateSubCommand.class).define().build();
-        for (String side : new String[]{"left", "right"}) {
-            final Set<String> modes = rotate.getChild(side).getChildren().stream()
-                    .map(CommandNode::getName)
-                    .collect(Collectors.toSet());
-            assertEquals(Set.of("set", "add"), modes, side);
-        }
+        assertEquals(Set.of("set", "add"), childNames(rotate.getChild("left")));
+        assertEquals(Set.of("set", "add"), childNames(rotate.getChild("right")));
     }
 
     @Test
