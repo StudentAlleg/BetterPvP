@@ -2,12 +2,11 @@ package me.mykindos.betterpvp.clans.clans.commands.subcommands.brigadier.general
 
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
-import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import com.mojang.brigadier.Command;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import com.mojang.brigadier.context.CommandContext;
+import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import io.papermc.paper.command.brigadier.CommandSourceStack;
-import lombok.CustomLog;
 import me.mykindos.betterpvp.clans.clans.Clan;
 import me.mykindos.betterpvp.clans.clans.ClanManager;
 import me.mykindos.betterpvp.clans.clans.commands.BrigadierClansCommand;
@@ -18,9 +17,9 @@ import me.mykindos.betterpvp.clans.commands.commands.ClanBrigadierCommand;
 import me.mykindos.betterpvp.core.client.Client;
 import me.mykindos.betterpvp.core.client.Rank;
 import me.mykindos.betterpvp.core.client.repository.ClientManager;
-import me.mykindos.betterpvp.core.command.brigadier.BrigadierSubCommand;
 import me.mykindos.betterpvp.core.command.brigadier.BrigadierNodes;
-import me.mykindos.betterpvp.core.utilities.UtilMessage;
+import me.mykindos.betterpvp.core.command.brigadier.BrigadierSubCommand;
+import me.mykindos.betterpvp.core.locale.Translations;
 import me.mykindos.betterpvp.core.utilities.UtilServer;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
@@ -28,7 +27,6 @@ import org.bukkit.entity.Player;
 
 @Singleton
 @BrigadierSubCommand(BrigadierClansCommand.class)
-@CustomLog
 public class BrigadierJoinSubCommand extends ClanBrigadierCommand {
 
     @Inject
@@ -56,6 +54,11 @@ public class BrigadierJoinSubCommand extends ClanBrigadierCommand {
         return "Joins the specified clan";
     }
 
+    @Override
+    public Component getDescriptionComponent() {
+        return Translations.component("clans.command.join.description");
+    }
+
     /**
      * Define the command, using normal rank based permissions
      * Requires sender to have required rank and executor to be a player
@@ -71,9 +74,11 @@ public class BrigadierJoinSubCommand extends ClanBrigadierCommand {
                                     final Player player = getPlayerFromExecutor(context);
                                     if (clanManager.getClanByPlayer(player).isPresent()) throw ClanArgumentException.MUST_NOT_BE_IN_A_CLAN_EXCEPTION.create(player.getName());
 
-                                    final Component notification = UtilMessage.deserialize("<yellow>%s</yellow> had <yellow>%s</yellow> force join <aqua>%s</aqua>",
-                                            context.getSource().getSender().getName(), player.getName(), target.getName());
-                                    clientManager.sendMessageToRank("Clans", notification, Rank.HELPER);
+                                    final Component notification = Translations.component("clans.command.clan.join.forced-mod-notification",
+                                            Component.text(context.getSource().getSender().getName(), NamedTextColor.YELLOW),
+                                            Component.text(player.getName(), NamedTextColor.YELLOW),
+                                            Component.text(target.getName(), NamedTextColor.AQUA));
+                                    clientManager.sendMessageToRank("clans.prefix", notification, Rank.HELPER);
 
                                     doJoin(player, target);
                                     return Command.SINGLE_SUCCESS;
@@ -106,10 +111,7 @@ public class BrigadierJoinSubCommand extends ClanBrigadierCommand {
         Component component = super.getRequirementComponent(context);
         boolean inClan = executorHasAClan(context.getSource());
         component = component.appendNewline();
-        component = component.append(Component.text("Need a Clan: ", NamedTextColor.WHITE))
-                .append(Component.text(false, NamedTextColor.RED).append(Component.text(" | ", NamedTextColor.GRAY))
-                        .append((Component.text("You: ", NamedTextColor.WHITE))
-                                .append(Component.text(inClan, inClan ? NamedTextColor.GREEN : NamedTextColor.RED))));
+        component = component.append(clanRequirementLine(false, inClan));
         return component;
     }
 

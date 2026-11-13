@@ -1,4 +1,4 @@
-package me.mykindos.betterpvp.clans.clans.commands.subcommands.brigadier.general.bank;
+package me.mykindos.betterpvp.clans.clans.commands.subcommands.brigadier.general;
 
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
@@ -7,12 +7,14 @@ import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import io.papermc.paper.command.brigadier.CommandSourceStack;
 import me.mykindos.betterpvp.clans.clans.ClanManager;
 import me.mykindos.betterpvp.clans.clans.commands.BrigadierClansCommand;
-import me.mykindos.betterpvp.clans.clans.commands.subcommands.TutorialSubCommand;
+import me.mykindos.betterpvp.clans.clans.tutorial.ClanTutorialBook;
 import me.mykindos.betterpvp.clans.commands.commands.ClanBrigadierCommand;
 import me.mykindos.betterpvp.core.client.repository.ClientManager;
 import me.mykindos.betterpvp.core.command.brigadier.BrigadierSubCommand;
 import me.mykindos.betterpvp.core.command.brigadier.BrigadierNodes;
 import org.bukkit.entity.Player;
+import net.kyori.adventure.text.Component;
+import me.mykindos.betterpvp.core.locale.Translations;
 
 @Singleton
 @BrigadierSubCommand(BrigadierClansCommand.class)
@@ -43,6 +45,11 @@ public class BrigadierTutorialSubCommand extends ClanBrigadierCommand {
         return "Open the clans tutorial book";
     }
 
+    @Override
+    public Component getDescriptionComponent() {
+        return Translations.component("clans.command.tutorial.description");
+    }
+
     /**
      * Define the command, using normal rank based permissions
      * Requires sender to have required rank and executor to be a player
@@ -54,7 +61,7 @@ public class BrigadierTutorialSubCommand extends ClanBrigadierCommand {
         return BrigadierNodes.literal(getName())
                 .executes(context -> {
                     final Player executor = getPlayerFromExecutor(context);
-                    executor.openBook(TutorialSubCommand.localizedBook(executor));
+                    executor.openBook(ClanTutorialBook.localizedBook(executor));
                     return Command.SINGLE_SUCCESS;
                 });
     }
