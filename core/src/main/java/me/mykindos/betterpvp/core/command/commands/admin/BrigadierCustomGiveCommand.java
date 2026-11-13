@@ -31,6 +31,7 @@ import org.jetbrains.annotations.NotNull;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import me.mykindos.betterpvp.core.locale.Translations;
 
 @Singleton
 @CustomLog
@@ -52,6 +53,11 @@ public class BrigadierCustomGiveCommand extends BrigadierCommand {
     @Override
     public String getDescription() {
         return "Give a custom item";
+    }
+
+    @Override
+    public Component getDescriptionComponent() {
+        return Translations.component("core.command.custom-give.description");
     }
 
     /**

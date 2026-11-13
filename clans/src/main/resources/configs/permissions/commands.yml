@@ -1,6 +1,15 @@
 clan:
   requiredRank: PLAYER
   enabled: true
+  adminlogs:
+    requiredRank: ADMIN
+    enabled: true
+  farminginfo:
+    requiredRank: PLAYER
+    enabled: true
+  protection:
+    requiredRank: PLAYER
+    enabled: true
   setdominance:
     requiredRank: ADMIN
     enabled: true

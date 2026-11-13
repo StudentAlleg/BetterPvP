@@ -20,6 +20,8 @@ import me.mykindos.betterpvp.core.utilities.UtilServer;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.java.JavaPlugin;
+import net.kyori.adventure.text.Component;
+import me.mykindos.betterpvp.core.locale.Translations;
 
 @Singleton
 public class BrigadierClansCommand extends ClanBrigadierCommand {
@@ -62,9 +64,7 @@ public class BrigadierClansCommand extends ClanBrigadierCommand {
                         //do by clanname first
                         if (clanNameOptional.isPresent()) {
                             final Clan targetClan = clanNameOptional.get();
-                            UtilServer.runTask(JavaPlugin.getPlugin(Clans.class), () -> {
-                                new ClanMenu(executor, playerClan, targetClan).show(executor);
-                            });
+                            openClanMenu(executor, playerClan, targetClan);
                             return Command.SINGLE_SUCCESS;
                         }
 
@@ -75,30 +75,23 @@ public class BrigadierClansCommand extends ClanBrigadierCommand {
                             final Optional<Clan> targetClanOptional = getClanByClient(targetClient, sender);
                             if (targetClanOptional.isEmpty()) return;
                             final Clan targetClan = targetClanOptional.get();
-                            UtilServer.runTask(JavaPlugin.getPlugin(Clans.class), () -> {
-                                new ClanMenu(executor, playerClan, targetClan).show(executor);
-                            });
+                            openClanMenu(executor, playerClan, targetClan);
                         });
                         return Command.SINGLE_SUCCESS;
                     })
                 );
 
-        //doing this will also show all other literal commands regardless of ability to run them
-        /*
-        //add info pseudo indirect if exists
-        final Optional<BrigadierCommand> infoOptional = getChildren().stream().filter(command -> command.getName().equalsIgnoreCase("info")).findFirst();
-        if (infoOptional.isEmpty()) return builder;
-        final BrigadierCommand info = infoOptional.get();
-        info.build().getChildren().forEach(child -> {
-            builder.then(child.createBuilder());
-        });
-        */
         return argumentBuilder;
     }
 
     @Override
     public String getDescription() {
         return "Shows the clan Menu";
+    }
+
+    @Override
+    public Component getDescriptionComponent() {
+        return Translations.component("clans.command.clan.description");
     }
 
     private void openClanMenu(Player player, Clan playerClan, Clan clan) {
