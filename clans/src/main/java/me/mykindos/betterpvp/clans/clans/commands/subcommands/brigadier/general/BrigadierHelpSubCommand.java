@@ -19,6 +19,7 @@ import me.mykindos.betterpvp.core.client.repository.ClientManager;
 import me.mykindos.betterpvp.core.command.brigadier.BrigadierCommand;
 import me.mykindos.betterpvp.core.command.brigadier.BrigadierNodes;
 import me.mykindos.betterpvp.core.command.brigadier.BrigadierSubCommand;
+import me.mykindos.betterpvp.core.locale.Translations;
 import me.mykindos.betterpvp.core.utilities.UtilMessage;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.event.ClickEvent;
@@ -35,7 +36,7 @@ public class BrigadierHelpSubCommand extends ClanBrigadierCommand {
     @Inject
     protected BrigadierHelpSubCommand(ClientManager clientManager, ClanManager clanManager) {
         super(clientManager, clanManager);
-        this.getAliases().add("?");
+        this.getAliases().addAll(List.of("?", "h"));
     }
 
     /**
@@ -55,7 +56,12 @@ public class BrigadierHelpSubCommand extends ClanBrigadierCommand {
      */
     @Override
     public String getDescription() {
-        return "Get information about clans s";
+        return "List all available commands.";
+    }
+
+    @Override
+    public Component getDescriptionComponent() {
+        return Translations.component("clans.command.clan-help.description");
     }
 
     /**
@@ -71,7 +77,7 @@ public class BrigadierHelpSubCommand extends ClanBrigadierCommand {
                     doHelp(context, "", 1);
                     return Command.SINGLE_SUCCESS;
                 })
-                .then(BrigadierNodes.argument("page", IntegerArgumentType.integer(0))
+                .then(BrigadierNodes.argument("page", IntegerArgumentType.integer(1))
                         .executes(context -> {
                             int page = context.getArgument("page", Integer.class);
                             doHelp(context, "", page);
@@ -84,7 +90,7 @@ public class BrigadierHelpSubCommand extends ClanBrigadierCommand {
                             doHelp(context, filter, 1);
                             return Command.SINGLE_SUCCESS;
                         })
-                        .then(BrigadierNodes.argument("page", IntegerArgumentType.integer(0))
+                        .then(BrigadierNodes.argument("page", IntegerArgumentType.integer(1))
                                 .executes(context -> {
                                     String filter = context.getArgument("filter", String.class);
                                     int page = context.getArgument("page", Integer.class);
@@ -107,26 +113,13 @@ public class BrigadierHelpSubCommand extends ClanBrigadierCommand {
                 .toList();
 
 
-        int count = 0;
-        final int start = (page - 1) * NUMPERPAGE;
-        int end = start + NUMPERPAGE;
-        final int size = childCommands.size();
-        int totalPages = size / NUMPERPAGE;
-        if (size % NUMPERPAGE > 0) {
-            totalPages++;
+        final int totalPages = pageCount(childCommands.size(), NUMPERPAGE);
+        Component component = Translations.component("clans.command.clan.help.header").color(NamedTextColor.YELLOW)
+                .append(Component.text(page + " / " + totalPages, NamedTextColor.WHITE));
+        for (BrigadierCommand subCommand : page(childCommands, page, NUMPERPAGE)) {
+            component = component.append(addHelpCommandComponent(context, subCommand));
         }
-        Component component = UtilMessage.deserialize("<yellow>Help<gray>: <white>" + page + "<gray> / <white>" + totalPages);
-
-        if (start <= size) {
-            if (end > size) end = size;
-            for (BrigadierCommand subCommand : childCommands.subList(start, end)) {
-                if (count == NUMPERPAGE) break;
-                component = component.append(addHelpCommandComponent(context, subCommand));
-
-                count++;
-            }
-        }
-        UtilMessage.message(player, "Clans", component);
+        UtilMessage.message(player, "clans.prefix", component);
 
     }
 
@@ -136,16 +129,16 @@ public class BrigadierHelpSubCommand extends ClanBrigadierCommand {
         commandComponent = commandComponent.appendNewline()
                 .append(Component.text(command.getName(), color)
                         .hoverEvent(HoverEvent.showText(command.getRequirementComponent(context)))
-                        .clickEvent(ClickEvent.suggestCommand("/" + command.getName()))
+                        .clickEvent(ClickEvent.suggestCommand("/c " + command.getName()))
                 ).appendSpace()
                 .append(command.getDescriptionComponent().color(NamedTextColor.WHITE)).appendNewline()
-                .append(Component.text("Usage", NamedTextColor.GOLD)).appendSpace();
+                .append(Translations.component("clans.command.clan.help.usage-prefix").color(NamedTextColor.GOLD));
 
                 if (command.requirement(context.getSource())) {
                     commandComponent = commandComponent.append(Component.text(command.getUsages(context.getSource(), "c"), NamedTextColor.WHITE));
                 } else {
                     commandComponent = commandComponent.append(Component.text(command.getUsages(context.getSource(), "c"), NamedTextColor.WHITE)
-                            .hoverEvent(HoverEvent.showText(Component.text("Usage may be incomplete for commands you do not meet the requirements of", NamedTextColor.WHITE)))
+                            .hoverEvent(HoverEvent.showText(Translations.component("clans.command.clan.help.usage-incomplete").color(NamedTextColor.WHITE)))
                     );
                 }
 

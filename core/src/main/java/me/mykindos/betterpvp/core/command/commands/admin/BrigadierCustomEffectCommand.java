@@ -27,6 +27,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.List;
+import me.mykindos.betterpvp.core.locale.Translations;
 
 @Singleton
 @CustomLog
@@ -46,6 +47,11 @@ public class BrigadierCustomEffectCommand extends BrigadierCommand {
     @Override
     public String getDescription() {
         return "Apply/remove a custom effect to a player";
+    }
+
+    @Override
+    public Component getDescriptionComponent() {
+        return Translations.component("core.command.custom-effect.description");
     }
 
     /**

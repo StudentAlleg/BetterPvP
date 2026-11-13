@@ -21,6 +21,8 @@ import me.mykindos.betterpvp.core.utilities.UtilServer;
 import me.mykindos.betterpvp.core.utilities.model.SoundEffect;
 import org.bukkit.entity.Player;
 import org.jetbrains.annotations.NotNull;
+import net.kyori.adventure.text.Component;
+import me.mykindos.betterpvp.core.locale.Translations;
 
 @Singleton
 @BrigadierSubCommand(BrigadierClansCommand.class)
@@ -54,6 +56,11 @@ public class BrigadierDemoteSubCommand extends BrigadierClanSubCommand {
     @Override
     public String getDescription() {
         return "Demotes the specified member";
+    }
+
+    @Override
+    public Component getDescriptionComponent() {
+        return Translations.component("clans.command.demote.description");
     }
 
     /**
