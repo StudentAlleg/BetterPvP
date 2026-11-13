@@ -1,6 +1,15 @@
 clan:
   requiredRank: PLAYER
   enabled: true
+  adminlogs:
+    requiredRank: ADMIN
+    enabled: true
+  farminginfo:
+    requiredRank: PLAYER
+    enabled: true
+  protection:
+    requiredRank: PLAYER
+    enabled: true
   setdominance:
     requiredRank: ADMIN
     enabled: true
@@ -106,3 +115,39 @@ clan:
   killlogs:
     requiredRank: PLAYER
     enabled: true
+allychat:
+  requiredRank: PLAYER
+  enabled: true
+clanchat:
+  requiredRank: PLAYER
+  enabled: true
+chunkpdc:
+  requiredRank: ADMIN
+  enabled: true
+transport:
+  requiredRank: ADMIN
+  enabled: true
+clans:
+  requiredRank: ADMIN
+  enabled: true
+map:
+  requiredRank: PLAYER
+  enabled: true
+treerespawn:
+  requiredRank: ADMIN
+  enabled: true
+ship:
+  requiredRank: ADMIN
+  enabled: true
+  list:
+    requiredRank: ADMIN
+    enabled: true
+  disable:
+    requiredRank: ADMIN
+    enabled: true
+  enable:
+    requiredRank: ADMIN
+    enabled: true
+terrain:
+  requiredRank: ADMIN
+  enabled: true

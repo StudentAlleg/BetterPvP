@@ -14,11 +14,13 @@ import me.mykindos.betterpvp.clans.clans.events.ChunkClaimEvent;
 import me.mykindos.betterpvp.clans.commands.arguments.exceptions.ClanArgumentException;
 import me.mykindos.betterpvp.core.client.Rank;
 import me.mykindos.betterpvp.core.client.repository.ClientManager;
-import me.mykindos.betterpvp.core.command.brigadier.BrigadierSubCommand;
 import me.mykindos.betterpvp.core.command.brigadier.BrigadierNodes;
+import me.mykindos.betterpvp.core.command.brigadier.BrigadierSubCommand;
 import me.mykindos.betterpvp.core.components.clans.data.ClanMember;
-import me.mykindos.betterpvp.core.utilities.UtilMessage;
+import me.mykindos.betterpvp.core.locale.Translations;
 import me.mykindos.betterpvp.core.utilities.UtilServer;
+import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.format.NamedTextColor;
 import org.bukkit.Chunk;
 import org.bukkit.entity.Player;
 
@@ -52,6 +54,11 @@ public class BrigadierClaimCommand extends BrigadierClanSubCommand {
     }
 
     @Override
+    public Component getDescriptionComponent() {
+        return Translations.component("clans.command.claim.description");
+    }
+
+    @Override
     protected ClanMember.MemberRank requiredMemberRank() {
         return ClanMember.MemberRank.ADMIN;
     }
@@ -76,9 +83,10 @@ public class BrigadierClaimCommand extends BrigadierClanSubCommand {
                             final Clan locationClan = locationClanOptional.get();
                             throw ClanArgumentException.CLAN_ALREADY_CLAIMS_TERRITORY.create(locationClan);
                         }
-                        clientManager.sendMessageToRank("Clans",
-                                UtilMessage.deserialize("<yellow>%s</yellow> force claimed territory for <yellow>%s</yellow>",
-                                        context.getSource().getSender().getName(), executorClan.getName()),
+                        clientManager.sendMessageToRank("clans.prefix",
+                                Translations.component("clans.command.clan.claim.force-mod-notification",
+                                        Component.text(context.getSource().getSender().getName(), NamedTextColor.YELLOW),
+                                        Component.text(executorClan.getName(), NamedTextColor.YELLOW)),
                                 Rank.HELPER);
                     } else {
                         clanManager.canClaimThrow(executor, executorClan, chunk);

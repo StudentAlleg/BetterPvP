@@ -15,9 +15,12 @@ import me.mykindos.betterpvp.core.client.Client;
 import me.mykindos.betterpvp.core.client.gamer.Gamer;
 import me.mykindos.betterpvp.core.client.gamer.properties.GamerProperty;
 import me.mykindos.betterpvp.core.client.repository.ClientManager;
-import me.mykindos.betterpvp.core.command.brigadier.BrigadierSubCommand;
 import me.mykindos.betterpvp.core.command.brigadier.BrigadierNodes;
+import me.mykindos.betterpvp.core.command.brigadier.BrigadierSubCommand;
 import me.mykindos.betterpvp.core.components.clans.data.ClanMember;
+import me.mykindos.betterpvp.core.locale.Translations;
+import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.format.NamedTextColor;
 import org.bukkit.entity.Player;
 
 @Singleton
@@ -55,6 +58,11 @@ public class BrigadierBankWithdrawSubCommand extends BrigadierClanSubCommand {
         return "Withdraw funds from the clan bank";
     }
 
+    @Override
+    public Component getDescriptionComponent() {
+        return Translations.component("clans.command.bank-withdraw.description");
+    }
+
     /**
      * Define the command, using normal rank based permissions
      * Requires sender to have required rank and executor to be a player
@@ -80,7 +88,8 @@ public class BrigadierBankWithdrawSubCommand extends BrigadierClanSubCommand {
                             executorClan.saveProperty(ClanProperty.BALANCE, executorClan.getBalance() - amountToWithdraw);
                             gamer.saveProperty(GamerProperty.BALANCE, gamer.getBalance() + amountToWithdraw);
 
-                            executorClan.messageClan("<yellow>" + executor.getName() + " <gray>withdrew <green>$" + amountToWithdraw + " <gray>from the clan bank.", null, true);
+                            executorClan.messageClan("clans.command.clan.bank.withdraw.success", new Object[]{
+                                    Component.text(executor.getName(), NamedTextColor.YELLOW), Component.text("$" + amountToWithdraw, NamedTextColor.GREEN)}, null, true);
                             log.info("{} withdrew ${} from clan {}", executor.getName(), amountToWithdraw, executorClan.getId()).submit();
 
                             return Command.SINGLE_SUCCESS;
