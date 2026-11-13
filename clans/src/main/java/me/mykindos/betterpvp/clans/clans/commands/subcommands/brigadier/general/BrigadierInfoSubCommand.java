@@ -6,7 +6,6 @@ import com.mojang.brigadier.Command;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import io.papermc.paper.command.brigadier.CommandSourceStack;
 import java.util.Optional;
-import lombok.CustomLog;
 import me.mykindos.betterpvp.clans.Clans;
 import me.mykindos.betterpvp.clans.clans.Clan;
 import me.mykindos.betterpvp.clans.clans.ClanManager;
@@ -24,9 +23,10 @@ import org.bukkit.Bukkit;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.java.JavaPlugin;
+import net.kyori.adventure.text.Component;
+import me.mykindos.betterpvp.core.locale.Translations;
 
 @Singleton
-@CustomLog
 @BrigadierSubCommand(BrigadierClansCommand.class)
 public class BrigadierInfoSubCommand extends ClanBrigadierCommand {
     @Inject
@@ -96,5 +96,10 @@ public class BrigadierInfoSubCommand extends ClanBrigadierCommand {
     @Override
     public String getDescription() {
         return "Get information about the specified clan";
+    }
+
+    @Override
+    public Component getDescriptionComponent() {
+        return Translations.component("clans.command.info.description");
     }
 }
