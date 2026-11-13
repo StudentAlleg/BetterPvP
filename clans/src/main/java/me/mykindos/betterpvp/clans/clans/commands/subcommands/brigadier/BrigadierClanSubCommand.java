@@ -14,7 +14,6 @@ import me.mykindos.betterpvp.core.client.Rank;
 import me.mykindos.betterpvp.core.client.repository.ClientManager;
 import me.mykindos.betterpvp.core.components.clans.data.ClanMember;
 import net.kyori.adventure.text.Component;
-import net.kyori.adventure.text.format.NamedTextColor;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 
@@ -42,15 +41,9 @@ public abstract class BrigadierClanSubCommand extends ClanBrigadierCommand {
             hasClanRank = clan.getMember(executor.getUniqueId()).hasRank(this.requiredMemberRank());
         }
         component = component.appendNewline();
-        component = component.append(Component.text("Need a Clan: ", NamedTextColor.WHITE))
-                .append(Component.text(true, NamedTextColor.GREEN).append(Component.text(" | ", NamedTextColor.GRAY))
-                .append((Component.text("You: ", NamedTextColor.WHITE))
-                        .append(Component.text(inClan, inClan? NamedTextColor.GREEN : NamedTextColor.RED))));
+        component = component.append(clanRequirementLine(true, inClan));
         component = component.appendNewline();
-        component = component.append(Component.text("Clan Rank: ", NamedTextColor.WHITE))
-                .append(Component.text(requiredMemberRank().name(), NamedTextColor.GREEN).append(Component.text(" | ", NamedTextColor.GRAY))
-                        .append((Component.text("You Qualify: ", NamedTextColor.WHITE))
-                                .append(Component.text(hasClanRank, hasClanRank ? NamedTextColor.GREEN : NamedTextColor.RED))));
+        component = component.append(clanRankRequirementLine(requiredMemberRank(), hasClanRank));
         return component;
     }
 
