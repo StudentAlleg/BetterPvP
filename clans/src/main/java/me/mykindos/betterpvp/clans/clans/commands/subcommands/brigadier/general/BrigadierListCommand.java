@@ -93,13 +93,13 @@ public class BrigadierListCommand extends ClanBrigadierCommand {
         Collections.sort(clansList, Comparator.comparing(Clan::getOnlineMemberCount));
         Collections.reverse(clansList);
 
-        Component component = UtilMessage.deserialize("<yellow>Clan List<gray>: ");
+        Component component = Translations.component("clans.command.clan.list.header").color(NamedTextColor.YELLOW);
 
-        component = component.append(UtilMessage.deserialize("<white>" + pageNumber + "<gray> / <white>" + pageCount(clansList.size(), numPerPage)));
+        component = component.append(Component.text(pageNumber + " / " + pageCount(clansList.size(), numPerPage), NamedTextColor.WHITE));
         for (Clan clan : page(clansList, pageNumber, numPerPage)) {
             component = component.append(addClanComponent(playerClan, clan));
         }
-        UtilMessage.message(player, "Clans", component);
+        UtilMessage.message(player, "clans.prefix", component);
     }
 
     private Component addClanComponent(@Nullable Clan playerClan, Clan clan) throws CommandSyntaxException {

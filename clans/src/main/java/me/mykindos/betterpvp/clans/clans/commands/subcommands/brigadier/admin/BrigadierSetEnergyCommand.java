@@ -75,15 +75,15 @@ public class BrigadierSetEnergyCommand extends ClanBrigadierCommand {
                                     int oldEnergy = target.getEnergy();
                                     target.setEnergy(energy);
 
-                                    Component component = Component.text("Energy set to: ", NamedTextColor.GRAY)
-                                            .append(Component.text(target.getEnergy() + " - (", NamedTextColor.YELLOW)
-                                                    .append(Component.text(target.getEnergyTimeRemaining(), NamedTextColor.GOLD)
-                                                            .append(Component.text(")", NamedTextColor.YELLOW))))
-                                            .append(Component.text(" Previous: ", NamedTextColor.GRAY)).append(Component.text(oldEnergy, NamedTextColor.YELLOW));
-
-                                    UtilMessage.message(sender, "Clans", component);
-                                    clientManager.sendMessageToRank("Clans", UtilMessage.deserialize("<yellow>%s<gray> set the energy of <yellow>%s<gray> to <green>%s <white>(<yellow>%s<white>)",
-                                            sender.getName(), target.getName(), target.getEnergy(), target.getEnergyTimeRemaining()), Rank.HELPER);
+                                    UtilMessage.message(sender, "clans.prefix", "clans.command.clan.set-energy.success",
+                                            Component.text(target.getEnergy(), NamedTextColor.YELLOW),
+                                            Component.text(target.getEnergyTimeRemaining(), NamedTextColor.GOLD),
+                                            Component.text(oldEnergy, NamedTextColor.YELLOW));
+                                    clientManager.sendMessageToRank("clans.prefix", Translations.component("clans.command.clan.set-energy.mod-notification",
+                                            Component.text(sender.getName(), NamedTextColor.YELLOW),
+                                            Component.text(target.getName(), NamedTextColor.YELLOW),
+                                            Component.text(target.getEnergy(), NamedTextColor.GREEN),
+                                            Component.text(target.getEnergyTimeRemaining(), NamedTextColor.YELLOW)), Rank.HELPER);
 
                                     return Command.SINGLE_SUCCESS;
                                 })

@@ -15,12 +15,13 @@ import me.mykindos.betterpvp.core.client.Client;
 import me.mykindos.betterpvp.core.client.gamer.Gamer;
 import me.mykindos.betterpvp.core.client.gamer.properties.GamerProperty;
 import me.mykindos.betterpvp.core.client.repository.ClientManager;
-import me.mykindos.betterpvp.core.command.brigadier.BrigadierSubCommand;
 import me.mykindos.betterpvp.core.command.brigadier.BrigadierNodes;
+import me.mykindos.betterpvp.core.command.brigadier.BrigadierSubCommand;
 import me.mykindos.betterpvp.core.components.clans.data.ClanMember;
-import org.bukkit.entity.Player;
-import net.kyori.adventure.text.Component;
 import me.mykindos.betterpvp.core.locale.Translations;
+import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.format.NamedTextColor;
+import org.bukkit.entity.Player;
 
 @Singleton
 @CustomLog
@@ -87,7 +88,8 @@ public class BrigadierBankDepositSubCommand extends BrigadierClanSubCommand {
                             executorClan.saveProperty(ClanProperty.BALANCE, executorClan.getBalance() + amountToDeposit);
                             gamer.saveProperty(GamerProperty.BALANCE, gamer.getBalance() - amountToDeposit);
 
-                            executorClan.messageClan("<yellow>" + executor.getName() + " <gray>deposited <green>$" + amountToDeposit + " <gray>into the clan bank.", null, true);
+                            executorClan.messageClan("clans.command.clan.bank.deposit.success", new Object[]{
+                                    Component.text(executor.getName(), NamedTextColor.YELLOW), Component.text("$" + amountToDeposit, NamedTextColor.GREEN)}, null, true);
                             log.info("{} deposited ${} into clan {}", executor.getName(), amountToDeposit, executorClan.getId()).submit();
 
                             return Command.SINGLE_SUCCESS;

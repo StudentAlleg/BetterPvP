@@ -10,14 +10,15 @@ import me.mykindos.betterpvp.clans.clans.ClanManager;
 import me.mykindos.betterpvp.clans.clans.commands.BrigadierClansCommand;
 import me.mykindos.betterpvp.clans.clans.commands.subcommands.brigadier.BrigadierClanSubCommand;
 import me.mykindos.betterpvp.core.client.repository.ClientManager;
-import me.mykindos.betterpvp.core.command.brigadier.BrigadierSubCommand;
 import me.mykindos.betterpvp.core.command.brigadier.BrigadierNodes;
+import me.mykindos.betterpvp.core.command.brigadier.BrigadierSubCommand;
 import me.mykindos.betterpvp.core.components.clans.data.ClanMember;
+import me.mykindos.betterpvp.core.locale.Translations;
 import me.mykindos.betterpvp.core.utilities.UtilFormat;
 import me.mykindos.betterpvp.core.utilities.UtilMessage;
-import org.bukkit.entity.Player;
 import net.kyori.adventure.text.Component;
-import me.mykindos.betterpvp.core.locale.Translations;
+import net.kyori.adventure.text.format.NamedTextColor;
+import org.bukkit.entity.Player;
 
 @Singleton
 @BrigadierSubCommand(BrigadierClansCommand.class)
@@ -70,7 +71,8 @@ public class BrigadierBankSubCommand extends BrigadierClanSubCommand {
                 .executes(context -> {
                     final Player executor = getPlayerFromExecutor(context);
                     final Clan executorClan = getClanByExecutor(context);
-                    UtilMessage.simpleMessage(executor, "Clans", "<yellow>Bank balance: <green>$%s", UtilFormat.formatNumber(executorClan.getBalance()));
+                    UtilMessage.message(executor, "clans.prefix", "clans.command.clan.bank.balance",
+                            Component.text("$" + UtilFormat.formatNumber(executorClan.getBalance()), NamedTextColor.GREEN));
                     return Command.SINGLE_SUCCESS;
                 });
     }
