@@ -19,9 +19,6 @@ import me.mykindos.betterpvp.core.utilities.UtilMessage;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import org.bukkit.entity.Player;
-import net.kyori.adventure.text.Component;
-import me.mykindos.betterpvp.core.locale.Translations;
-import net.kyori.adventure.text.format.NamedTextColor;
 
 @Singleton
 @BrigadierSubCommand(BrigadierClansCommand.class)
