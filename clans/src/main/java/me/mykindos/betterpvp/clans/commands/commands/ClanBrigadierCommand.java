@@ -12,16 +12,16 @@ import me.mykindos.betterpvp.clans.commands.arguments.exceptions.ClanArgumentExc
 import me.mykindos.betterpvp.core.client.Client;
 import me.mykindos.betterpvp.core.client.repository.ClientManager;
 import me.mykindos.betterpvp.core.command.brigadier.BrigadierCommand;
+import me.mykindos.betterpvp.core.components.clans.data.ClanMember;
+import me.mykindos.betterpvp.core.locale.Translations;
 import me.mykindos.betterpvp.core.utilities.UtilMessage;
+import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.ComponentLike;
+import net.kyori.adventure.text.format.NamedTextColor;
+import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 import org.jetbrains.annotations.NotNull;
-import net.kyori.adventure.text.Component;
-import net.kyori.adventure.text.format.NamedTextColor;
-import me.mykindos.betterpvp.core.locale.Translations;
-import me.mykindos.betterpvp.core.components.clans.data.ClanMember;
-import net.kyori.adventure.text.ComponentLike;
-import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
 
 /**
  * Represents a {@link Clans} {@link BrigadierCommand}, with some common methods using {@link ClanManager}

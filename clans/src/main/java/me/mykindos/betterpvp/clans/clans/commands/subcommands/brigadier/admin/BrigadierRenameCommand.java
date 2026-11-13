@@ -18,14 +18,14 @@ import me.mykindos.betterpvp.clans.commands.commands.ClanBrigadierCommand;
 import me.mykindos.betterpvp.core.chat.filter.IFilterService;
 import me.mykindos.betterpvp.core.client.Rank;
 import me.mykindos.betterpvp.core.client.repository.ClientManager;
-import me.mykindos.betterpvp.core.command.brigadier.BrigadierSubCommand;
 import me.mykindos.betterpvp.core.command.brigadier.BrigadierNodes;
+import me.mykindos.betterpvp.core.command.brigadier.BrigadierSubCommand;
+import me.mykindos.betterpvp.core.locale.Translations;
 import me.mykindos.betterpvp.core.utilities.UtilMessage;
 import me.mykindos.betterpvp.core.utilities.UtilServer;
+import net.kyori.adventure.text.Component;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.java.JavaPlugin;
-import net.kyori.adventure.text.Component;
-import me.mykindos.betterpvp.core.locale.Translations;
 
 
 @Singleton
