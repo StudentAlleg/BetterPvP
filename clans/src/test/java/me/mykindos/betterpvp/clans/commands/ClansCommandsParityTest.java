@@ -7,6 +7,8 @@ import me.mykindos.betterpvp.clans.clans.map.commands.MapCommand;
 import me.mykindos.betterpvp.clans.clans.transport.commands.TransportCommand;
 import me.mykindos.betterpvp.clans.commands.commands.ClansCommand;
 import me.mykindos.betterpvp.clans.world.TreeRespawnCommand;
+import me.mykindos.betterpvp.clans.world.ship.command.ShipCommand;
+import me.mykindos.betterpvp.clans.world.terrain.TerrainCommand;
 import me.mykindos.betterpvp.core.command.brigadier.BrigadierCommand;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.junit.jupiter.api.DisplayName;
@@ -51,7 +53,9 @@ class ClansCommandsParityTest {
                 TransportCommand.class, new Object[]{"transport", Set.of(), "ADMIN"},
                 ClansCommand.class, new Object[]{"clans", Set.of(), "ADMIN"},
                 MapCommand.class, new Object[]{"map", Set.of(), "PLAYER"},
-                TreeRespawnCommand.class, new Object[]{"treerespawn", Set.of(), "ADMIN"});
+                TreeRespawnCommand.class, new Object[]{"treerespawn", Set.of(), "ADMIN"},
+                ShipCommand.class, new Object[]{"ship", Set.of(), "ADMIN"},
+                TerrainCommand.class, new Object[]{"terrain", Set.of(), "ADMIN"});
 
         for (Map.Entry<Class<? extends BrigadierCommand>, Object[]> entry : expected.entrySet()) {
             final BrigadierCommand command = instantiate(entry.getKey());
