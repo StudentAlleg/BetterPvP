@@ -36,7 +36,7 @@ public class BrigadierHelpSubCommand extends ClanBrigadierCommand {
     @Inject
     protected BrigadierHelpSubCommand(ClientManager clientManager, ClanManager clanManager) {
         super(clientManager, clanManager);
-        this.getAliases().add("?");
+        this.getAliases().addAll(List.of("?", "h"));
     }
 
     /**

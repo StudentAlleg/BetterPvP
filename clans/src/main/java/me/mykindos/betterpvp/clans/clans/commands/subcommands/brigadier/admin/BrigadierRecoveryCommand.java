@@ -26,6 +26,7 @@ public class BrigadierRecoveryCommand extends ClanBrigadierCommand {
     @Inject
     protected BrigadierRecoveryCommand(ClientManager clientManager, ClanManager clanManager) {
         super(clientManager, clanManager);
+        getAliases().add("clanrecovery");
     }
 
     /**
