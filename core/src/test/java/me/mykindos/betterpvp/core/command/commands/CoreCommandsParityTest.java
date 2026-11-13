@@ -43,6 +43,16 @@ import me.mykindos.betterpvp.core.framework.display.command.DisplayRotateSubComm
 import me.mykindos.betterpvp.core.world.schematic.command.StructureCommand;
 import me.mykindos.betterpvp.core.world.site.command.SiteCommand;
 import me.mykindos.betterpvp.core.world.site.command.SiteLeaveCommand;
+import me.mykindos.betterpvp.core.chat.commands.SilenceChatCommand;
+import me.mykindos.betterpvp.core.chat.filter.commands.ChatFilterCommand;
+import me.mykindos.betterpvp.core.chat.filter.commands.ShadowFilterCommand;
+import me.mykindos.betterpvp.core.combat.combatlog.commands.LogoutCommand;
+import me.mykindos.betterpvp.core.resourcepack.commands.LoadPackCommand;
+import me.mykindos.betterpvp.core.resourcepack.commands.UnloadPackCommand;
+import me.mykindos.betterpvp.core.settings.commands.SettingsCommand;
+import me.mykindos.betterpvp.core.stats.command.LeaderboardCommand;
+import me.mykindos.betterpvp.core.tips.commands.SendTipCommand;
+import me.mykindos.betterpvp.core.tips.commands.TipCommand;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -150,7 +160,7 @@ class CoreCommandsParityTest {
     }
 
     @Test
-    @DisplayName("CLANS-45 the migrated site, structure and display commands keep their legacy name, aliases and rank")
+    @DisplayName("CLANS-45 every migrated Core feature command keeps its legacy name, aliases and rank")
     void featureNamesAliasesAndRanks() throws Exception {
         final YamlConfiguration config = commandsConfig();
         // The legacy name, aliases and effective rank of each command
@@ -158,7 +168,17 @@ class CoreCommandsParityTest {
                 Map.entry(SiteCommand.class, new Object[]{"site", Set.of(), "ADMIN"}),
                 Map.entry(SiteLeaveCommand.class, new Object[]{"leavesite", Set.of(), "PLAYER"}),
                 Map.entry(StructureCommand.class, new Object[]{"structure", Set.of("struct"), "ADMIN"}),
-                Map.entry(DisplayCommand.class, new Object[]{"display", Set.of(), "ADMIN"}));
+                Map.entry(DisplayCommand.class, new Object[]{"display", Set.of(), "ADMIN"}),
+                Map.entry(SilenceChatCommand.class, new Object[]{"silencechat", Set.of(), "MODERATOR"}),
+                Map.entry(ChatFilterCommand.class, new Object[]{"chatfilter", Set.of(), "ADMIN"}),
+                Map.entry(ShadowFilterCommand.class, new Object[]{"shadowfilter", Set.of(), "ADMIN"}),
+                Map.entry(LogoutCommand.class, new Object[]{"logout", Set.of(), "PLAYER"}),
+                Map.entry(SettingsCommand.class, new Object[]{"settings", Set.of("prefs"), "PLAYER"}),
+                Map.entry(LeaderboardCommand.class, new Object[]{"leaderboard", Set.of("lb", "top"), "PLAYER"}),
+                Map.entry(TipCommand.class, new Object[]{"tip", Set.of("tips"), "PLAYER"}),
+                Map.entry(SendTipCommand.class, new Object[]{"sendtip", Set.of(), "ADMIN"}),
+                Map.entry(LoadPackCommand.class, new Object[]{"loadpack", Set.of(), "ADMIN"}),
+                Map.entry(UnloadPackCommand.class, new Object[]{"unloadpack", Set.of(), "ADMIN"}));
 
         for (Map.Entry<Class<? extends BrigadierCommand>, Object[]> entry : expected.entrySet()) {
             final BrigadierCommand command = instantiate(entry.getKey());
@@ -169,7 +189,8 @@ class CoreCommandsParityTest {
             assertEquals(entry.getValue()[2], config.getString(name + ".requiredRank"), name);
         }
         for (String child : new String[]{"site.list", "site.create", "site.tp", "site.delete", "structure.save",
-                "structure.paste", "structure.layers", "structure.undo", "display.summon", "display.transform.rotate"}) {
+                "structure.paste", "structure.layers", "structure.undo", "display.summon", "display.transform.rotate",
+                "chatfilter.add", "chatfilter.list", "shadowfilter.remove", "shadowfilter.reload"}) {
             assertEquals("ADMIN", config.getString(child + ".requiredRank"), child);
         }
     }

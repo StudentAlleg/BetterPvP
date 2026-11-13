@@ -196,3 +196,57 @@ display:
     translate:
       requiredRank: ADMIN
       enabled: true
+silencechat:
+  requiredRank: MODERATOR
+  enabled: true
+chatfilter:
+  requiredRank: ADMIN
+  enabled: true
+  add:
+    requiredRank: ADMIN
+    enabled: true
+  remove:
+    requiredRank: ADMIN
+    enabled: true
+  list:
+    requiredRank: ADMIN
+    enabled: true
+  reload:
+    requiredRank: ADMIN
+    enabled: true
+shadowfilter:
+  requiredRank: ADMIN
+  enabled: true
+  add:
+    requiredRank: ADMIN
+    enabled: true
+  remove:
+    requiredRank: ADMIN
+    enabled: true
+  list:
+    requiredRank: ADMIN
+    enabled: true
+  reload:
+    requiredRank: ADMIN
+    enabled: true
+logout:
+  requiredRank: PLAYER
+  enabled: true
+settings:
+  requiredRank: PLAYER
+  enabled: true
+leaderboard:
+  requiredRank: PLAYER
+  enabled: true
+tip:
+  requiredRank: PLAYER
+  enabled: true
+sendtip:
+  requiredRank: ADMIN
+  enabled: true
+loadpack:
+  requiredRank: ADMIN
+  enabled: true
+unloadpack:
+  requiredRank: ADMIN
+  enabled: true
