@@ -46,3 +46,33 @@ showitem:
 spawn:
   requiredRank: ADMIN
   enabled: true
+centerself:
+  requiredRank: ADMIN
+  enabled: true
+clear:
+  requiredRank: ADMIN
+  enabled: true
+gamemode:
+  requiredRank: ADMIN
+  enabled: true
+heal:
+  requiredRank: ADMIN
+  enabled: true
+setviewdistance:
+  requiredRank: ADMIN
+  enabled: true
+teleport:
+  requiredRank: ADMIN
+  enabled: true
+teleporthere:
+  requiredRank: ADMIN
+  enabled: true
+teleportposition:
+  requiredRank: ADMIN
+  enabled: true
+teleportworld:
+  requiredRank: ADMIN
+  enabled: true
+world:
+  requiredRank: ADMIN
+  enabled: true
