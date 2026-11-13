@@ -12,7 +12,6 @@ import me.mykindos.betterpvp.clans.clans.commands.BrigadierClansCommand;
 import me.mykindos.betterpvp.clans.clans.commands.subcommands.brigadier.BrigadierClanSubCommand;
 import me.mykindos.betterpvp.clans.clans.events.ClanInviteMemberEvent;
 import me.mykindos.betterpvp.clans.commands.arguments.BPvPClansArgumentTypes;
-import me.mykindos.betterpvp.clans.commands.arguments.exceptions.ClanArgumentException;
 import me.mykindos.betterpvp.core.client.Client;
 import me.mykindos.betterpvp.core.client.repository.ClientManager;
 import me.mykindos.betterpvp.core.command.brigadier.BrigadierSubCommand;
@@ -20,6 +19,8 @@ import me.mykindos.betterpvp.core.command.brigadier.BrigadierNodes;
 import me.mykindos.betterpvp.core.components.clans.data.ClanMember;
 import me.mykindos.betterpvp.core.utilities.UtilServer;
 import org.bukkit.entity.Player;
+import net.kyori.adventure.text.Component;
+import me.mykindos.betterpvp.core.locale.Translations;
 
 @Singleton
 @BrigadierSubCommand(BrigadierClansCommand.class)
@@ -55,6 +56,11 @@ public class BrigadierInviteSubCommand extends BrigadierClanSubCommand {
         return "Invites the specified player";
     }
 
+    @Override
+    public Component getDescriptionComponent() {
+        return Translations.component("clans.command.invite.description");
+    }
+
     /**
      * Define the command, using normal rank based permissions
      * Requires sender to have required rank and executor to be a player
@@ -70,7 +76,7 @@ public class BrigadierInviteSubCommand extends BrigadierClanSubCommand {
 
                             final Player player = getPlayerFromExecutor(context);
 
-                            final Clan origin = clanManager.getClanByPlayer(player).orElseThrow(() -> ClanArgumentException.NOT_IN_A_CLAN_EXCEPTION.create(player.getName()));
+                            final Clan origin = getClanByExecutor(context);
 
                             final Client executorClient = clientManager.search().online(player);
                             final Client targetClient = clientManager.search().online(target);
@@ -80,7 +86,6 @@ public class BrigadierInviteSubCommand extends BrigadierClanSubCommand {
                             doInvite(player, origin, target);
                             return Command.SINGLE_SUCCESS;
                         })
-                        //TODO admin invite as separate argument
                         .requires(this::executorHasAClan)
                 );
     }

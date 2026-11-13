@@ -17,13 +17,15 @@ import me.mykindos.betterpvp.clans.clans.ClanRelation;
 import me.mykindos.betterpvp.clans.clans.commands.BrigadierClansCommand;
 import me.mykindos.betterpvp.clans.commands.commands.ClanBrigadierCommand;
 import me.mykindos.betterpvp.core.client.repository.ClientManager;
-import me.mykindos.betterpvp.core.command.brigadier.BrigadierSubCommand;
 import me.mykindos.betterpvp.core.command.brigadier.BrigadierNodes;
+import me.mykindos.betterpvp.core.command.brigadier.BrigadierSubCommand;
 import me.mykindos.betterpvp.core.components.clans.data.ClanMember;
+import me.mykindos.betterpvp.core.locale.Translations;
 import me.mykindos.betterpvp.core.utilities.UtilMessage;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import org.bukkit.entity.Player;
+import org.jetbrains.annotations.Nullable;
 
 @Singleton
 @BrigadierSubCommand(BrigadierClansCommand.class)
@@ -54,6 +56,11 @@ public class BrigadierListCommand extends ClanBrigadierCommand {
         return "List all clans";
     }
 
+    @Override
+    public Component getDescriptionComponent() {
+        return Translations.component("clans.command.list.description");
+    }
+
     /**
      * Define the command, using normal rank based permissions
      * Requires sender to have required rank and executor to be a player
@@ -65,59 +72,42 @@ public class BrigadierListCommand extends ClanBrigadierCommand {
         return BrigadierNodes.literal(getName())
                 .executes(context -> {
                     Player executor = getPlayerFromExecutor(context);
-                    Clan executorClan = getClanByExecutor(context);
+                    Clan executorClan = clanManager.getClanByPlayer(executor).orElse(null);
                     doList(executor, executorClan, 1);
                     return Command.SINGLE_SUCCESS;
                 })
                 .then(BrigadierNodes.argument("Page Number", IntegerArgumentType.integer(1))
                         .executes(context -> {
                             Player executor = getPlayerFromExecutor(context);
-                            Clan executorClan = getClanByExecutor(context);
+                            Clan executorClan = clanManager.getClanByPlayer(executor).orElse(null);
                             int page = context.getArgument("Page Number", Integer.class);
                             doList(executor, executorClan, page);
                             return Command.SINGLE_SUCCESS;
                         }));
     }
 
-    private void doList(Player player, Clan playerClan, int pageNumber) throws CommandSyntaxException {
+    private void doList(Player player, @Nullable Clan playerClan, int pageNumber) throws CommandSyntaxException {
         int numPerPage = 10;
 
         List<Clan> clansList = new ArrayList<>(clanManager.getObjects().values());
         Collections.sort(clansList, Comparator.comparing(Clan::getOnlineMemberCount));
         Collections.reverse(clansList);
 
-        Component component = UtilMessage.deserialize("<yellow>Clan List<gray>: ");
+        Component component = Translations.component("clans.command.clan.list.header").color(NamedTextColor.YELLOW);
 
-        int count = 0;
-        int start = (pageNumber - 1) * numPerPage;
-        int end = start + numPerPage;
-        int size = clansList.size();
-        int totalPages = size / numPerPage;
-        if (size % numPerPage > 0) {
-            totalPages++;
+        component = component.append(Component.text(pageNumber + " / " + pageCount(clansList.size(), numPerPage), NamedTextColor.WHITE));
+        for (Clan clan : page(clansList, pageNumber, numPerPage)) {
+            component = component.append(addClanComponent(playerClan, clan));
         }
-
-
-        component = component.append(UtilMessage.deserialize("<white>" + pageNumber + "<gray> / <white>" + totalPages));
-
-        if (start <= size) {
-            if (end > size) end = size;
-            for (Clan clan : clansList.subList(start, end)) {
-                if (count == numPerPage) break;
-                component = component.append(addClanComponent(playerClan, clan));
-                count++;
-            }
-        }
-        UtilMessage.message(player, "Clans", component);
+        UtilMessage.message(player, "clans.prefix", component);
     }
 
-    private Component addClanComponent(Clan playerClan, Clan clan) throws CommandSyntaxException {
+    private Component addClanComponent(@Nullable Clan playerClan, Clan clan) throws CommandSyntaxException {
         Component component = Component.empty().appendNewline();
 
         List<ClanMember> clanMembers = clan.getMembers();
         ClanRelation clanRelation = clanManager.getRelation(playerClan, clan);
 
-        //possible logic error, unable to test with multiple people in a Clan and one offline
         int onlineMembers = clan.getOnlineMemberCount();
 
         NamedTextColor color = clanRelation.getPrimary();
