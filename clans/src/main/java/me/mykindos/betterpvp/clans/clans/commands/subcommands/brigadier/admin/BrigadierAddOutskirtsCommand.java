@@ -7,7 +7,6 @@ import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import io.papermc.paper.command.brigadier.CommandSourceStack;
 import java.util.Optional;
-import lombok.CustomLog;
 import me.mykindos.betterpvp.clans.clans.Clan;
 import me.mykindos.betterpvp.clans.clans.ClanManager;
 import me.mykindos.betterpvp.clans.clans.commands.BrigadierClansCommand;
@@ -17,16 +16,18 @@ import me.mykindos.betterpvp.clans.commands.arguments.exceptions.ClanArgumentExc
 import me.mykindos.betterpvp.clans.commands.commands.ClanBrigadierCommand;
 import me.mykindos.betterpvp.core.client.Rank;
 import me.mykindos.betterpvp.core.client.repository.ClientManager;
-import me.mykindos.betterpvp.core.command.brigadier.BrigadierSubCommand;
 import me.mykindos.betterpvp.core.command.brigadier.BrigadierNodes;
+import me.mykindos.betterpvp.core.command.brigadier.BrigadierSubCommand;
 import me.mykindos.betterpvp.core.components.clans.data.ClanTerritory;
+import me.mykindos.betterpvp.core.locale.Translations;
 import me.mykindos.betterpvp.core.utilities.UtilMessage;
 import me.mykindos.betterpvp.core.utilities.UtilServer;
 import me.mykindos.betterpvp.core.utilities.UtilWorld;
+import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.format.NamedTextColor;
 import org.bukkit.Chunk;
 import org.bukkit.entity.Player;
 
-@CustomLog
 @Singleton
 @BrigadierSubCommand(BrigadierClansCommand.class)
 public class BrigadierAddOutskirtsCommand extends ClanBrigadierCommand {
@@ -54,6 +55,11 @@ public class BrigadierAddOutskirtsCommand extends ClanBrigadierCommand {
     @Override
     public String getDescription() {
         return "Adds outskirt claims around all of your claims";
+    }
+
+    @Override
+    public Component getDescriptionComponent() {
+        return Translations.component("clans.command.add-outskirts.description");
     }
 
     /**
@@ -96,10 +102,9 @@ public class BrigadierAddOutskirtsCommand extends ClanBrigadierCommand {
                                         }
                                     }
                                 }
-                                String message = "Added <yellow>%s<gray> claims to the outskirts";
-
-                                UtilMessage.simpleMessage(player, "Clans", message, claims);
-                                clientManager.sendMessageToRank("Clans", UtilMessage.deserialize("<yellow>%s<gray> " + message.toLowerCase(), player.getName(), claims), Rank.HELPER);
+                                UtilMessage.message(player, "clans.prefix", "clans.command.clan.add-outskirts.success", Component.text(claims, NamedTextColor.YELLOW));
+                                clientManager.sendMessageToRank("clans.prefix", Translations.component("clans.command.clan.add-outskirts.notification",
+                                        Component.text(player.getName(), NamedTextColor.YELLOW), Component.text(claims, NamedTextColor.YELLOW)), Rank.HELPER);
                                 return Command.SINGLE_SUCCESS;
                             })
                         )

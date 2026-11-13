@@ -5,7 +5,6 @@ import com.google.inject.Singleton;
 import com.mojang.brigadier.Command;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import io.papermc.paper.command.brigadier.CommandSourceStack;
-import lombok.CustomLog;
 import me.mykindos.betterpvp.clans.Clans;
 import me.mykindos.betterpvp.clans.clans.ClanManager;
 import me.mykindos.betterpvp.clans.clans.commands.BrigadierClansCommand;
@@ -19,9 +18,10 @@ import me.mykindos.betterpvp.core.command.brigadier.arguments.BPvPArgumentTypes;
 import me.mykindos.betterpvp.core.utilities.UtilServer;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.java.JavaPlugin;
+import net.kyori.adventure.text.Component;
+import me.mykindos.betterpvp.core.locale.Translations;
 
 @Singleton
-@CustomLog
 @BrigadierSubCommand(BrigadierClansCommand.class)
 public class BrigadierGetClansOfPlayerSubCommand extends ClanBrigadierCommand {
     @Inject
@@ -64,5 +64,10 @@ public class BrigadierGetClansOfPlayerSubCommand extends ClanBrigadierCommand {
     @Override
     public String getDescription() {
         return "Get clans associated with a player";
+    }
+
+    @Override
+    public Component getDescriptionComponent() {
+        return Translations.component("clans.command.get-clans-of-player.description");
     }
 }
