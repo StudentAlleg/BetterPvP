@@ -1,13 +1,10 @@
-package me.mykindos.betterpvp.clans.clans.commands.subcommands;
+package me.mykindos.betterpvp.clans.clans.tutorial;
 
-import com.google.inject.Inject;
-import com.google.inject.Singleton;
-import me.mykindos.betterpvp.clans.clans.ClanManager;
-import me.mykindos.betterpvp.clans.clans.commands.ClanCommand;
-import me.mykindos.betterpvp.clans.clans.commands.ClanSubCommand;
-import me.mykindos.betterpvp.core.client.Client;
-import me.mykindos.betterpvp.core.client.repository.ClientManager;
-import me.mykindos.betterpvp.core.command.SubCommand;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
+import lombok.AccessLevel;
+import lombok.NoArgsConstructor;
 import me.mykindos.betterpvp.core.components.champions.Role;
 import me.mykindos.betterpvp.core.locale.Translations;
 import me.mykindos.betterpvp.core.utilities.UtilMessage;
@@ -17,13 +14,11 @@ import net.kyori.adventure.text.format.NamedTextColor;
 import net.kyori.adventure.text.format.TextDecoration;
 import org.bukkit.entity.Player;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Locale;
-
-@Singleton
-@SubCommand(ClanCommand.class)
-public class TutorialSubCommand extends ClanSubCommand {
+/**
+ * The Clans tutorial book that {@code /c tutorial} opens.
+ */
+@NoArgsConstructor(access = AccessLevel.PRIVATE)
+public final class ClanTutorialBook {
 
     private static final NamedTextColor LIGHT_PURPLE = NamedTextColor.LIGHT_PURPLE;
     private static final NamedTextColor DARK_PURPLE = NamedTextColor.DARK_PURPLE;
@@ -53,33 +48,31 @@ public class TutorialSubCommand extends ClanSubCommand {
                     .append(Translations.component("clans.tutorial.reopen").color(NamedTextColor.BLACK).append(Component.text(" ")))
                     .append(UtilMessage.copyCommand("/c tutorial")),
             bold(Translations.component("clans.tutorial.toc-title")).color(NamedTextColor.BLACK).appendNewline()
-                    // SKIPPED: tableOfContentsEntry takes a plain String embedded into a clickable
-                    // changePage() component; cannot accept a translatable key. Entry labels left literal.
-                    .append(UtilMessage.tableOfContentsEntry("Overview", 4)).appendNewline()
-                    .append(UtilMessage.tableOfContentsEntry("Clan", 6)).appendNewline()
-                    .append(UtilMessage.tableOfContentsEntry("Territory", 7)).appendNewline()
-                    .append(UtilMessage.tableOfContentsEntry("Alliances", 8)).appendNewline()
-                    .append(UtilMessage.tableOfContentsEntry("Map", 10)).appendNewline()
-                    .append(UtilMessage.tableOfContentsEntry("Shops", 11)).appendNewline()
-                    .append(UtilMessage.tableOfContentsEntry("Fields", 12)).appendNewline()
-                    .append(UtilMessage.tableOfContentsEntry("Events/Bosses", 13)).appendNewline()
-                    .append(UtilMessage.tableOfContentsEntry("Classes/Kits", 14)).appendNewline()
-                    .append(UtilMessage.tableOfContentsEntry("Assassin", 15)).appendNewline()
-                    .append(UtilMessage.tableOfContentsEntry("Knight", 16)).appendNewline()
-                    .append(UtilMessage.tableOfContentsEntry("Brute", 17)).appendNewline()
-                    .append(UtilMessage.tableOfContentsEntry("Ranger", 18)).appendNewline()
+                    .append(UtilMessage.tableOfContentsEntry(Translations.component("clans.tutorial.toc.overview"), 4)).appendNewline()
+                    .append(UtilMessage.tableOfContentsEntry(Translations.component("clans.tutorial.toc.clan"), 6)).appendNewline()
+                    .append(UtilMessage.tableOfContentsEntry(Translations.component("clans.tutorial.toc.territory"), 7)).appendNewline()
+                    .append(UtilMessage.tableOfContentsEntry(Translations.component("clans.tutorial.toc.alliances"), 8)).appendNewline()
+                    .append(UtilMessage.tableOfContentsEntry(Translations.component("clans.tutorial.toc.map"), 10)).appendNewline()
+                    .append(UtilMessage.tableOfContentsEntry(Translations.component("clans.tutorial.toc.shops"), 11)).appendNewline()
+                    .append(UtilMessage.tableOfContentsEntry(Component.text("Fields"), 12)).appendNewline()
+                    .append(UtilMessage.tableOfContentsEntry(Translations.component("clans.tutorial.toc.events-bosses"), 13)).appendNewline()
+                    .append(UtilMessage.tableOfContentsEntry(Translations.component("clans.tutorial.toc.classes-kits"), 14)).appendNewline()
+                    .append(UtilMessage.tableOfContentsEntry(Component.text("Assassin"), 15)).appendNewline()
+                    .append(UtilMessage.tableOfContentsEntry(Component.text("Knight"), 16)).appendNewline()
+                    .append(UtilMessage.tableOfContentsEntry(Component.text("Brute"), 17)).appendNewline()
+                    .append(UtilMessage.tableOfContentsEntry(Component.text("Ranger"), 18)).appendNewline()
 
             ,
             bold(Translations.component("clans.tutorial.toc-title")).color(NamedTextColor.BLACK).appendNewline()
-                    .append(UtilMessage.tableOfContentsEntry("Mage", 19)).appendNewline()
-                    .append(UtilMessage.tableOfContentsEntry("Warlock", 20)).appendNewline()
-                    .append(UtilMessage.tableOfContentsEntry("Custom Items", 21)).appendNewline()
-                    .append(UtilMessage.tableOfContentsEntry("Reinforced", 23)).appendNewline()
-                    .append(UtilMessage.tableOfContentsEntry("Upgraded Weapons", 24)).appendNewline()
-                    .append(UtilMessage.tableOfContentsEntry("Progression", 25)).appendNewline()
-                    .append(UtilMessage.tableOfContentsEntry("Fishing", 26)).appendNewline()
-                    .append(UtilMessage.tableOfContentsEntry("Mining", 27)).appendNewline()
-                    .append(UtilMessage.tableOfContentsEntry("Woodcutting", 28)).appendNewline()
+                    .append(UtilMessage.tableOfContentsEntry(Component.text("Mage"), 19)).appendNewline()
+                    .append(UtilMessage.tableOfContentsEntry(Component.text("Warlock"), 20)).appendNewline()
+                    .append(UtilMessage.tableOfContentsEntry(Translations.component("clans.tutorial.toc.custom-items"), 21)).appendNewline()
+                    .append(UtilMessage.tableOfContentsEntry(Component.text("Reinforced"), 23)).appendNewline()
+                    .append(UtilMessage.tableOfContentsEntry(Translations.component("clans.tutorial.toc.upgraded-weapons"), 24)).appendNewline()
+                    .append(UtilMessage.tableOfContentsEntry(Translations.component("clans.tutorial.toc.progression"), 25)).appendNewline()
+                    .append(UtilMessage.tableOfContentsEntry(Translations.component("clans.tutorial.fishing-title"), 26)).appendNewline()
+                    .append(UtilMessage.tableOfContentsEntry(Translations.component("clans.tutorial.mining-title"), 27)).appendNewline()
+                    .append(UtilMessage.tableOfContentsEntry(Translations.component("clans.tutorial.woodcutting-title"), 28)).appendNewline()
             ,
             /*4*/ Translations.component("clans.tutorial.difficulty",
                             clans(),
@@ -208,14 +201,12 @@ public class TutorialSubCommand extends ClanSubCommand {
             /*29*/ Translations.component("clans.tutorial.good-luck").color(NamedTextColor.BLACK)
     ));
 
-    public static final Book book = Book.book(Component.text("Clans Tutorial", NamedTextColor.GOLD), Component.text("BetterPvP", NamedTextColor.GOLD), tutorialText);
+    private static final Book book = Book.book(Translations.component("clans.tutorial.book-title").color(NamedTextColor.GOLD), Component.text("BetterPvP", NamedTextColor.GOLD), tutorialText);
 
     /**
-     * Builds a copy of the tutorial book with every (translatable) page resolved into the viewer's locale.
+     * Builds a copy of the tutorial book with every page rendered in the viewer's language.
      * <p>
-     * The static {@link #book} is a language-neutral template; book content is NOT run through the
-     * per-viewer {@code GlobalTranslator} on send (unlike chat/action bars), so opening it directly shows
-     * raw translation keys. Resolve server-side here for the recipient instead.
+     * The client does not translate book pages, so the server renders them for each reader.
      */
     public static Book localizedBook(Player player) {
         final Locale locale = player.locale();
@@ -224,30 +215,5 @@ public class TutorialSubCommand extends ClanSubCommand {
             pages.add(Translations.render(page, locale));
         }
         return Book.book(Translations.render(book.title(), locale), Translations.render(book.author(), locale), pages);
-    }
-
-    @Inject
-    public TutorialSubCommand(ClanManager clanManager, ClientManager clientManager) {
-        super(clanManager, clientManager);
-    }
-
-    @Override
-    public String getName() {
-        return "tutorial";
-    }
-
-    @Override
-    public String getDescription() {
-        return "clans.command.tutorial.description";
-    }
-
-    @Override
-    public void execute(Player player, Client client, String... args) {
-        player.openBook(localizedBook(player));
-    }
-
-    @Override
-    public boolean canExecuteWithoutClan() {
-        return true;
     }
 }
