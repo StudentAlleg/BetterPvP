@@ -250,3 +250,39 @@ loadpack:
 unloadpack:
   requiredRank: ADMIN
   enabled: true
+items:
+  requiredRank: PLAYER
+  enabled: true
+reforge:
+  requiredRank: ADMIN
+  enabled: true
+refreshitemcache:
+  requiredRank: ADMIN
+  enabled: true
+mockitem:
+  requiredRank: ADMIN
+  enabled: true
+loot:
+  requiredRank: PLAYER
+  enabled: true
+npc:
+  requiredRank: ADMIN
+  enabled: true
+  spawn:
+    requiredRank: ADMIN
+    enabled: true
+  remove:
+    requiredRank: ADMIN
+    enabled: true
+  list:
+    requiredRank: ADMIN
+    enabled: true
+achievements:
+  requiredRank: PLAYER
+  enabled: true
+profile:
+  requiredRank: PLAYER
+  enabled: true
+rules:
+  requiredRank: PLAYER
+  enabled: true

@@ -53,6 +53,15 @@ import me.mykindos.betterpvp.core.settings.commands.SettingsCommand;
 import me.mykindos.betterpvp.core.stats.command.LeaderboardCommand;
 import me.mykindos.betterpvp.core.tips.commands.SendTipCommand;
 import me.mykindos.betterpvp.core.tips.commands.TipCommand;
+import me.mykindos.betterpvp.core.client.achievements.commands.AchievementsCommand;
+import me.mykindos.betterpvp.core.client.profile.ProfileCommand;
+import me.mykindos.betterpvp.core.client.punishments.rules.commands.RuleCommand;
+import me.mykindos.betterpvp.core.item.command.ItemsCommand;
+import me.mykindos.betterpvp.core.item.command.MockItemCommand;
+import me.mykindos.betterpvp.core.item.command.ReforgeCommand;
+import me.mykindos.betterpvp.core.item.command.RefreshItemCacheCommand;
+import me.mykindos.betterpvp.core.loot.command.LootCommand;
+import me.mykindos.betterpvp.core.scene.command.NPCCommand;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -178,7 +187,16 @@ class CoreCommandsParityTest {
                 Map.entry(TipCommand.class, new Object[]{"tip", Set.of("tips"), "PLAYER"}),
                 Map.entry(SendTipCommand.class, new Object[]{"sendtip", Set.of(), "ADMIN"}),
                 Map.entry(LoadPackCommand.class, new Object[]{"loadpack", Set.of(), "ADMIN"}),
-                Map.entry(UnloadPackCommand.class, new Object[]{"unloadpack", Set.of(), "ADMIN"}));
+                Map.entry(UnloadPackCommand.class, new Object[]{"unloadpack", Set.of(), "ADMIN"}),
+                Map.entry(ItemsCommand.class, new Object[]{"items", Set.of("recipes", "recipe"), "PLAYER"}),
+                Map.entry(ReforgeCommand.class, new Object[]{"reforge", Set.of(), "ADMIN"}),
+                Map.entry(RefreshItemCacheCommand.class, new Object[]{"refreshitemcache", Set.of(), "ADMIN"}),
+                Map.entry(MockItemCommand.class, new Object[]{"mockitem", Set.of(), "ADMIN"}),
+                Map.entry(LootCommand.class, new Object[]{"loot", Set.of("droptable", "loottable"), "PLAYER"}),
+                Map.entry(NPCCommand.class, new Object[]{"npc", Set.of(), "ADMIN"}),
+                Map.entry(AchievementsCommand.class, new Object[]{"achievements", Set.of(), "PLAYER"}),
+                Map.entry(ProfileCommand.class, new Object[]{"profile", Set.of(), "PLAYER"}),
+                Map.entry(RuleCommand.class, new Object[]{"rules", Set.of(), "PLAYER"}));
 
         for (Map.Entry<Class<? extends BrigadierCommand>, Object[]> entry : expected.entrySet()) {
             final BrigadierCommand command = instantiate(entry.getKey());
@@ -190,7 +208,7 @@ class CoreCommandsParityTest {
         }
         for (String child : new String[]{"site.list", "site.create", "site.tp", "site.delete", "structure.save",
                 "structure.paste", "structure.layers", "structure.undo", "display.summon", "display.transform.rotate",
-                "chatfilter.add", "chatfilter.list", "shadowfilter.remove", "shadowfilter.reload"}) {
+                "chatfilter.add", "chatfilter.list", "shadowfilter.remove", "shadowfilter.reload", "npc.spawn", "npc.remove", "npc.list"}) {
             assertEquals("ADMIN", config.getString(child + ".requiredRank"), child);
         }
     }
