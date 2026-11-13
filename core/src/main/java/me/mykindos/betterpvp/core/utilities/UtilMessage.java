@@ -264,6 +264,13 @@ public class UtilMessage {
      * @param pageNum The page number that the book will change to when the message is clicked. This is usually the page that the section of the book that this entry corresponds to starts on, but can be any page number.
      * @return A component with a click event that changes the page of a book when clicked, and a hover event that shows "Click to open page X"
      */
+    public static Component tableOfContentsEntry(ComponentLike entry, int pageNum) {
+        return Component.empty().append(Component.empty().color(NamedTextColor.BLACK).decoration(TextDecoration.BOLD, false)
+                        .append(entry).append(Component.text(": " + pageNum))
+                .hoverEvent(HoverEvent.showText(Translations.component("core.util.table_of_contents.hover", Component.text(pageNum))))
+                .clickEvent(ClickEvent.changePage(pageNum)));
+    }
+
     public static Component tableOfContentsEntry(String entryText, int pageNum) {
         return Component.empty().append(UtilMessage.deserialize("<reset><black>" + entryText + ": " + pageNum).decoration(TextDecoration.BOLD, false)
                 .hoverEvent(HoverEvent.showText(Translations.component("core.util.table_of_contents.hover", Component.text(pageNum))))
