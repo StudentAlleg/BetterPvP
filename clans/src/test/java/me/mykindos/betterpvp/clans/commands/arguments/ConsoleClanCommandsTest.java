@@ -1,12 +1,10 @@
 package me.mykindos.betterpvp.clans.commands.arguments;
 
-import com.mojang.brigadier.LiteralMessage;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import com.mojang.brigadier.suggestion.SuggestionsBuilder;
 import io.papermc.paper.command.brigadier.CommandSourceStack;
-import io.papermc.paper.command.brigadier.MessageComponentSerializer;
 import me.mykindos.betterpvp.clans.clans.Clan;
 import me.mykindos.betterpvp.clans.clans.ClanManager;
 import me.mykindos.betterpvp.clans.clans.commands.subcommands.brigadier.BrigadierClanSubCommand;
@@ -17,21 +15,17 @@ import me.mykindos.betterpvp.core.command.brigadier.BrigadierNodes;
 import me.mykindos.betterpvp.core.command.brigadier.arguments.ArgumentException;
 import me.mykindos.betterpvp.core.components.clans.data.ClanMember;
 import me.mykindos.betterpvp.core.config.ExtendedYamlConfiguration;
-import net.kyori.adventure.text.Component;
 import org.bukkit.command.ConsoleCommandSender;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.mockito.MockedStatic;
-import org.mockito.Mockito;
 
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -40,7 +34,7 @@ class ConsoleClanCommandsTest {
 
     private final ClanManager clanManager = mock(ClanManager.class);
     private final CommandSourceStack console = mock(CommandSourceStack.class);
-    private MockedStatic<MessageComponentSerializer> serializerStatic;
+    private EnglishClanCommandMessages messages;
 
     @BeforeEach
     void setUp() {
@@ -48,15 +42,12 @@ class ConsoleClanCommandsTest {
         when(sender.getName()).thenReturn("CONSOLE");
         when(console.getSender()).thenReturn(sender);
 
-        final MessageComponentSerializer serializer = mock(MessageComponentSerializer.class);
-        when(serializer.serialize(any(Component.class))).thenReturn(new LiteralMessage("message"));
-        serializerStatic = Mockito.mockStatic(MessageComponentSerializer.class);
-        serializerStatic.when(MessageComponentSerializer::message).thenReturn(serializer);
+        messages = EnglishClanCommandMessages.open();
     }
 
     @AfterEach
     void tearDown() {
-        serializerStatic.close();
+        messages.close();
     }
 
     @SuppressWarnings("unchecked")
