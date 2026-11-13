@@ -19,13 +19,13 @@ import me.mykindos.betterpvp.core.client.repository.ClientManager;
 import me.mykindos.betterpvp.core.command.brigadier.BrigadierCommand;
 import me.mykindos.betterpvp.core.command.brigadier.BrigadierNodes;
 import me.mykindos.betterpvp.core.command.brigadier.BrigadierSubCommand;
+import me.mykindos.betterpvp.core.locale.Translations;
 import me.mykindos.betterpvp.core.utilities.UtilMessage;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.event.ClickEvent;
 import net.kyori.adventure.text.event.HoverEvent;
 import net.kyori.adventure.text.format.NamedTextColor;
 import org.bukkit.entity.Player;
-import me.mykindos.betterpvp.core.locale.Translations;
 
 @Singleton
 @BrigadierSubCommand(BrigadierClansCommand.class)
