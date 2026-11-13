@@ -7,7 +7,6 @@ import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import io.papermc.paper.command.brigadier.CommandSourceStack;
 import java.util.Optional;
-import lombok.CustomLog;
 import me.mykindos.betterpvp.clans.clans.Clan;
 import me.mykindos.betterpvp.clans.clans.ClanManager;
 import me.mykindos.betterpvp.clans.clans.commands.BrigadierClansCommand;
@@ -25,8 +24,9 @@ import me.mykindos.betterpvp.core.utilities.UtilServer;
 import me.mykindos.betterpvp.core.utilities.UtilWorld;
 import org.bukkit.Chunk;
 import org.bukkit.entity.Player;
+import net.kyori.adventure.text.Component;
+import me.mykindos.betterpvp.core.locale.Translations;
 
-@CustomLog
 @Singleton
 @BrigadierSubCommand(BrigadierClansCommand.class)
 public class BrigadierAddOutskirtsCommand extends ClanBrigadierCommand {
@@ -54,6 +54,11 @@ public class BrigadierAddOutskirtsCommand extends ClanBrigadierCommand {
     @Override
     public String getDescription() {
         return "Adds outskirt claims around all of your claims";
+    }
+
+    @Override
+    public Component getDescriptionComponent() {
+        return Translations.component("clans.command.add-outskirts.description");
     }
 
     /**

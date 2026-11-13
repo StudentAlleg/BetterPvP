@@ -15,6 +15,8 @@ import me.mykindos.betterpvp.core.client.repository.ClientManager;
 import me.mykindos.betterpvp.core.command.brigadier.BrigadierSubCommand;
 import me.mykindos.betterpvp.core.command.brigadier.BrigadierNodes;
 import me.mykindos.betterpvp.core.utilities.UtilMessage;
+import net.kyori.adventure.text.Component;
+import me.mykindos.betterpvp.core.locale.Translations;
 
 
 @Singleton
@@ -43,7 +45,12 @@ public class BrigadierRecoveryCommand extends ClanBrigadierCommand {
      */
     @Override
     public String getDescription() {
-        return "Trigger clan recovery for the target clan";
+        return "Trigger clan recovery for a clan";
+    }
+
+    @Override
+    public Component getDescriptionComponent() {
+        return Translations.component("clans.command.clan-recovery.description");
     }
 
     /**

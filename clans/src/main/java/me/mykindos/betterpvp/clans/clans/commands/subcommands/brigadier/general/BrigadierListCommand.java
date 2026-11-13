@@ -17,9 +17,10 @@ import me.mykindos.betterpvp.clans.clans.ClanRelation;
 import me.mykindos.betterpvp.clans.clans.commands.BrigadierClansCommand;
 import me.mykindos.betterpvp.clans.commands.commands.ClanBrigadierCommand;
 import me.mykindos.betterpvp.core.client.repository.ClientManager;
-import me.mykindos.betterpvp.core.command.brigadier.BrigadierSubCommand;
 import me.mykindos.betterpvp.core.command.brigadier.BrigadierNodes;
+import me.mykindos.betterpvp.core.command.brigadier.BrigadierSubCommand;
 import me.mykindos.betterpvp.core.components.clans.data.ClanMember;
+import me.mykindos.betterpvp.core.locale.Translations;
 import me.mykindos.betterpvp.core.utilities.UtilMessage;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
@@ -53,6 +54,11 @@ public class BrigadierListCommand extends ClanBrigadierCommand {
     @Override
     public String getDescription() {
         return "List all clans";
+    }
+
+    @Override
+    public Component getDescriptionComponent() {
+        return Translations.component("clans.command.list.description");
     }
 
     /**
@@ -89,25 +95,9 @@ public class BrigadierListCommand extends ClanBrigadierCommand {
 
         Component component = UtilMessage.deserialize("<yellow>Clan List<gray>: ");
 
-        int count = 0;
-        int start = (pageNumber - 1) * numPerPage;
-        int end = start + numPerPage;
-        int size = clansList.size();
-        int totalPages = size / numPerPage;
-        if (size % numPerPage > 0) {
-            totalPages++;
-        }
-
-
-        component = component.append(UtilMessage.deserialize("<white>" + pageNumber + "<gray> / <white>" + totalPages));
-
-        if (start <= size) {
-            if (end > size) end = size;
-            for (Clan clan : clansList.subList(start, end)) {
-                if (count == numPerPage) break;
-                component = component.append(addClanComponent(playerClan, clan));
-                count++;
-            }
+        component = component.append(UtilMessage.deserialize("<white>" + pageNumber + "<gray> / <white>" + pageCount(clansList.size(), numPerPage)));
+        for (Clan clan : page(clansList, pageNumber, numPerPage)) {
+            component = component.append(addClanComponent(playerClan, clan));
         }
         UtilMessage.message(player, "Clans", component);
     }
@@ -118,7 +108,6 @@ public class BrigadierListCommand extends ClanBrigadierCommand {
         List<ClanMember> clanMembers = clan.getMembers();
         ClanRelation clanRelation = clanManager.getRelation(playerClan, clan);
 
-        //possible logic error, unable to test with multiple people in a Clan and one offline
         int onlineMembers = clan.getOnlineMemberCount();
 
         NamedTextColor color = clanRelation.getPrimary();

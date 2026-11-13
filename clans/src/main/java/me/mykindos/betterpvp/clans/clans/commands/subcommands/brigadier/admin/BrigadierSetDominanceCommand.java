@@ -19,6 +19,8 @@ import me.mykindos.betterpvp.core.command.brigadier.BrigadierSubCommand;
 import me.mykindos.betterpvp.core.command.brigadier.BrigadierNodes;
 import me.mykindos.betterpvp.core.components.clans.data.ClanEnemy;
 import org.bukkit.entity.Player;
+import net.kyori.adventure.text.Component;
+import me.mykindos.betterpvp.core.locale.Translations;
 
 
 @Singleton
@@ -50,6 +52,11 @@ public class BrigadierSetDominanceCommand extends ClanBrigadierCommand {
         return "sets the dominance of the current clan against the target clan";
     }
 
+    @Override
+    public Component getDescriptionComponent() {
+        return Translations.component("clans.command.set-dominance.description");
+    }
+
     /**
      * Define the command, using normal rank based permissions
      * Requires sender to have required rank and executor to be a player
@@ -65,9 +72,8 @@ public class BrigadierSetDominanceCommand extends ClanBrigadierCommand {
                                 .executes(context -> {
                                     Clan targetClan = context.getArgument("Target Clan", Clan.class);
                                     double newDominance = context.getArgument("Dominance", double.class);
-                                    final Player player = getPlayerFromExecutor(context);
 
-                                    Clan originClan = clanManager.getClanByPlayer(player).orElseThrow(() -> ClanArgumentException.NOT_IN_A_CLAN_EXCEPTION.create(player.getName()));
+                                    Clan originClan = getClanByExecutor(context);
                                     applyNewDominance(targetClan, originClan, newDominance);
                                     return Command.SINGLE_SUCCESS;
                                 })

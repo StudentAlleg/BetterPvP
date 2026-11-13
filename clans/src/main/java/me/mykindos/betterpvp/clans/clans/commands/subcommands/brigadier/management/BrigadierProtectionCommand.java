@@ -18,7 +18,6 @@ import me.mykindos.betterpvp.core.locale.Translations;
 import me.mykindos.betterpvp.core.menu.impl.ConfirmationMenu;
 import me.mykindos.betterpvp.core.utilities.UtilMessage;
 import net.kyori.adventure.text.Component;
-import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
 import org.bukkit.entity.Player;
 
 /**
@@ -63,10 +62,7 @@ public class BrigadierProtectionCommand extends BrigadierClanSubCommand {
                         UtilMessage.message(executor, "clans.prefix", "clans.command.clan.protection.not-active");
                         return Command.SINGLE_SUCCESS;
                     }
-                    // The menu takes its title as plain text, so it is rendered in the executor's language here
-                    final String title = PlainTextComponentSerializer.plainText().serialize(Translations.render(
-                            Translations.component("clans.command.clan.protection.confirmation"), executor.locale()));
-                    new ConfirmationMenu(title, success -> {
+                    new ConfirmationMenu(menuTitle(executor, "clans.command.clan.protection.confirmation"), success -> {
                         if (Boolean.TRUE.equals(success)) {
                             clan.saveProperty(ClanProperty.NO_DOMINANCE_COOLDOWN, 0L);
                             UtilMessage.message(executor, "clans.prefix", "clans.command.clan.protection.success");
