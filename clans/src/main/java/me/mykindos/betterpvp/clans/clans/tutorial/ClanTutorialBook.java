@@ -1,5 +1,8 @@
 package me.mykindos.betterpvp.clans.clans.tutorial;
 
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
 import lombok.AccessLevel;
 import lombok.NoArgsConstructor;
 import me.mykindos.betterpvp.core.components.champions.Role;
@@ -10,10 +13,6 @@ import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import net.kyori.adventure.text.format.TextDecoration;
 import org.bukkit.entity.Player;
-
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Locale;
 
 /**
  * The Clans tutorial book that {@code /c tutorial} opens.
