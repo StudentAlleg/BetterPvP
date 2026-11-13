@@ -8,6 +8,7 @@ import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import io.papermc.paper.command.brigadier.CommandSourceStack;
 import io.papermc.paper.command.brigadier.Commands;
 import lombok.CustomLog;
+import me.mykindos.betterpvp.clans.Clans;
 import me.mykindos.betterpvp.clans.clans.Clan;
 import me.mykindos.betterpvp.clans.clans.ClanManager;
 import me.mykindos.betterpvp.clans.clans.commands.BrigadierClansCommand;
@@ -20,7 +21,9 @@ import me.mykindos.betterpvp.core.client.repository.ClientManager;
 import me.mykindos.betterpvp.core.command.brigadier.BrigadierSubCommand;
 import me.mykindos.betterpvp.core.command.brigadier.BrigadierNodes;
 import me.mykindos.betterpvp.core.utilities.UtilMessage;
+import me.mykindos.betterpvp.core.utilities.UtilServer;
 import org.bukkit.entity.Player;
+import org.bukkit.plugin.java.JavaPlugin;
 
 
 @Singleton
@@ -70,12 +73,11 @@ public class BrigadierRenameCommand extends ClanBrigadierCommand {
                             final Clan executorClan = getClanByExecutor(context);
                             filterService.isFiltered(name).thenAccept((filtered) -> {
                                 if (filtered) {
-                                    context.getSource().getSender()
-                                            .sendMessage(UtilMessage.deserialize("<red>" +
-                                                    ClanArgumentException.NAME_IS_FILTERED.create(name).getMessage()));
+                                    UtilMessage.sendCommandSyntaxException(context.getSource().getSender(), ClanArgumentException.NAME_IS_FILTERED.create(name));
                                     return;
                                 }
-                                renameClan(executor, executorClan, name);
+                                // The filter answers on its own thread, so the rename goes back to the main thread
+                                UtilServer.runTask(JavaPlugin.getPlugin(Clans.class), () -> renameClan(executor, executorClan, name));
                             });
                             return Command.SINGLE_SUCCESS;
                         })

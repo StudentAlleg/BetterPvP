@@ -24,6 +24,7 @@ import me.mykindos.betterpvp.core.utilities.UtilMessage;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import org.bukkit.entity.Player;
+import org.jetbrains.annotations.Nullable;
 
 @Singleton
 @BrigadierSubCommand(BrigadierClansCommand.class)
@@ -65,21 +66,21 @@ public class BrigadierListCommand extends ClanBrigadierCommand {
         return BrigadierNodes.literal(getName())
                 .executes(context -> {
                     Player executor = getPlayerFromExecutor(context);
-                    Clan executorClan = getClanByExecutor(context);
+                    Clan executorClan = clanManager.getClanByPlayer(executor).orElse(null);
                     doList(executor, executorClan, 1);
                     return Command.SINGLE_SUCCESS;
                 })
                 .then(BrigadierNodes.argument("Page Number", IntegerArgumentType.integer(1))
                         .executes(context -> {
                             Player executor = getPlayerFromExecutor(context);
-                            Clan executorClan = getClanByExecutor(context);
+                            Clan executorClan = clanManager.getClanByPlayer(executor).orElse(null);
                             int page = context.getArgument("Page Number", Integer.class);
                             doList(executor, executorClan, page);
                             return Command.SINGLE_SUCCESS;
                         }));
     }
 
-    private void doList(Player player, Clan playerClan, int pageNumber) throws CommandSyntaxException {
+    private void doList(Player player, @Nullable Clan playerClan, int pageNumber) throws CommandSyntaxException {
         int numPerPage = 10;
 
         List<Clan> clansList = new ArrayList<>(clanManager.getObjects().values());
@@ -111,7 +112,7 @@ public class BrigadierListCommand extends ClanBrigadierCommand {
         UtilMessage.message(player, "Clans", component);
     }
 
-    private Component addClanComponent(Clan playerClan, Clan clan) throws CommandSyntaxException {
+    private Component addClanComponent(@Nullable Clan playerClan, Clan clan) throws CommandSyntaxException {
         Component component = Component.empty().appendNewline();
 
         List<ClanMember> clanMembers = clan.getMembers();
