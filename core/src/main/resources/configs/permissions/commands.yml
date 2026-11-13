@@ -76,3 +76,36 @@ teleportworld:
 world:
   requiredRank: ADMIN
   enabled: true
+messageadmin:
+  requiredRank: HELPER
+  enabled: true
+replyadmin:
+  requiredRank: HELPER
+  enabled: true
+vanish:
+  requiredRank: ADMIN
+  enabled: true
+broadcast:
+  requiredRank: ADMIN
+  enabled: true
+freeze:
+  requiredRank: ADMIN
+  enabled: true
+invsee:
+  requiredRank: ADMIN
+  enabled: true
+iteminfo:
+  requiredRank: ADMIN
+  enabled: true
+kick:
+  requiredRank: ADMIN
+  enabled: true
+logpurge:
+  requiredRank: DEVELOPER
+  enabled: true
+setspawn:
+  requiredRank: ADMIN
+  enabled: true
+staffchat:
+  requiredRank: TRIAL_MOD
+  enabled: true
