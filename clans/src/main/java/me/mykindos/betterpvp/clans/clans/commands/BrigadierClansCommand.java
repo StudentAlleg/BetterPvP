@@ -20,6 +20,8 @@ import me.mykindos.betterpvp.core.utilities.UtilServer;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.java.JavaPlugin;
+import net.kyori.adventure.text.Component;
+import me.mykindos.betterpvp.core.locale.Translations;
 
 @Singleton
 public class BrigadierClansCommand extends ClanBrigadierCommand {
@@ -85,6 +87,11 @@ public class BrigadierClansCommand extends ClanBrigadierCommand {
     @Override
     public String getDescription() {
         return "Shows the clan Menu";
+    }
+
+    @Override
+    public Component getDescriptionComponent() {
+        return Translations.component("clans.command.clan.description");
     }
 
     private void openClanMenu(Player player, Clan playerClan, Clan clan) {

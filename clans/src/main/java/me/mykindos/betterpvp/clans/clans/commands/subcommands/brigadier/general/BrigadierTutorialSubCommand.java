@@ -13,6 +13,8 @@ import me.mykindos.betterpvp.core.client.repository.ClientManager;
 import me.mykindos.betterpvp.core.command.brigadier.BrigadierSubCommand;
 import me.mykindos.betterpvp.core.command.brigadier.BrigadierNodes;
 import org.bukkit.entity.Player;
+import net.kyori.adventure.text.Component;
+import me.mykindos.betterpvp.core.locale.Translations;
 
 @Singleton
 @BrigadierSubCommand(BrigadierClansCommand.class)
@@ -41,6 +43,11 @@ public class BrigadierTutorialSubCommand extends ClanBrigadierCommand {
     @Override
     public String getDescription() {
         return "Open the clans tutorial book";
+    }
+
+    @Override
+    public Component getDescriptionComponent() {
+        return Translations.component("clans.command.tutorial.description");
     }
 
     /**

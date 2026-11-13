@@ -19,6 +19,8 @@ import me.mykindos.betterpvp.core.command.brigadier.BrigadierSubCommand;
 import me.mykindos.betterpvp.core.command.brigadier.BrigadierNodes;
 import me.mykindos.betterpvp.core.components.clans.data.ClanEnemy;
 import org.bukkit.entity.Player;
+import net.kyori.adventure.text.Component;
+import me.mykindos.betterpvp.core.locale.Translations;
 
 
 @Singleton
@@ -48,6 +50,11 @@ public class BrigadierSetDominanceCommand extends ClanBrigadierCommand {
     @Override
     public String getDescription() {
         return "sets the dominance of the current clan against the target clan";
+    }
+
+    @Override
+    public Component getDescriptionComponent() {
+        return Translations.component("clans.command.set-dominance.description");
     }
 
     /**

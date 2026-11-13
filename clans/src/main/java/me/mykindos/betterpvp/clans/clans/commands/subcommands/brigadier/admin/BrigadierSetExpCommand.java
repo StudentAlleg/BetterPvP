@@ -18,6 +18,7 @@ import me.mykindos.betterpvp.core.command.brigadier.BrigadierNodes;
 import me.mykindos.betterpvp.core.utilities.UtilMessage;
 import net.kyori.adventure.text.Component;
 import org.bukkit.command.CommandSender;
+import me.mykindos.betterpvp.core.locale.Translations;
 
 
 @Singleton
@@ -47,6 +48,11 @@ public class BrigadierSetExpCommand extends ClanBrigadierCommand {
     @Override
     public String getDescription() {
         return "Force set a clan's experience";
+    }
+
+    @Override
+    public Component getDescriptionComponent() {
+        return Translations.component("clans.command.set-exp.description");
     }
 
     /**

@@ -25,6 +25,7 @@ import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import org.bukkit.entity.Player;
 import org.jetbrains.annotations.Nullable;
+import me.mykindos.betterpvp.core.locale.Translations;
 
 @Singleton
 @BrigadierSubCommand(BrigadierClansCommand.class)
@@ -53,6 +54,11 @@ public class BrigadierListCommand extends ClanBrigadierCommand {
     @Override
     public String getDescription() {
         return "List all clans";
+    }
+
+    @Override
+    public Component getDescriptionComponent() {
+        return Translations.component("clans.command.list.description");
     }
 
     /**

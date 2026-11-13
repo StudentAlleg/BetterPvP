@@ -19,6 +19,8 @@ import me.mykindos.betterpvp.core.command.brigadier.BrigadierSubCommand;
 import me.mykindos.betterpvp.core.command.brigadier.BrigadierNodes;
 import me.mykindos.betterpvp.core.components.clans.data.ClanMember;
 import org.bukkit.entity.Player;
+import net.kyori.adventure.text.Component;
+import me.mykindos.betterpvp.core.locale.Translations;
 
 @Singleton
 @CustomLog
@@ -53,6 +55,11 @@ public class BrigadierBankDepositSubCommand extends BrigadierClanSubCommand {
     @Override
     public String getDescription() {
         return "Deposit funds into the clan bank";
+    }
+
+    @Override
+    public Component getDescriptionComponent() {
+        return Translations.component("clans.command.bank-deposit.description");
     }
 
     /**

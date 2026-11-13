@@ -23,6 +23,8 @@ import org.bukkit.Bukkit;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.java.JavaPlugin;
+import net.kyori.adventure.text.Component;
+import me.mykindos.betterpvp.core.locale.Translations;
 
 @Singleton
 @BrigadierSubCommand(BrigadierClansCommand.class)
@@ -94,5 +96,10 @@ public class BrigadierInfoSubCommand extends ClanBrigadierCommand {
     @Override
     public String getDescription() {
         return "Get information about the specified clan";
+    }
+
+    @Override
+    public Component getDescriptionComponent() {
+        return Translations.component("clans.command.info.description");
     }
 }

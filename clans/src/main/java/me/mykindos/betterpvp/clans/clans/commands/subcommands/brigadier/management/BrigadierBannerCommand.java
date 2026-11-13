@@ -16,6 +16,8 @@ import me.mykindos.betterpvp.core.command.brigadier.BrigadierSubCommand;
 import me.mykindos.betterpvp.core.command.brigadier.BrigadierNodes;
 import me.mykindos.betterpvp.core.components.clans.data.ClanMember;
 import org.bukkit.entity.Player;
+import net.kyori.adventure.text.Component;
+import me.mykindos.betterpvp.core.locale.Translations;
 
 @Singleton
 @BrigadierSubCommand(BrigadierClansCommand.class)
@@ -44,6 +46,11 @@ public class BrigadierBannerCommand extends BrigadierClanSubCommand {
     @Override
     public String getDescription() {
         return "Sets your clan's banner";
+    }
+
+    @Override
+    public Component getDescriptionComponent() {
+        return Translations.component("clans.command.banner.description");
     }
 
     @Override
