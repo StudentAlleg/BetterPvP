@@ -18,6 +18,8 @@ import me.mykindos.betterpvp.core.components.clans.data.ClanMember;
 import me.mykindos.betterpvp.core.menu.impl.ConfirmationMenu;
 import me.mykindos.betterpvp.core.utilities.UtilServer;
 import org.bukkit.entity.Player;
+import net.kyori.adventure.text.Component;
+import me.mykindos.betterpvp.core.locale.Translations;
 
 @Singleton
 @BrigadierSubCommand(BrigadierClansCommand.class)
@@ -53,6 +55,11 @@ public class BrigadierDisbandSubCommand extends BrigadierClanSubCommand {
         return "disbands your current clan";
     }
 
+    @Override
+    public Component getDescriptionComponent() {
+        return Translations.component("clans.command.disband-clan.description");
+    }
+
     /**
      * Define the command, using normal rank based permissions
      * Requires sender to have required rank and executor to be a player
@@ -71,7 +78,7 @@ public class BrigadierDisbandSubCommand extends BrigadierClanSubCommand {
                         throw ClanArgumentException.CLAN_CANNOT_ACTION_WHILE_BEING_PILLAGING.create(executorClan);
                     }
 
-                    new ConfirmationMenu("Are you sure you want to disband your clan?", success -> {
+                    new ConfirmationMenu(menuTitle(executor, "clans.command.clan.disband.confirmation"), success -> {
                         if (success) {
                             UtilServer.callEvent(new ClanDisbandEvent(executor, executorClan));
                         }

@@ -8,6 +8,7 @@ import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import io.papermc.paper.command.brigadier.CommandSourceStack;
 import io.papermc.paper.command.brigadier.Commands;
 import lombok.CustomLog;
+import me.mykindos.betterpvp.clans.Clans;
 import me.mykindos.betterpvp.clans.clans.Clan;
 import me.mykindos.betterpvp.clans.clans.ClanManager;
 import me.mykindos.betterpvp.clans.clans.commands.BrigadierClansCommand;
@@ -17,10 +18,15 @@ import me.mykindos.betterpvp.clans.commands.commands.ClanBrigadierCommand;
 import me.mykindos.betterpvp.core.chat.filter.IFilterService;
 import me.mykindos.betterpvp.core.client.Rank;
 import me.mykindos.betterpvp.core.client.repository.ClientManager;
-import me.mykindos.betterpvp.core.command.brigadier.BrigadierSubCommand;
 import me.mykindos.betterpvp.core.command.brigadier.BrigadierNodes;
+import me.mykindos.betterpvp.core.command.brigadier.BrigadierSubCommand;
+import me.mykindos.betterpvp.core.locale.Translations;
 import me.mykindos.betterpvp.core.utilities.UtilMessage;
+import me.mykindos.betterpvp.core.utilities.UtilServer;
+import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.format.NamedTextColor;
 import org.bukkit.entity.Player;
+import org.bukkit.plugin.java.JavaPlugin;
 
 
 @Singleton
@@ -54,6 +60,11 @@ public class BrigadierRenameCommand extends ClanBrigadierCommand {
         return "Renames your current clan";
     }
 
+    @Override
+    public Component getDescriptionComponent() {
+        return Translations.component("clans.command.rename.description");
+    }
+
     /**
      * Define the command, using normal rank based permissions
      * Requires sender to have required rank and executor to be a player
@@ -70,12 +81,11 @@ public class BrigadierRenameCommand extends ClanBrigadierCommand {
                             final Clan executorClan = getClanByExecutor(context);
                             filterService.isFiltered(name).thenAccept((filtered) -> {
                                 if (filtered) {
-                                    context.getSource().getSender()
-                                            .sendMessage(UtilMessage.deserialize("<red>" +
-                                                    ClanArgumentException.NAME_IS_FILTERED.create(name).getMessage()));
+                                    UtilMessage.sendCommandSyntaxException(context.getSource().getSender(), ClanArgumentException.NAME_IS_FILTERED.create(name));
                                     return;
                                 }
-                                renameClan(executor, executorClan, name);
+                                // The filter answers on its own thread, so the rename goes back to the main thread
+                                UtilServer.runTask(JavaPlugin.getPlugin(Clans.class), () -> renameClan(executor, executorClan, name));
                             });
                             return Command.SINGLE_SUCCESS;
                         })
@@ -100,8 +110,9 @@ public class BrigadierRenameCommand extends ClanBrigadierCommand {
     private void renameClan(final Player player, final Clan clan, final String name){
         final String oldName = clan.getName();
         clan.setName(name);
-        clientManager.sendMessageToRank("Clans", UtilMessage.deserialize("<yellow>%s<gray> has renamed a clan from <yellow>%s<gray> to <yellow>%s<gray>!",
-                player.getName(), oldName, name), Rank.ADMIN);
+        clientManager.sendMessageToRank("clans.prefix", Translations.component("clans.command.clan.rename.notification",
+                Component.text(player.getName(), NamedTextColor.YELLOW), Component.text(oldName, NamedTextColor.YELLOW),
+                Component.text(name, NamedTextColor.YELLOW)), Rank.ADMIN);
         clanManager.updateClanName(clan);
 
         log.info("{} has renamed a clan from {} to {}!", player.getName(), oldName, name)
