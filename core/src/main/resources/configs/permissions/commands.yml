@@ -200,7 +200,7 @@ silencechat:
   requiredRank: MODERATOR
   enabled: true
 chatfilter:
-  requiredRank: ADMIN
+  requiredRank: MODERATOR
   enabled: true
   add:
     requiredRank: ADMIN
@@ -209,7 +209,7 @@ chatfilter:
     requiredRank: ADMIN
     enabled: true
   list:
-    requiredRank: ADMIN
+    requiredRank: MODERATOR
     enabled: true
   reload:
     requiredRank: ADMIN
@@ -355,3 +355,48 @@ balance:
   get:
     requiredRank: ADMIN
     enabled: true
+client:
+  requiredRank: ADMIN
+  enabled: true
+  admin:
+    requiredRank: ADMIN
+    enabled: true
+  search:
+    requiredRank: ADMIN
+    enabled: true
+  promote:
+    requiredRank: ADMIN
+    enabled: true
+  demote:
+    requiredRank: ADMIN
+    enabled: true
+  count:
+    requiredRank: ADMIN
+    enabled: true
+  setmediachannel:
+    requiredRank: ADMIN
+    enabled: true
+punish:
+  requiredRank: TRIAL_MOD
+  enabled: true
+legacypunish:
+  requiredRank: ADMIN
+  enabled: true
+  add:
+    requiredRank: ADMIN
+    enabled: true
+  custom:
+    requiredRank: ADMIN
+    enabled: true
+  history:
+    requiredRank: ADMIN
+    enabled: true
+  remove:
+    requiredRank: ADMIN
+    enabled: true
+punishmenthistory:
+  requiredRank: PLAYER
+  enabled: true
+profilestats:
+  requiredRank: DEVELOPER
+  enabled: true
