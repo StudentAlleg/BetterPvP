@@ -19,11 +19,11 @@ import me.mykindos.betterpvp.core.command.brigadier.BrigadierSubCommand;
 import me.mykindos.betterpvp.core.command.brigadier.BrigadierNodes;
 import me.mykindos.betterpvp.core.components.clans.data.ClanMember;
 import me.mykindos.betterpvp.core.menu.impl.ConfirmationMenu;
-import me.mykindos.betterpvp.core.utilities.UtilMessage;
 import me.mykindos.betterpvp.core.utilities.UtilServer;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import org.bukkit.entity.Player;
+import me.mykindos.betterpvp.core.locale.Translations;
 
 @Singleton
 @BrigadierSubCommand(BrigadierClansCommand.class)
@@ -59,6 +59,11 @@ public class BrigadierLeaveSubCommand extends BrigadierClanSubCommand {
         return "Leaves your current clan";
     }
 
+    @Override
+    public Component getDescriptionComponent() {
+        return Translations.component("clans.command.leave.description");
+    }
+
     /**
      * Define the command, using normal rank based permissions
      * Requires sender to have required rank and executor to be a player
@@ -90,7 +95,7 @@ public class BrigadierLeaveSubCommand extends BrigadierClanSubCommand {
                         }
                     }
 
-                    new ConfirmationMenu("Are you sure you want to leave your clan?", success -> {
+                    new ConfirmationMenu(menuTitle(executor, "clans.command.clan.leave.confirmation"), success -> {
                         if (success) {
                             UtilServer.callEvent(new MemberLeaveClanEvent(executor, executorClan));
                         }
@@ -132,17 +137,12 @@ public class BrigadierLeaveSubCommand extends BrigadierClanSubCommand {
             }
         }
         component = component.appendNewline();
-        component = component.append(Component.text("Need a Clan: ", NamedTextColor.WHITE))
-                .append(Component.text(true, NamedTextColor.GREEN).append(Component.text(" | ", NamedTextColor.GRAY))
-                        .append((Component.text("You: ", NamedTextColor.WHITE))
-                                .append(Component.text(inClan, inClan? NamedTextColor.GREEN : NamedTextColor.RED))));
+        component = component.append(clanRequirementLine(true, inClan));
         component = component.appendNewline();
-        component = component.append(Component.text("Clan Rank: ", NamedTextColor.WHITE))
-                .append(Component.text(requiredMemberRank().name(), NamedTextColor.GREEN).append(Component.text(" | ", NamedTextColor.GRAY))
-                        .append((Component.text("You Qualify: ", NamedTextColor.WHITE))
-                                .append(Component.text(hasClanRank, hasClanRank ? NamedTextColor.GREEN : NamedTextColor.RED))));
+        component = component.append(clanRankRequirementLine(requiredMemberRank(), hasClanRank));
         component = component.appendNewline();
-        component = component.append(UtilMessage.deserialize("<white>You cannot use this command as a <aqua>Clan</aqua> <light_purple>%s</light_purple>", ClanMember.MemberRank.LEADER.name()));
+        component = component.append(Translations.component("clans.command.requirement.leader-cannot-use",
+                Component.text(ClanMember.MemberRank.LEADER.name(), NamedTextColor.LIGHT_PURPLE)).color(NamedTextColor.WHITE));
         return component;
     }
 }

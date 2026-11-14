@@ -15,10 +15,12 @@ import me.mykindos.betterpvp.clans.commands.arguments.BPvPClansArgumentTypes;
 import me.mykindos.betterpvp.clans.commands.arguments.exceptions.ClanArgumentException;
 import me.mykindos.betterpvp.clans.commands.commands.ClanBrigadierCommand;
 import me.mykindos.betterpvp.core.client.repository.ClientManager;
-import me.mykindos.betterpvp.core.command.brigadier.BrigadierSubCommand;
 import me.mykindos.betterpvp.core.command.brigadier.BrigadierNodes;
+import me.mykindos.betterpvp.core.command.brigadier.BrigadierSubCommand;
 import me.mykindos.betterpvp.core.components.clans.data.ClanEnemy;
-import org.bukkit.entity.Player;
+import me.mykindos.betterpvp.core.locale.Translations;
+import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.format.NamedTextColor;
 
 
 @Singleton
@@ -50,6 +52,11 @@ public class BrigadierSetDominanceCommand extends ClanBrigadierCommand {
         return "sets the dominance of the current clan against the target clan";
     }
 
+    @Override
+    public Component getDescriptionComponent() {
+        return Translations.component("clans.command.set-dominance.description");
+    }
+
     /**
      * Define the command, using normal rank based permissions
      * Requires sender to have required rank and executor to be a player
@@ -65,9 +72,8 @@ public class BrigadierSetDominanceCommand extends ClanBrigadierCommand {
                                 .executes(context -> {
                                     Clan targetClan = context.getArgument("Target Clan", Clan.class);
                                     double newDominance = context.getArgument("Dominance", double.class);
-                                    final Player player = getPlayerFromExecutor(context);
 
-                                    Clan originClan = clanManager.getClanByPlayer(player).orElseThrow(() -> ClanArgumentException.NOT_IN_A_CLAN_EXCEPTION.create(player.getName()));
+                                    Clan originClan = getClanByExecutor(context);
                                     applyNewDominance(targetClan, originClan, newDominance);
                                     return Command.SINGLE_SUCCESS;
                                 })
@@ -93,10 +99,10 @@ public class BrigadierSetDominanceCommand extends ClanBrigadierCommand {
         clanManager.getRepository().updateDominance(applyClan, applyClanEnemy);
         clanManager.getRepository().updateDominance(zeroClan, zeroClanEnemy);
 
-        zeroClan.messageClan("<gray>Your dominance against <red>" + applyClan.getName()
-                + " <gray>has been set to <green>" + actualDominance + "%", null, true);
-        applyClan.messageClan("<gray>Your dominance against <red>" + zeroClan.getName()
-                + " <gray>has been set to <red>-" + actualDominance + "%", null, true);
+        zeroClan.messageClan("clans.command.clan.set-dominance.clan-notification", new Object[]{
+                Component.text(applyClan.getName(), NamedTextColor.RED), Component.text(actualDominance + "%", NamedTextColor.GREEN)}, null, true);
+        applyClan.messageClan("clans.command.clan.set-dominance.target-notification", new Object[]{
+                Component.text(zeroClan.getName(), NamedTextColor.RED), Component.text("-" + actualDominance + "%", NamedTextColor.RED)}, null, true);
 
     }
 
