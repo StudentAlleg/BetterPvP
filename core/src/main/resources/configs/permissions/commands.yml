@@ -304,3 +304,21 @@ heatmap:
 attune:
   requiredRank: ADMIN
   enabled: true
+worldlogger:
+  requiredRank: MODERATOR
+  enabled: true
+  inspect:
+    requiredRank: MODERATOR
+    enabled: true
+  page:
+    requiredRank: MODERATOR
+    enabled: true
+  rollback:
+    requiredRank: ADMIN
+    enabled: true
+  restore:
+    requiredRank: ADMIN
+    enabled: true
+  restorechunk:
+    requiredRank: ADMIN
+    enabled: true
