@@ -4,13 +4,11 @@ import com.google.inject.Inject;
 import com.google.inject.Singleton;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import io.papermc.paper.command.brigadier.CommandSourceStack;
-import me.mykindos.betterpvp.core.client.Client;
 import me.mykindos.betterpvp.core.client.repository.ClientManager;
 import me.mykindos.betterpvp.core.command.brigadier.BrigadierCommand;
 import me.mykindos.betterpvp.core.command.brigadier.BrigadierNodes;
 import me.mykindos.betterpvp.core.locale.Translations;
 import net.kyori.adventure.text.Component;
-import org.bukkit.entity.Player;
 
 @Singleton
 public class LegacyPunishmentCommand extends BrigadierCommand {
@@ -39,9 +37,5 @@ public class LegacyPunishmentCommand extends BrigadierCommand {
     @Override
     public LiteralArgumentBuilder<CommandSourceStack> define() {
         return BrigadierNodes.literal(getName());
-    }
-
-    private void execute(Player player, Client client, String... args) {
-        //base command
     }
 }

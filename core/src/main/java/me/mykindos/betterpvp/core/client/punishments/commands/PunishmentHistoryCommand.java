@@ -110,13 +110,6 @@ public class PunishmentHistoryCommand extends PunishmentSubCommand {
         });
     }
 
-    private String getArgumentType(int i) {
-        if (i == 1) {
-            return "PLAYER";
-        }
-        return "NONE";
-    }
-
     @Override
     protected List<String> suggestions(CommandSender sender, String[] args) {
         return args.length == 1 ? Bukkit.getOnlinePlayers().stream().map(Player::getName)
