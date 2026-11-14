@@ -12,13 +12,14 @@ import me.mykindos.betterpvp.clans.clans.commands.BrigadierClansCommand;
 import me.mykindos.betterpvp.clans.clans.commands.subcommands.brigadier.BrigadierClanSubCommand;
 import me.mykindos.betterpvp.clans.clans.events.ClanRequestNeutralEvent;
 import me.mykindos.betterpvp.clans.commands.arguments.BPvPClansArgumentTypes;
-import me.mykindos.betterpvp.clans.commands.arguments.exceptions.ClanArgumentException;
 import me.mykindos.betterpvp.core.client.repository.ClientManager;
 import me.mykindos.betterpvp.core.command.brigadier.BrigadierSubCommand;
 import me.mykindos.betterpvp.core.command.brigadier.BrigadierNodes;
 import me.mykindos.betterpvp.core.components.clans.data.ClanMember;
 import me.mykindos.betterpvp.core.utilities.UtilServer;
 import org.bukkit.entity.Player;
+import net.kyori.adventure.text.Component;
+import me.mykindos.betterpvp.core.locale.Translations;
 
 @Singleton
 @BrigadierSubCommand(BrigadierClansCommand.class)
@@ -49,6 +50,11 @@ public class BrigadierNeutralCommand extends BrigadierClanSubCommand {
     }
 
     @Override
+    public Component getDescriptionComponent() {
+        return Translations.component("clans.command.neutral.description");
+    }
+
+    @Override
     protected ClanMember.MemberRank requiredMemberRank() {
         return ClanMember.MemberRank.ADMIN;
     }
@@ -68,7 +74,7 @@ public class BrigadierNeutralCommand extends BrigadierClanSubCommand {
                             Clan target = context.getArgument("Neutralable Clan", Clan.class);
                             final Player player = getPlayerFromExecutor(context);
 
-                            Clan origin = clanManager.getClanByPlayer(player).orElseThrow(() -> ClanArgumentException.NOT_IN_A_CLAN_EXCEPTION.create(player.getName()));
+                            Clan origin = getClanByExecutor(context);
 
                             doNeutral(player, origin, target);
                             return Command.SINGLE_SUCCESS;
