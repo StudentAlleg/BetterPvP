@@ -62,6 +62,10 @@ import me.mykindos.betterpvp.core.item.command.ReforgeCommand;
 import me.mykindos.betterpvp.core.item.command.RefreshItemCacheCommand;
 import me.mykindos.betterpvp.core.loot.command.LootCommand;
 import me.mykindos.betterpvp.core.scene.command.NPCCommand;
+import me.mykindos.betterpvp.core.cutscene.command.CutsceneCommand;
+import me.mykindos.betterpvp.core.item.command.AttunementCommand;
+import me.mykindos.betterpvp.core.quest.command.QuestCommand;
+import me.mykindos.betterpvp.core.tracking.command.HeatmapCommand;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -196,7 +200,11 @@ class CoreCommandsParityTest {
                 Map.entry(NPCCommand.class, new Object[]{"npc", Set.of(), "ADMIN"}),
                 Map.entry(AchievementsCommand.class, new Object[]{"achievements", Set.of(), "PLAYER"}),
                 Map.entry(ProfileCommand.class, new Object[]{"profile", Set.of(), "PLAYER"}),
-                Map.entry(RuleCommand.class, new Object[]{"rules", Set.of(), "PLAYER"}));
+                Map.entry(RuleCommand.class, new Object[]{"rules", Set.of(), "PLAYER"}),
+                Map.entry(CutsceneCommand.class, new Object[]{"cutscene", Set.of(), "ADMIN"}),
+                Map.entry(QuestCommand.class, new Object[]{"quest", Set.of(), "ADMIN"}),
+                Map.entry(HeatmapCommand.class, new Object[]{"heatmap", Set.of(), "ADMIN"}),
+                Map.entry(AttunementCommand.class, new Object[]{"attune", Set.of(), "ADMIN"}));
 
         for (Map.Entry<Class<? extends BrigadierCommand>, Object[]> entry : expected.entrySet()) {
             final BrigadierCommand command = instantiate(entry.getKey());
@@ -208,7 +216,7 @@ class CoreCommandsParityTest {
         }
         for (String child : new String[]{"site.list", "site.create", "site.tp", "site.delete", "structure.save",
                 "structure.paste", "structure.layers", "structure.undo", "display.summon", "display.transform.rotate",
-                "chatfilter.add", "chatfilter.list", "shadowfilter.remove", "shadowfilter.reload", "npc.spawn", "npc.remove", "npc.list"}) {
+                "chatfilter.add", "chatfilter.list", "shadowfilter.remove", "shadowfilter.reload", "npc.spawn", "npc.remove", "npc.list", "heatmap.top", "heatmap.here"}) {
             assertEquals("ADMIN", config.getString(child + ".requiredRank"), child);
         }
     }
@@ -223,5 +231,23 @@ class CoreCommandsParityTest {
                     .collect(Collectors.toSet());
             assertEquals(Set.of("set", "add"), modes, side);
         }
+    }
+
+    @Test
+    @DisplayName("CLANS-45 /cutscene keeps every legacy action")
+    void cutsceneLiterals() throws Exception {
+        final Set<String> literals = instantiate(CutsceneCommand.class).define().build().getChildren().stream()
+                .map(CommandNode::getName)
+                .collect(Collectors.toSet());
+        assertEquals(Set.of("play", "from", "markers", "list", "stop", "reload", "forget", "validate"), literals);
+    }
+
+    @Test
+    @DisplayName("CLANS-45 /quest keeps start, list and debug")
+    void questLiterals() throws Exception {
+        final Set<String> literals = instantiate(QuestCommand.class).define().build().getChildren().stream()
+                .map(CommandNode::getName)
+                .collect(Collectors.toSet());
+        assertEquals(Set.of("start", "list", "debug"), literals);
     }
 }
